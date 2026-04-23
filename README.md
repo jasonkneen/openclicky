@@ -74,6 +74,20 @@ Do not use terminal `xcodebuild` for permission testing. macOS TCC permissions a
 
 For a lightweight syntax check that does not disturb macOS permissions, run `swiftc -parse` over the changed source files. Avoid launching unsigned or temporary build products for permission testing.
 
+## Credits And Upstream Work
+
+OpenClicky is maintained by [Jason Kneen](https://github.com/jasonkneen).
+
+This project builds on the original open-source Clicky work:
+
+- Original project: [farzaa/clicky](https://github.com/farzaa/clicky)
+- Original creator: Farza, GitHub [@farzaa](https://github.com/farzaa), X [@FarzaTV](https://x.com/farzatv)
+
+OpenClicky has also incorporated ideas and implementation patterns from these forks:
+
+- [@danpeg](https://github.com/danpeg)'s [danpeg/clicky](https://github.com/danpeg/clicky), reviewed locally as `clicky-teach`, for tutor-mode direction and idle observation behavior.
+- [@milind-soni](https://github.com/milind-soni)'s [milind-soni/tiptour-macos](https://github.com/milind-soni/tiptour-macos), for developer-menu/debug tooling patterns and related teaching-assistant UX ideas.
+
 ## License
 
-MIT. Copyright 2026 Jason Kneen.
+MIT. Copyright 2026 Jason Kneen. Portions are derived from or informed by the upstream MIT-licensed projects credited above.
