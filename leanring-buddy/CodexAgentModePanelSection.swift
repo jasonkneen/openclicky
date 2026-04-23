@@ -10,6 +10,8 @@ struct CodexAgentModePanelSection: View {
     var setClickyCursorEnabled: (Bool) -> Void
     var selectedCompanionModelID: String
     var setSelectedCompanionModel: (String) -> Void
+    var selectedComputerUseModelID: String
+    var setSelectedComputerUseModel: (String) -> Void
     var setAnthropicAPIKey: (String) -> Void
     var setElevenLabsAPIKey: (String) -> Void
     var setElevenLabsVoiceID: (String) -> Void
@@ -246,6 +248,8 @@ struct CodexAgentModeSettingsSheet: View {
     var setClickyCursorEnabled: (Bool) -> Void
     var selectedCompanionModelID: String
     var setSelectedCompanionModel: (String) -> Void
+    var selectedComputerUseModelID: String
+    var setSelectedComputerUseModel: (String) -> Void
     var setAnthropicAPIKey: (String) -> Void
     var setElevenLabsAPIKey: (String) -> Void
     var setElevenLabsVoiceID: (String) -> Void
@@ -271,37 +275,35 @@ struct CodexAgentModeSettingsSheet: View {
                 VStack(alignment: .leading, spacing: 10) {
                     settingsSection(
                         title: "Voice response model",
-                        subtitle: "Used for spoken OpenClicky replies. This is the Claude model that receives your transcript and screen context."
+                        subtitle: "Used for spoken OpenClicky replies. Anthropic and OpenAI options both receive your transcript and screen context."
                     ) {
-                        HStack(spacing: 0) {
-                            modelOptionButton(label: "Claude Sonnet", modelID: "claude-sonnet-4-6")
-                            modelOptionButton(label: "Claude Opus", modelID: "claude-opus-4-6")
-                        }
-                        .background(
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .fill(Color.white.opacity(0.06))
+                        modelOptionGrid(
+                            options: OpenClickyModelCatalog.voiceResponseModels,
+                            selectedModelID: selectedCompanionModelID,
+                            select: setSelectedCompanionModel
                         )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .stroke(DS.Colors.borderSubtle.opacity(0.7), lineWidth: 1)
+                    }
+
+                    settingsSection(
+                        title: "Screen pointing model",
+                        subtitle: "Used for Anthropic Computer Use cursor pointing. This stays separate so OpenAI voice responses do not break pointing."
+                    ) {
+                        modelOptionGrid(
+                            options: OpenClickyModelCatalog.computerUseModels,
+                            selectedModelID: selectedComputerUseModelID,
+                            select: setSelectedComputerUseModel
                         )
                     }
 
                     settingsSection(
                         title: "Coding and actions model",
-                        subtitle: "Used when you say \"Hey Agent\", \"Clicky Agent\", or \"OpenClicky Agent\". These go through the bundled Codex runtime, not the voice-response Claude path."
+                        subtitle: "Used when you say \"Hey Agent\", \"Clicky Agent\", or \"OpenClicky Agent\". These run through the bundled Codex runtime, which requires OpenAI Responses-compatible models."
                     ) {
-                        VStack(spacing: 6) {
-                            HStack(spacing: 6) {
-                                codexModelOptionButton(label: "GPT-5.4", modelID: "gpt-5.4")
-                                codexModelOptionButton(label: "GPT-5.5", modelID: "gpt-5.5")
-                            }
-                            HStack(spacing: 6) {
-                                codexModelOptionButton(label: "GPT-5.4 Mini", modelID: "gpt-5.4-mini")
-                                codexModelOptionButton(label: "GPT-5.3 Codex", modelID: "gpt-5.3-codex")
-                            }
-                            codexModelOptionButton(label: "GPT-5.3 Codex Spark", modelID: "gpt-5.3-codex-spark")
-                        }
+                        modelOptionGrid(
+                            options: OpenClickyModelCatalog.codexActionsModels,
+                            selectedModelID: session.model,
+                            select: session.setModel
+                        )
                     }
 
                     settingsSection(
@@ -529,49 +531,56 @@ struct CodexAgentModeSettingsSheet: View {
         )
     }
 
-    private func modelOptionButton(label: String, modelID: String) -> some View {
-        let isSelected = selectedCompanionModelID == modelID
-        return Button(action: {
-            setSelectedCompanionModel(modelID)
-        }) {
-            Text(label)
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(isSelected ? DS.Colors.textPrimary : DS.Colors.textTertiary)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 6)
-                .frame(maxWidth: .infinity)
-                .background(
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .fill(isSelected ? Color.white.opacity(0.1) : Color.clear)
-                )
-        }
-        .buttonStyle(.plain)
-        .pointerCursor()
-    }
+    private func modelOptionGrid(
+        options: [OpenClickyModelOption],
+        selectedModelID: String,
+        select: @escaping (String) -> Void
+    ) -> some View {
+        let columns = [
+            GridItem(.flexible(), spacing: 6),
+            GridItem(.flexible(), spacing: 6)
+        ]
 
-    private func codexModelOptionButton(label: String, modelID: String) -> some View {
-        let isSelected = session.model == modelID
-        return Button(action: {
-            session.setModel(modelID)
-        }) {
-            HStack(spacing: 7) {
-                Text(label)
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(isSelected ? DS.Colors.textPrimary : DS.Colors.textTertiary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-
-                Spacer(minLength: 4)
-
-                if isSelected {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(DS.Colors.accentText)
+        return LazyVGrid(columns: columns, alignment: .leading, spacing: 6) {
+            ForEach(options) { option in
+                modelOptionButton(option: option, isSelected: selectedModelID == option.id) {
+                    select(option.id)
                 }
             }
+        }
+    }
+
+    private func modelOptionButton(
+        option: OpenClickyModelOption,
+        isSelected: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(option.label)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(isSelected ? DS.Colors.textPrimary : DS.Colors.textTertiary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+
+                    Spacer(minLength: 4)
+
+                    if isSelected {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(DS.Colors.accentText)
+                    }
+                }
+
+                Text(option.provider.displayName)
+                    .font(.system(size: 8, weight: .medium))
+                    .foregroundColor(DS.Colors.textTertiary)
+                    .lineLimit(1)
+            }
             .padding(.horizontal, 8)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .fill(isSelected ? DS.Colors.accentText.opacity(0.14) : Color.white.opacity(0.055))

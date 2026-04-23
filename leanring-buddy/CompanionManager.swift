@@ -183,14 +183,21 @@ final class CompanionManager: ObservableObject {
     @Published private(set) var isOverlayVisible: Bool = false
 
     /// The model used for voice responses. Persisted to UserDefaults.
-    @Published var selectedModel: String = UserDefaults.standard.string(forKey: "selectedVoiceResponseModel") ?? OpenClickyModelCatalog.defaultVoiceResponseModelID
-    @Published var selectedComputerUseModel: String = UserDefaults.standard.string(forKey: "selectedComputerUseModel") ?? OpenClickyModelCatalog.defaultComputerUseModelID
+    @Published var selectedModel: String = OpenClickyModelCatalog.voiceResponseModel(
+        withID: UserDefaults.standard.string(forKey: "selectedVoiceResponseModel")
+            ?? UserDefaults.standard.string(forKey: "selectedClaudeModel")
+            ?? OpenClickyModelCatalog.defaultVoiceResponseModelID
+    ).id
+    @Published var selectedComputerUseModel: String = OpenClickyModelCatalog.computerUseModel(
+        withID: UserDefaults.standard.string(forKey: "selectedComputerUseModel") ?? OpenClickyModelCatalog.defaultComputerUseModelID
+    ).id
 
     func setSelectedModel(_ model: String) {
-        selectedModel = model
-        UserDefaults.standard.set(model, forKey: "selectedVoiceResponseModel")
-        claudeAPI.model = model
-        openAIAPI.model = model
+        let resolvedModel = OpenClickyModelCatalog.voiceResponseModel(withID: model).id
+        selectedModel = resolvedModel
+        UserDefaults.standard.set(resolvedModel, forKey: "selectedVoiceResponseModel")
+        claudeAPI.model = resolvedModel
+        openAIAPI.model = resolvedModel
     }
 
     func setSelectedComputerUseModel(_ model: String) {
@@ -307,7 +314,7 @@ final class CompanionManager: ObservableObject {
         // Eagerly touch the Claude API so its TLS warmup handshake completes
         // before the first voice interaction.
         _ = claudeAPI
-        if Self.anthropicAPIKey == nil {
+        if AppBundleConfiguration.anthropicAPIKey() == nil {
             print("CompanionManager: Anthropic is not configured. Set AnthropicAPIKey in Info.plist or ANTHROPIC_API_KEY in the launch environment.")
         }
 
@@ -1290,7 +1297,7 @@ final class CompanionManager: ObservableObject {
         screenCaptures: [CompanionScreenCapture]
     ) async {
         guard Self.shouldAttemptProactivePointing(for: transcript) else { return }
-        guard let anthropicAPIKey = Self.anthropicAPIKey else { return }
+        guard let anthropicAPIKey = AppBundleConfiguration.anthropicAPIKey() else { return }
         guard let targetScreenCapture = screenCaptures.first(where: { $0.isCursorScreen }) ?? screenCaptures.first else { return }
 
         let detector = ElementLocationDetector(apiKey: anthropicAPIKey, model: selectedComputerUseModel)
