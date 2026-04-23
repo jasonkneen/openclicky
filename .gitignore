@@ -1,0 +1,16 @@
+.build/
+.xcode-derived/
+.DS_Store
+.env
+.env.local
+xcuserdata/
+DerivedData/
+*.xcuserstate
+/.xcode-derived-signed-dev
+/recovered
+/ShippedResources
+
+worker/.dev.vars
+worker/.env
+worker/.env.local
+/AppResources/OpenClicky/CodexRuntime
