@@ -135,7 +135,7 @@ private struct CodexHUDView: View {
                         dismiss: { session.dismissLatestResponseCard() },
                         runSuggestedNextAction: { actionTitle in
                             session.dismissLatestResponseCard()
-                            session.submitPromptFromUI(actionTitle)
+                            companionManager.submitAgentPromptFromUI(actionTitle)
                         },
                         openTextFollowUp: nil,
                         openVoiceFollowUp: {
@@ -330,7 +330,7 @@ private struct CodexHUDView: View {
         guard canSend else { return }
         let submitted = prompt
         prompt = ""
-        session.submitPromptFromUI(submitted)
+        companionManager.submitAgentPromptFromUI(submitted)
     }
 
     private func iconButton(systemName: String, helpText: String, action: @escaping () -> Void) -> some View {

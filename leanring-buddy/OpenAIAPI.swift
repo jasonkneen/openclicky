@@ -61,17 +61,25 @@ class OpenAIAPI {
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        var contentBlocks: [[String: Any]] = []
-        if !conversationHistory.isEmpty {
-            let previousConversation = conversationHistory.map { entry in
-                "User: \(entry.userPlaceholder)\nOpenClicky: \(entry.assistantResponse)"
-            }.joined(separator: "\n\n")
-            contentBlocks.append([
-                "type": "input_text",
-                "text": "Previous conversation:\n\(previousConversation)"
+        var input: [[String: Any]] = []
+        for (userPlaceholder, assistantResponse) in conversationHistory {
+            input.append([
+                "role": "user",
+                "content": [[
+                    "type": "input_text",
+                    "text": userPlaceholder
+                ]]
+            ])
+            input.append([
+                "role": "assistant",
+                "content": [[
+                    "type": "output_text",
+                    "text": assistantResponse
+                ]]
             ])
         }
 
+        var contentBlocks: [[String: Any]] = []
         for image in images {
             contentBlocks.append([
                 "type": "input_text",
@@ -91,7 +99,7 @@ class OpenAIAPI {
             "model": model,
             "instructions": systemPrompt,
             "max_output_tokens": 1024,
-            "input": [[
+            "input": input + [[
                 "role": "user",
                 "content": contentBlocks
             ]]

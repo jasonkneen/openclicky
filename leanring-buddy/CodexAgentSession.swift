@@ -24,6 +24,42 @@ struct CodexTranscriptEntry: Identifiable, Equatable {
     }
 }
 
+struct CodexAgentScreenContextAttachment: Equatable {
+    let label: String
+    let fileURL: URL
+    let note: String?
+}
+
+struct CodexAgentScreenContext: Equatable {
+    let source: String
+    let capturedAt: Date
+    let attachments: [CodexAgentScreenContextAttachment]
+
+    var isEmpty: Bool {
+        attachments.isEmpty
+    }
+
+    func promptPrefix() -> String {
+        guard !attachments.isEmpty else { return "" }
+
+        var lines: [String] = [
+            "OpenClicky screen context:",
+            "- Source: \(source)",
+            "- Captured at: \(ISO8601DateFormatter().string(from: capturedAt))",
+            "- Screenshot files are saved locally. Inspect them if your runtime exposes image/file viewing; otherwise be explicit that screenshot inspection is unavailable."
+        ]
+
+        for (index, attachment) in attachments.enumerated() {
+            lines.append("\(index + 1). \(attachment.label): \(attachment.fileURL.path)")
+            if let note = attachment.note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
+                lines.append("   Note: \(note)")
+            }
+        }
+
+        return lines.joined(separator: "\n")
+    }
+}
+
 enum CodexAgentSessionStatus: Equatable {
     case stopped
     case starting
@@ -100,7 +136,7 @@ final class CodexAgentSession: ObservableObject, Identifiable {
         }
     }
 
-    func submitPromptFromUI(_ prompt: String) {
+    func submitPromptFromUI(_ prompt: String, screenContext: CodexAgentScreenContext? = nil) {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
@@ -111,7 +147,7 @@ final class CodexAgentSession: ObservableObject, Identifiable {
         lastSubmittedPrompt = trimmed
         entries.append(CodexTranscriptEntry(role: .user, text: trimmed))
         Task {
-            await runPrompt(trimmed)
+            await runPrompt(Self.promptForModel(prompt: trimmed, screenContext: screenContext))
         }
     }
 
@@ -172,6 +208,19 @@ final class CodexAgentSession: ObservableObject, Identifiable {
             status = .failed(error.localizedDescription)
             entries.append(CodexTranscriptEntry(role: .system, text: error.localizedDescription))
         }
+    }
+
+    private static func promptForModel(prompt: String, screenContext: CodexAgentScreenContext?) -> String {
+        guard let context = screenContext, !context.isEmpty else {
+            return prompt
+        }
+
+        return """
+        \(context.promptPrefix())
+
+        User task:
+        \(prompt)
+        """
     }
 
     private func ensureThread() async throws {

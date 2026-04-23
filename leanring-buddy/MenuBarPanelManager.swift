@@ -19,11 +19,6 @@ extension Notification.Name {
     static let clickyPanelContentSizeDidChange = Notification.Name("clickyPanelContentSizeDidChange")
 }
 
-private enum CompanionPanelContentMode {
-    case main
-    case settings
-}
-
 /// Custom NSPanel subclass that can become the key window even with
 /// .nonactivatingPanel style, allowing text fields to receive focus.
 private class KeyablePanel: NSPanel {
@@ -38,7 +33,6 @@ final class MenuBarPanelManager: NSObject {
     private var dismissPanelObserver: NSObjectProtocol?
     private var contentSizeObserver: NSObjectProtocol?
     private var isPanelPinned = false
-    private var currentContentMode: CompanionPanelContentMode = .main
 
     private let companionManager: CompanionManager
     private let panelWidth: CGFloat = 356
@@ -65,9 +59,6 @@ final class MenuBarPanelManager: NSObject {
             object: nil,
             queue: .main
         ) { [weak self] notification in
-            if let isShowingSettings = notification.userInfo?["isShowingSettings"] as? Bool {
-                self?.currentContentMode = isShowingSettings ? .settings : .main
-            }
             self?.resizeVisiblePanelToCurrentContent()
         }
     }
@@ -275,14 +266,9 @@ final class MenuBarPanelManager: NSObject {
     }
 
     private func preferredPanelHeight(maximumPanelHeight: CGFloat) -> CGFloat {
-        switch currentContentMode {
-        case .main:
-            return min(max(panelMinimumSize.height, panelHeight), maximumPanelHeight)
-        case .settings:
-            let fittingSize = panel?.contentView?.fittingSize ?? CGSize(width: panelWidth, height: panelHeight)
-            let measuredPanelHeight = max(panelMinimumSize.height, fittingSize.height)
-            return min(measuredPanelHeight, maximumPanelHeight)
-        }
+        let fittingSize = panel?.contentView?.fittingSize ?? CGSize(width: panelWidth, height: panelHeight)
+        let measuredPanelHeight = max(panelMinimumSize.height, fittingSize.height)
+        return min(measuredPanelHeight, maximumPanelHeight)
     }
 
     private func resizePinnedPanelToCurrentContent() {

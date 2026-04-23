@@ -136,6 +136,7 @@ final class CompanionManager: ObservableObject {
     private var voiceStateCancellable: AnyCancellable?
     private var audioPowerCancellable: AnyCancellable?
     private var agentStatusCancellables: [UUID: AnyCancellable] = [:]
+    private var tutorIdleCancellable: AnyCancellable?
     private var accessibilityCheckTimer: Timer?
     private var pendingKeyboardShortcutStartTask: Task<Void, Never>?
     /// Scheduled hide for transient cursor mode — cancelled if the user
@@ -191,6 +192,9 @@ final class CompanionManager: ObservableObject {
     @Published var selectedComputerUseModel: String = OpenClickyModelCatalog.computerUseModel(
         withID: UserDefaults.standard.string(forKey: "selectedComputerUseModel") ?? OpenClickyModelCatalog.defaultComputerUseModelID
     ).id
+    @Published var isTutorModeEnabled: Bool = UserDefaults.standard.bool(forKey: "isTutorModeEnabled")
+    private let userActivityIdleDetector = UserActivityIdleDetector()
+    private var isTutorObservationInFlight = false
 
     func setSelectedModel(_ model: String) {
         let resolvedModel = OpenClickyModelCatalog.voiceResponseModel(withID: model).id
@@ -204,6 +208,17 @@ final class CompanionManager: ObservableObject {
         let resolvedModel = OpenClickyModelCatalog.computerUseModel(withID: model).id
         selectedComputerUseModel = resolvedModel
         UserDefaults.standard.set(resolvedModel, forKey: "selectedComputerUseModel")
+    }
+
+    func setTutorModeEnabled(_ enabled: Bool) {
+        isTutorModeEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: "isTutorModeEnabled")
+        if enabled {
+            ensureCursorOverlayVisibleForAgentTask()
+            startTutorIdleObservation()
+        } else {
+            stopTutorIdleObservation()
+        }
     }
 
     func setAnthropicAPIKey(_ apiKey: String) {
@@ -311,6 +326,9 @@ final class CompanionManager: ObservableObject {
         bindAudioPowerLevel()
         bindShortcutTransitions()
         bindAgentSessionObservation()
+        if isTutorModeEnabled {
+            startTutorIdleObservation()
+        }
         // Eagerly touch the Claude API so its TLS warmup handshake completes
         // before the first voice interaction.
         _ = claudeAPI
@@ -416,6 +434,7 @@ final class CompanionManager: ObservableObject {
         currentResponseTask?.cancel()
         currentResponseTask = nil
         shortcutTransitionCancellable?.cancel()
+        stopTutorIdleObservation()
         voiceStateCancellable?.cancel()
         audioPowerCancellable?.cancel()
         accessibilityCheckTimer?.invalidate()
@@ -879,7 +898,7 @@ final class CompanionManager: ObservableObject {
 
         flyBuddyTowardAgentDock(acknowledgement: acknowledgement)
         showAgentDockWindowNearCurrentScreen()
-        agentSession.submitPromptFromUI(instruction)
+        submitAgentPrompt(instruction, to: agentSession)
 
         currentResponseTask = Task {
             self.voiceState = .processing
@@ -985,8 +1004,118 @@ final class CompanionManager: ObservableObject {
     private func submitTextFollowUpForActiveAgent(_ submittedText: String) {
         let trimmedText = submittedText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedText.isEmpty else { return }
-        codexAgentSession.submitPromptFromUI(trimmedText)
+        submitAgentPrompt(trimmedText, to: codexAgentSession)
         showCodexHUD()
+    }
+
+    func submitAgentPromptFromUI(_ prompt: String) {
+        submitAgentPrompt(prompt, to: codexAgentSession)
+    }
+
+    private func submitAgentPrompt(_ prompt: String, to session: CodexAgentSession) {
+        let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPrompt.isEmpty else { return }
+
+        Task {
+            let screenContext = await prepareAgentScreenContextForNextTurn()
+            session.submitPromptFromUI(trimmedPrompt, screenContext: screenContext)
+        }
+    }
+
+    private func prepareAgentScreenContextForNextTurn() async -> CodexAgentScreenContext? {
+        if !handoffQueue.isEmpty {
+            let queuedRegions = handoffQueue
+            do {
+                let context = try writeQueuedHandoffScreenContext(queuedRegions)
+                handoffQueue.removeAll { queued in
+                    queuedRegions.contains { $0.id == queued.id }
+                }
+                return context
+            } catch {
+                print("OpenClicky Agent Mode: failed to write queued screen context: \(error)")
+            }
+        }
+
+        do {
+            let captures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG()
+            return try writeCapturedScreenContext(captures)
+        } catch {
+            print("OpenClicky Agent Mode: current screen context unavailable: \(error)")
+            return nil
+        }
+    }
+
+    private func writeQueuedHandoffScreenContext(_ queuedRegions: [HandoffQueuedRegionScreenshot]) throws -> CodexAgentScreenContext {
+        let directory = try createAgentScreenContextDirectory()
+        let batchID = Self.agentContextBatchID()
+        let attachments = try queuedRegions.enumerated().map { index, queuedRegion in
+            let fileURL = directory.appendingPathComponent("\(batchID)-handoff-\(index + 1).jpg", isDirectory: false)
+            try queuedRegion.imageData.write(to: fileURL, options: .atomic)
+
+            let rect = queuedRegion.selection.captureRect
+            let comment = queuedRegion.selection.comment.trimmingCharacters(in: .whitespacesAndNewlines)
+            let noteParts = [
+                "Selected region x:\(Int(rect.minX)) y:\(Int(rect.minY)) width:\(Int(rect.width)) height:\(Int(rect.height)).",
+                comment.isEmpty ? nil : "User note: \(comment)"
+            ].compactMap { $0 }
+
+            return CodexAgentScreenContextAttachment(
+                label: "Queued handoff region \(index + 1)",
+                fileURL: fileURL,
+                note: noteParts.joined(separator: " ")
+            )
+        }
+
+        return CodexAgentScreenContext(
+            source: "queued screen handoff",
+            capturedAt: Date(),
+            attachments: attachments
+        )
+    }
+
+    private func writeCapturedScreenContext(_ captures: [CompanionScreenCapture]) throws -> CodexAgentScreenContext {
+        let directory = try createAgentScreenContextDirectory()
+        let batchID = Self.agentContextBatchID()
+        let attachments = try captures.enumerated().map { index, capture in
+            let suffix = capture.isCursorScreen ? "primary" : "secondary-\(index + 1)"
+            let fileURL = directory.appendingPathComponent("\(batchID)-\(suffix).jpg", isDirectory: false)
+            try capture.imageData.write(to: fileURL, options: .atomic)
+
+            let note = "Image dimensions \(capture.screenshotWidthInPixels)x\(capture.screenshotHeightInPixels) pixels; display frame x:\(Int(capture.displayFrame.minX)) y:\(Int(capture.displayFrame.minY)) width:\(capture.displayWidthInPoints) height:\(capture.displayHeightInPoints)."
+
+            return CodexAgentScreenContextAttachment(
+                label: capture.label,
+                fileURL: fileURL,
+                note: note
+            )
+        }
+
+        return CodexAgentScreenContext(
+            source: "current desktop screenshot",
+            capturedAt: Date(),
+            attachments: attachments
+        )
+    }
+
+    private func createAgentScreenContextDirectory() throws -> URL {
+        let fileManager = FileManager.default
+        let base = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support", isDirectory: true)
+        let directory = base
+            .appendingPathComponent("OpenClicky", isDirectory: true)
+            .appendingPathComponent("AgentMode", isDirectory: true)
+            .appendingPathComponent("ScreenContext", isDirectory: true)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
+    private static func agentContextBatchID(date: Date = Date()) -> String {
+        let rawID = ISO8601DateFormatter().string(from: date)
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        let sanitized = rawID.unicodeScalars.map { scalar in
+            allowed.contains(scalar) ? String(scalar) : "-"
+        }.joined()
+        return sanitized + "-" + String(UUID().uuidString.prefix(8))
     }
 
     private func clearAgentDockCaption(for itemID: UUID) {
@@ -1085,6 +1214,27 @@ final class CompanionManager: ObservableObject {
     - user asks what html is: "html stands for hypertext markup language, it's basically the skeleton of every web page. curious how it connects to the css you're looking at? [POINT:none]"
     - user asks how to commit in xcode: "see that source control menu up top? click that and hit commit, or you can use command option c as a shortcut. [POINT:285,11:source control]"
     - element is on screen 2 (not where cursor is): "that's over on your other monitor — see the terminal window? [POINT:400,300:terminal:screen2]"
+    """
+
+    private static let tutorModeSystemPrompt = """
+    you're OpenClicky in tutor mode. the user wants to learn the app or workflow currently on screen, and you can see their focused window.
+
+    your job:
+    - proactively guide them one step at a time when they pause.
+    - point at the button, menu, field, panel, or visible area they should use next.
+    - if they completed a step, acknowledge it briefly and give the next step.
+    - if they appear off track, gently redirect.
+    - teach concepts only when they are useful for the next action.
+    - avoid repeating prior tutor observations; use the conversation history to continue.
+
+    style:
+    - short spoken response, lowercase, casual, no markdown, no emojis.
+    - do not claim you clicked or controlled anything. you can guide and point; the user controls the computer.
+
+    element pointing:
+    append exactly one [POINT:x,y:label] tag at the end when a visible target would help. use [POINT:none] only when pointing would not help.
+    the screenshot labels include pixel dimensions. use those dimensions as the coordinate space. origin (0,0) is top-left. x increases rightward, y increases downward.
+    if a screen number is present in the image label and the target is not the primary screen, append :screenN.
     """
 
     // MARK: - AI Response Pipeline
@@ -1252,6 +1402,125 @@ final class CompanionManager: ObservableObject {
                 scheduleTransientHideIfNeeded()
             }
         }
+    }
+
+    private func startTutorIdleObservation() {
+        userActivityIdleDetector.start()
+        bindTutorIdleObservation()
+    }
+
+    private func stopTutorIdleObservation() {
+        tutorIdleCancellable?.cancel()
+        tutorIdleCancellable = nil
+        userActivityIdleDetector.stop()
+        isTutorObservationInFlight = false
+    }
+
+    private func bindTutorIdleObservation() {
+        tutorIdleCancellable?.cancel()
+        tutorIdleCancellable = userActivityIdleDetector.$isUserIdle
+            .filter { $0 }
+            .sink { [weak self] _ in
+                guard let self,
+                      self.isTutorModeEnabled,
+                      self.voiceState == .idle,
+                      !self.elevenLabsTTSClient.isPlaying,
+                      !self.isTutorObservationInFlight else { return }
+
+                self.isTutorObservationInFlight = true
+                Task {
+                    await self.performTutorObservation()
+                    self.userActivityIdleDetector.observationDidComplete()
+                    self.isTutorObservationInFlight = false
+                }
+            }
+    }
+
+    private func performTutorObservation() async {
+        do {
+            ensureCursorOverlayVisibleForAgentTask()
+            voiceState = .processing
+
+            let screenCaptures = try await CompanionScreenCaptureUtility.captureFocusedWindowAsJPEG()
+            let labeledImages = screenCaptures.map { capture in
+                let dimensionInfo = " (image dimensions: \(capture.screenshotWidthInPixels)x\(capture.screenshotHeightInPixels) pixels)"
+                return (data: capture.imageData, label: capture.label + dimensionInfo)
+            }
+            let historyForAPI = conversationHistory.map { entry in
+                (userPlaceholder: entry.userTranscript, assistantResponse: entry.assistantResponse)
+            }
+
+            let fullResponseText = try await analyzeVoiceResponse(
+                images: labeledImages,
+                systemPrompt: Self.tutorModeSystemPrompt,
+                conversationHistory: historyForAPI,
+                userPrompt: "observe the focused window and guide me to the next useful learning step.",
+                onTextChunk: { _ in }
+            )
+
+            let parseResult = Self.parsePointingCoordinates(from: fullResponseText)
+            let spokenText = parseResult.spokenText
+
+            if let pointCoordinate = parseResult.coordinate,
+               let targetScreenCapture = tutorTargetScreenCapture(from: screenCaptures, screenNumber: parseResult.screenNumber) {
+                let globalLocation = globalPoint(
+                    fromScreenshotPoint: pointCoordinate,
+                    in: targetScreenCapture
+                )
+                voiceState = .idle
+                detectedElementScreenLocation = globalLocation
+                detectedElementDisplayFrame = targetScreenCapture.displayFrame
+                detectedElementBubbleText = Self.pointingBubbleText(for: parseResult.elementLabel)
+                ClickyAnalytics.trackElementPointed(elementLabel: parseResult.elementLabel)
+                print("Tutor pointing: (\(Int(pointCoordinate.x)), \(Int(pointCoordinate.y)))")
+            }
+
+            conversationHistory.append((
+                userTranscript: "[tutor observation]",
+                assistantResponse: spokenText
+            ))
+            if conversationHistory.count > 10 {
+                conversationHistory.removeFirst(conversationHistory.count - 10)
+            }
+
+            if !spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                try await elevenLabsTTSClient.speakText(spokenText) {
+                    self.voiceState = .responding
+                }
+            }
+        } catch is CancellationError {
+            // A normal voice interaction interrupted the tutor observation.
+        } catch {
+            print("Tutor observation error: \(error)")
+        }
+
+        voiceState = .idle
+        scheduleTransientHideIfNeeded()
+    }
+
+    private func tutorTargetScreenCapture(from screenCaptures: [CompanionScreenCapture], screenNumber: Int?) -> CompanionScreenCapture? {
+        if let screenNumber,
+           screenNumber >= 1,
+           screenNumber <= screenCaptures.count {
+            return screenCaptures[screenNumber - 1]
+        }
+
+        return screenCaptures.first(where: { $0.isCursorScreen }) ?? screenCaptures.first
+    }
+
+    private func globalPoint(fromScreenshotPoint point: CGPoint, in capture: CompanionScreenCapture) -> CGPoint {
+        let screenshotWidth = CGFloat(capture.screenshotWidthInPixels)
+        let screenshotHeight = CGFloat(capture.screenshotHeightInPixels)
+        let displayWidth = CGFloat(capture.displayWidthInPoints)
+        let displayHeight = CGFloat(capture.displayHeightInPoints)
+        let clampedX = max(0, min(point.x, screenshotWidth))
+        let clampedY = max(0, min(point.y, screenshotHeight))
+        let displayLocalX = clampedX * (displayWidth / screenshotWidth)
+        let displayLocalY = clampedY * (displayHeight / screenshotHeight)
+        return CGPoint(
+            x: displayLocalX + capture.displayFrame.origin.x,
+            y: (displayHeight - displayLocalY) + capture.displayFrame.origin.y
+        )
     }
 
     private func analyzeVoiceResponse(
@@ -1687,7 +1956,7 @@ final class CompanionManager: ObservableObject {
     func runSuggestedNextAction(_ actionTitle: String) {
         let trimmedActionTitle = actionTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedActionTitle.isEmpty else { return }
-        codexAgentSession.submitPromptFromUI(trimmedActionTitle)
+        submitAgentPrompt(trimmedActionTitle, to: codexAgentSession)
         showCodexHUD()
     }
 
@@ -1719,6 +1988,70 @@ final class CompanionManager: ObservableObject {
         codexAgentSession.warmUp()
         showCodexHUD()
     }
+
+    #if DEBUG
+    func debugTestCursorFlight() {
+        ensureCursorOverlayVisibleForAgentTask()
+        let screen = NSScreen.main ?? NSScreen.screens.first
+        guard let screen else { return }
+
+        detectedElementScreenLocation = CGPoint(x: screen.frame.midX, y: screen.frame.midY)
+        detectedElementDisplayFrame = screen.frame
+        detectedElementBubbleText = "Developer test"
+        latestVoiceResponseCard = ClickyResponseCard(
+            source: .voice,
+            rawText: "Developer cursor flight test armed at the center of the main screen.",
+            contextTitle: "Developer"
+        )
+    }
+
+    func debugShowResponseCard() {
+        latestVoiceResponseCard = ClickyResponseCard(
+            source: .voice,
+            rawText: "This is a developer smoke test for OpenClicky's compact response card. Suggested actions and dismiss behavior should remain usable from the panel and HUD.",
+            contextTitle: "Developer"
+        )
+    }
+
+    func debugCaptureAgentScreenContext() {
+        Task {
+            do {
+                let captures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG()
+                let context = try writeCapturedScreenContext(captures)
+                let fileSummary = context.attachments
+                    .map { $0.fileURL.lastPathComponent }
+                    .joined(separator: ", ")
+
+                latestVoiceResponseCard = ClickyResponseCard(
+                    source: .handoff,
+                    rawText: "Captured \(context.attachments.count) screen context file(s): \(fileSummary)",
+                    contextTitle: "Developer"
+                )
+            } catch {
+                latestVoiceResponseCard = ClickyResponseCard(
+                    source: .handoff,
+                    rawText: "Screen context capture failed: \(error.localizedDescription)",
+                    contextTitle: "Developer"
+                )
+            }
+        }
+    }
+
+    func debugResetTransientUI() {
+        currentResponseTask?.cancel()
+        currentResponseTask = nil
+        elevenLabsTTSClient.stopPlayback()
+        clearDetectedElementLocation()
+        dismissLatestResponseCard()
+        clearHandoffQueue()
+        voiceState = .idle
+
+        if !isClickyCursorEnabled {
+            overlayWindowManager.hideOverlay()
+            isOverlayVisible = false
+        }
+    }
+    #endif
 }
 
 private final class ClickyTextModePanel: NSPanel {
@@ -1899,6 +2232,67 @@ private struct ClickyTextModeInputView: View {
             return Color(hex: "#3A3006")
         default:
             return Color.white.opacity(0.88)
+        }
+    }
+}
+
+@MainActor
+private final class UserActivityIdleDetector: ObservableObject {
+    static let idleThresholdSeconds: TimeInterval = 3.0
+
+    @Published private(set) var isUserIdle = false
+
+    private var lastUserInputTimestamp = Date()
+    private var hasUserActedSinceLastObservation = true
+    private var globalEventMonitor: Any?
+    private var idleCheckTimer: Timer?
+
+    func start() {
+        stop()
+        lastUserInputTimestamp = Date()
+        hasUserActedSinceLastObservation = true
+
+        globalEventMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.mouseMoved, .leftMouseDown, .rightMouseDown, .keyDown, .scrollWheel, .leftMouseDragged]
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.recordUserActivity()
+            }
+        }
+
+        idleCheckTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.evaluateIdleState()
+            }
+        }
+    }
+
+    func stop() {
+        if let globalEventMonitor {
+            NSEvent.removeMonitor(globalEventMonitor)
+            self.globalEventMonitor = nil
+        }
+        idleCheckTimer?.invalidate()
+        idleCheckTimer = nil
+        isUserIdle = false
+    }
+
+    func observationDidComplete() {
+        hasUserActedSinceLastObservation = false
+        isUserIdle = false
+    }
+
+    private func recordUserActivity() {
+        lastUserInputTimestamp = Date()
+        hasUserActedSinceLastObservation = true
+        isUserIdle = false
+    }
+
+    private func evaluateIdleState() {
+        let secondsSinceLastInput = Date().timeIntervalSince(lastUserInputTimestamp)
+        let isNowIdle = secondsSinceLastInput >= Self.idleThresholdSeconds && hasUserActedSinceLastObservation
+        if isNowIdle != isUserIdle {
+            isUserIdle = isNowIdle
         }
     }
 }

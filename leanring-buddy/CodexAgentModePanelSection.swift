@@ -8,10 +8,13 @@ struct CodexAgentModePanelSection: View {
     var transcriptionProviderDisplayName: String
     var isClickyCursorEnabled: Bool
     var setClickyCursorEnabled: (Bool) -> Void
+    var isTutorModeEnabled: Bool
+    var setTutorModeEnabled: (Bool) -> Void
     var selectedCompanionModelID: String
     var setSelectedCompanionModel: (String) -> Void
     var selectedComputerUseModelID: String
     var setSelectedComputerUseModel: (String) -> Void
+    var submitAgentPrompt: (String) -> Void
     var setAnthropicAPIKey: (String) -> Void
     var setElevenLabsAPIKey: (String) -> Void
     var setElevenLabsVoiceID: (String) -> Void
@@ -230,7 +233,7 @@ struct CodexAgentModePanelSection: View {
         guard canRun else { return }
         let submitted = prompt
         prompt = ""
-        session.submitPromptFromUI(submitted)
+        submitAgentPrompt(submitted)
     }
 }
 
@@ -246,6 +249,8 @@ struct CodexAgentModeSettingsSheet: View {
     var transcriptionProviderDisplayName: String
     var isClickyCursorEnabled: Bool
     var setClickyCursorEnabled: (Bool) -> Void
+    var isTutorModeEnabled: Bool
+    var setTutorModeEnabled: (Bool) -> Void
     var selectedCompanionModelID: String
     var setSelectedCompanionModel: (String) -> Void
     var selectedComputerUseModelID: String
@@ -377,6 +382,7 @@ struct CodexAgentModeSettingsSheet: View {
                             )
 
                             clickyCursorToggleRow
+                            tutorModeToggleRow
                         }
                     }
 
@@ -681,6 +687,37 @@ struct CodexAgentModeSettingsSheet: View {
             Toggle("", isOn: Binding(
                 get: { isClickyCursorEnabled },
                 set: { setClickyCursorEnabled($0) }
+            ))
+            .toggleStyle(.switch)
+            .labelsHidden()
+            .tint(DS.Colors.accent)
+            .scaleEffect(0.7)
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 8)
+    }
+
+    private var tutorModeToggleRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "graduationcap")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(DS.Colors.textTertiary)
+                .frame(width: 14)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Tutor mode")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(DS.Colors.textSecondary)
+                Text("Guides you after short pauses")
+                    .font(.system(size: 8, weight: .medium))
+                    .foregroundColor(DS.Colors.textTertiary)
+            }
+
+            Spacer()
+
+            Toggle("", isOn: Binding(
+                get: { isTutorModeEnabled },
+                set: { setTutorModeEnabled($0) }
             ))
             .toggleStyle(.switch)
             .labelsHidden()
