@@ -51,6 +51,7 @@ private enum OpenClickySettingsSection: String, CaseIterable, Identifiable {
     case general
     case voice
     case pointing
+    case computerUse
     case agentMode
     case memory
     case app
@@ -62,6 +63,7 @@ private enum OpenClickySettingsSection: String, CaseIterable, Identifiable {
         case .general: return "General"
         case .voice: return "Voice"
         case .pointing: return "Pointing"
+        case .computerUse: return "Computer Use"
         case .agentMode: return "Agent Mode"
         case .memory: return "Memory"
         case .app: return "App"
@@ -73,6 +75,7 @@ private enum OpenClickySettingsSection: String, CaseIterable, Identifiable {
         case .general: return "gearshape"
         case .voice: return "waveform"
         case .pointing: return "cursorarrow.rays"
+        case .computerUse: return "macwindow.and.cursorarrow"
         case .agentMode: return "terminal"
         case .memory: return "books.vertical"
         case .app: return "app.badge"
@@ -83,6 +86,7 @@ private enum OpenClickySettingsSection: String, CaseIterable, Identifiable {
 struct OpenClickySettingsView: View {
     @ObservedObject var companionManager: CompanionManager
     @ObservedObject private var session: CodexAgentSession
+    @ObservedObject private var nativeComputerUseController: OpenClickyNativeComputerUseController
     @AppStorage(ClickyAccentTheme.userDefaultsKey) private var selectedAccentThemeID = ClickyAccentTheme.blue.rawValue
     @AppStorage(AppBundleConfiguration.userAnthropicAPIKeyDefaultsKey) private var userAnthropicAPIKey = ""
     @AppStorage(AppBundleConfiguration.userElevenLabsAPIKeyDefaultsKey) private var userElevenLabsAPIKey = ""
@@ -95,6 +99,7 @@ struct OpenClickySettingsView: View {
     init(companionManager: CompanionManager) {
         self.companionManager = companionManager
         self.session = companionManager.codexAgentSession
+        self.nativeComputerUseController = companionManager.nativeComputerUseController
     }
 
     var body: some View {
@@ -175,6 +180,8 @@ struct OpenClickySettingsView: View {
             return "Speech input, spoken response model, playback voice, and provider keys."
         case .pointing:
             return "Screen capture permissions and the model used for cursor pointing."
+        case .computerUse:
+            return "In-app CUA Swift control for focused-window context, app discovery, and targeted keyboard actions."
         case .agentMode:
             return "Background agents, Codex configuration, model, working directory, and dashboard access."
         case .memory:
@@ -193,6 +200,8 @@ struct OpenClickySettingsView: View {
             voicePanel
         case .pointing:
             pointingPanel
+        case .computerUse:
+            computerUsePanel
         case .agentMode:
             agentModePanel
         case .memory:
@@ -366,6 +375,70 @@ struct OpenClickySettingsView: View {
         }
     }
 
+    private var computerUsePanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            settingsGroup("Native CUA Swift") {
+                toggleRow(
+                    title: "Enable in-app computer use",
+                    subtitle: "Uses OpenClicky's own signed app permissions for focused-window context and targeted keyboard actions.",
+                    systemImageName: "macwindow.and.cursorarrow",
+                    isOn: Binding(
+                        get: { nativeComputerUseController.isEnabled },
+                        set: { companionManager.setNativeComputerUseEnabled($0) }
+                    )
+                )
+
+                valueRow(
+                    title: "Runtime status",
+                    subtitle: nativeComputerUseController.status.summary,
+                    systemImageName: nativeComputerUseController.status.isReadyForComputerUse ? "checkmark.circle" : "exclamationmark.triangle"
+                )
+
+                valueRow(
+                    title: "Focused target",
+                    subtitle: nativeComputerUseController.status.focusedTargetSummary,
+                    systemImageName: "scope"
+                )
+            }
+
+            settingsGroup("Actions") {
+                actionRow(title: "Refresh focused target", systemImageName: "arrow.clockwise") {
+                    companionManager.refreshNativeComputerUseFocusedTarget()
+                }
+                actionRow(title: "Refresh permission status", systemImageName: "checklist") {
+                    companionManager.refreshNativeComputerUseStatus()
+                }
+                actionRow(title: "Open Accessibility settings", systemImageName: "hand.raised") {
+                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+                }
+                actionRow(title: "Open Screen Recording settings", systemImageName: "rectangle.on.rectangle") {
+                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
+                }
+            }
+
+            settingsGroup("Agent Mode behavior") {
+                valueRow(
+                    title: "Screen context source",
+                    subtitle: nativeComputerUseController.isEnabled
+                        ? "Agent Mode first captures the focused target window through the native CUA Swift path, then falls back to all-screen capture if unavailable."
+                        : "Agent Mode uses the existing all-screen capture path until native computer use is enabled.",
+                    systemImageName: "photo.on.rectangle"
+                )
+                valueRow(
+                    title: "Existing CUA Driver MCP",
+                    subtitle: CuaDriverMCPConfiguration.resolvedCommandPath()
+                        ?? "Not installed locally. OpenClicky will auto-register upstream Cua Driver MCP when /Applications/CuaDriver.app or cua-driver is available.",
+                    systemImageName: "point.3.connected.trianglepath.dotted"
+                )
+                valueRow(
+                    title: "Bundled implementation",
+                    subtitle: "Embedded Swift adapted from CUA Driver's MIT app/window discovery, ScreenCaptureKit, and pid-keyboard patterns — no external MCP server required.",
+                    systemImageName: "shippingbox"
+                )
+            }
+        }
+    }
+
     private var agentModePanel: some View {
         VStack(alignment: .leading, spacing: 14) {
             settingsGroup("Agent Mode") {
@@ -476,6 +549,23 @@ struct OpenClickySettingsView: View {
             settingsGroup("Support") {
                 actionRow(title: "Report issues and star on GitHub", systemImageName: "star.bubble") {
                     openFeedbackInbox()
+                }
+            }
+
+            settingsGroup("Logs") {
+                valueRow(
+                    title: "Message log",
+                    subtitle: OpenClickyMessageLogStore.shared.currentLogFile.path,
+                    systemImageName: "doc.text.magnifyingglass"
+                )
+                actionRow(title: "Open log viewer", systemImageName: "list.bullet.rectangle") {
+                    companionManager.showLogViewerWindow()
+                }
+                actionRow(title: "Open raw message log", systemImageName: "doc.text") {
+                    openMessageLog()
+                }
+                actionRow(title: "Open logs folder", systemImageName: "folder") {
+                    openLogsFolder()
                 }
             }
 
@@ -726,5 +816,23 @@ struct OpenClickySettingsView: View {
     private func openFeedbackInbox() {
         guard let url = URL(string: "https://github.com/jasonkneen/openclicky/issues") else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    private func openMessageLog() {
+        OpenClickyMessageLogStore.shared.append(
+            lane: "app",
+            direction: "internal",
+            event: "settings.open_message_log"
+        )
+        NSWorkspace.shared.open(OpenClickyMessageLogStore.shared.currentLogFile)
+    }
+
+    private func openLogsFolder() {
+        OpenClickyMessageLogStore.shared.append(
+            lane: "app",
+            direction: "internal",
+            event: "settings.open_logs_folder"
+        )
+        NSWorkspace.shared.open(OpenClickyMessageLogStore.shared.logDirectory)
     }
 }

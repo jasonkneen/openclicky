@@ -168,6 +168,31 @@ class ClaudeAPI {
         request.httpBody = bodyData
         let payloadMB = Double(bodyData.count) / 1_048_576.0
         print("Claude streaming request: \(String(format: "%.1f", payloadMB))MB, \(images.count) image(s), model=\(model), url=\(apiURL.absoluteString)")
+        OpenClickyMessageLogStore.shared.append(
+            lane: "voice",
+            direction: "outgoing",
+            event: "claude.streaming.request",
+            fields: [
+                "model": model,
+                "url": apiURL.absoluteString,
+                "payloadBytes": bodyData.count,
+                "systemPrompt": systemPrompt,
+                "conversationHistory": conversationHistory.map {
+                    [
+                        "user": $0.userPlaceholder,
+                        "assistant": $0.assistantResponse
+                    ]
+                },
+                "userPrompt": userPrompt,
+                "images": images.map {
+                    [
+                        "label": $0.label,
+                        "bytes": $0.data.count,
+                        "mediaType": detectImageMediaType(for: $0.data)
+                    ]
+                }
+            ]
+        )
 
         // Use bytes streaming for SSE (Server-Sent Events)
         let (byteStream, response) = try await session.bytes(for: request)
@@ -188,6 +213,17 @@ class ClaudeAPI {
             }
             let errorBody = errorBodyChunks.joined(separator: "\n")
             let contentType = httpResponse.value(forHTTPHeaderField: "Content-Type") ?? "unknown"
+            OpenClickyMessageLogStore.shared.append(
+                lane: "voice",
+                direction: "incoming",
+                event: "claude.streaming.error",
+                fields: [
+                    "model": model,
+                    "statusCode": httpResponse.statusCode,
+                    "contentType": contentType,
+                    "body": errorBody
+                ]
+            )
             throw NSError(
                 domain: "ClaudeAPI",
                 code: httpResponse.statusCode,
@@ -228,6 +264,16 @@ class ClaudeAPI {
         }
 
         let duration = Date().timeIntervalSince(startTime)
+        OpenClickyMessageLogStore.shared.append(
+            lane: "voice",
+            direction: "incoming",
+            event: "claude.streaming.response",
+            fields: [
+                "model": model,
+                "duration": duration,
+                "text": accumulatedResponseText
+            ]
+        )
         return (text: accumulatedResponseText, duration: duration)
     }
 
@@ -281,6 +327,31 @@ class ClaudeAPI {
         request.httpBody = bodyData
         let payloadMB = Double(bodyData.count) / 1_048_576.0
         print("Claude request: \(String(format: "%.1f", payloadMB))MB, \(images.count) image(s), model=\(model), url=\(apiURL.absoluteString)")
+        OpenClickyMessageLogStore.shared.append(
+            lane: "voice",
+            direction: "outgoing",
+            event: "claude.request",
+            fields: [
+                "model": model,
+                "url": apiURL.absoluteString,
+                "payloadBytes": bodyData.count,
+                "systemPrompt": systemPrompt,
+                "conversationHistory": conversationHistory.map {
+                    [
+                        "user": $0.userPlaceholder,
+                        "assistant": $0.assistantResponse
+                    ]
+                },
+                "userPrompt": userPrompt,
+                "images": images.map {
+                    [
+                        "label": $0.label,
+                        "bytes": $0.data.count,
+                        "mediaType": detectImageMediaType(for: $0.data)
+                    ]
+                }
+            ]
+        )
 
         let (data, response) = try await session.data(for: request)
 
@@ -288,6 +359,17 @@ class ClaudeAPI {
               (200...299).contains(httpResponse.statusCode) else {
             let responseString = String(data: data, encoding: .utf8) ?? "Unknown error"
             let contentType = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type") ?? "unknown"
+            OpenClickyMessageLogStore.shared.append(
+                lane: "voice",
+                direction: "incoming",
+                event: "claude.error",
+                fields: [
+                    "model": model,
+                    "statusCode": (response as? HTTPURLResponse)?.statusCode ?? -1,
+                    "contentType": contentType,
+                    "body": responseString
+                ]
+            )
             throw NSError(
                 domain: "ClaudeAPI",
                 code: (response as? HTTPURLResponse)?.statusCode ?? -1,
@@ -307,6 +389,16 @@ class ClaudeAPI {
         }
 
         let duration = Date().timeIntervalSince(startTime)
+        OpenClickyMessageLogStore.shared.append(
+            lane: "voice",
+            direction: "incoming",
+            event: "claude.response",
+            fields: [
+                "model": model,
+                "duration": duration,
+                "text": text
+            ]
+        )
         return (text: text, duration: duration)
     }
 }

@@ -110,6 +110,16 @@ final class CodexProcessManager: @unchecked Sendable {
         }
         let requestWithID = CodexRPCRequest(id: requestID, method: request.method, params: request.params)
         let line = try requestWithID.encodedLine()
+        OpenClickyMessageLogStore.shared.append(
+            lane: "agent",
+            direction: "outgoing",
+            event: "codex.rpc.request",
+            fields: [
+                "id": requestID,
+                "method": request.method,
+                "params": request.params ?? [:]
+            ]
+        )
 
         return try await withCheckedThrowingContinuation { continuation in
             stateQueue.async { [weak self] in
@@ -126,6 +136,15 @@ final class CodexProcessManager: @unchecked Sendable {
         }
         let request = CodexRPCRequest(id: nil, method: method, params: params)
         let line = try request.encodedLine()
+        OpenClickyMessageLogStore.shared.append(
+            lane: "agent",
+            direction: "outgoing",
+            event: "codex.rpc.notification",
+            fields: [
+                "method": method,
+                "params": params ?? [:]
+            ]
+        )
         stateQueue.async { [weak self] in
             self?.writeLine(line)
         }
@@ -164,6 +183,14 @@ final class CodexProcessManager: @unchecked Sendable {
     private func consumeStderr(_ data: Data) {
         stderrBuffer.append(data)
         consumeLines(from: &stderrBuffer) { [weak self] line in
+            OpenClickyMessageLogStore.shared.append(
+                lane: "agent",
+                direction: "incoming",
+                event: "codex.stderr",
+                fields: [
+                    "line": line
+                ]
+            )
             DispatchQueue.main.async {
                 self?.onStderrLine?(line)
             }
@@ -184,6 +211,12 @@ final class CodexProcessManager: @unchecked Sendable {
         guard let data = line.data(using: .utf8) else { return }
         do {
             guard let message = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+            OpenClickyMessageLogStore.shared.append(
+                lane: "agent",
+                direction: "incoming",
+                event: "codex.rpc.message",
+                fields: message
+            )
             if let id = CodexJSON.int(message["id"]) {
                 let continuation = pending.removeValue(forKey: id)
                 if let error = CodexJSON.dictionary(message["error"]) {

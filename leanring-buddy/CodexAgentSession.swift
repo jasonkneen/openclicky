@@ -250,7 +250,9 @@ final class CodexAgentSession: ObservableObject, Identifiable {
         - Work as an independent background agent. Each OpenClicky agent session has its own Codex runtime, thread, and process; do not assume another agent has your local state.
         - Persistent memory file: \(homeManager.persistentMemoryFile.path)
         - Learned skills directory: \(homeManager.learnedSkillsDirectory.path)
+        - Log review comments file: \(OpenClickyMessageLogStore.shared.agentReviewCommentsFile.path)
         - Before working, read the persistent memory file if it exists and check learned skills for a matching workflow.
+        - If the user asks you to fix OpenClicky behavior, tune prompts, or review flagged logs, read the log review comments file and address those comments as concrete issues.
         - Do not say you cannot remember outside the current conversation. Use the persistent memory file.
         - Update persistent memory when you learn stable preferences, useful project facts, task outcomes, file locations, or workflow context.
         - When you complete a new repeatable workflow, create or update a learned skill at \(homeManager.learnedSkillsDirectory.path)/<snake_case_workflow_name>/SKILL.md. For example, creating an Apple Note should create or update create_apple_note.
@@ -296,6 +298,8 @@ final class CodexAgentSession: ObservableObject, Identifiable {
         Persistent memory is mandatory. Read \(layout.persistentMemoryFile.path) before task work, then update it when useful durable context is learned. Never tell the user you cannot remember outside the current conversation; use this memory file instead.
 
         Self-improving workflow skills are mandatory. Before starting a workflow, check \(layout.learnedSkillsDirectory.path) for a matching learned skill. After completing a new repeatable workflow, create or update \(layout.learnedSkillsDirectory.path)/<snake_case_workflow_name>/SKILL.md with the exact steps, tools, paths, and gotchas that made the workflow succeed. Example: creating an Apple Note should produce \(layout.learnedSkillsDirectory.path)/create_apple_note/SKILL.md.
+
+        Log review comments are available at \(OpenClickyMessageLogStore.shared.agentReviewCommentsFile.path). When the user asks you to fix issues discovered from logs, read that file and treat each comment as actionable review context.
 
         You are allowed to help with computer-use tasks. When the user asks you to open an app, switch apps, click, type, scroll, inspect the screen, or otherwise operate the Mac, use the available Codex computer-use/app-server capabilities to do it instead of only explaining how. If an action is unavailable in the current runtime, say that clearly and give the closest useful next step.
 

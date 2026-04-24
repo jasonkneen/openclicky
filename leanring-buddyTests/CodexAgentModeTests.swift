@@ -42,6 +42,48 @@ struct CodexAgentModeTests {
         #expect(rendered.contains("multi_agent = true"))
     }
 
+    @Test func codexConfigRendersExistingCuaDriverMCPServerWhenAvailable() throws {
+        let template = ClickyCodexConfigTemplate(
+            model: "gpt-5.5",
+            reasoningEffort: "medium",
+            workerBaseURL: URL(string: "https://api.openai.com/v1")!,
+            includeOpenAIDeveloperDocsMCP: false,
+            cuaDriverMCPCommand: "/Applications/CuaDriver.app/Contents/MacOS/cua-driver"
+        )
+
+        let rendered = template.render()
+
+        #expect(rendered.contains("[mcp_servers.cuaDriver]"))
+        #expect(rendered.contains("command = \"/Applications/CuaDriver.app/Contents/MacOS/cua-driver\""))
+        #expect(rendered.contains("args = [\"mcp\"]"))
+        #expect(rendered.contains("[mcp_servers.cuaDriver.env]"))
+        #expect(rendered.contains("CUA_DRIVER_TELEMETRY_ENABLED = \"false\""))
+        #expect(rendered.contains("CUA_TELEMETRY_ENABLED = \"false\""))
+    }
+
+    @Test func codexConfigOmitsCuaDriverMCPServerWhenUnavailable() throws {
+        let template = ClickyCodexConfigTemplate(
+            model: "gpt-5.5",
+            reasoningEffort: "medium",
+            workerBaseURL: URL(string: "https://api.openai.com/v1")!,
+            includeOpenAIDeveloperDocsMCP: false,
+            cuaDriverMCPCommand: nil
+        )
+
+        let rendered = template.render()
+
+        #expect(!rendered.contains("[mcp_servers.cuaDriver]"))
+        #expect(!rendered.contains("CUA_DRIVER_TELEMETRY_ENABLED"))
+    }
+
+    @Test func cuaDriverMCPConfigurationPrefersExplicitOpenClickyOverride() throws {
+        let command = CuaDriverMCPConfiguration.resolvedCommandPath(
+            environment: [CuaDriverMCPConfiguration.environmentOverrideKey: "/tmp/custom-cua-driver"]
+        )
+
+        #expect(command == "/tmp/custom-cua-driver")
+    }
+
     @Test func codexHomeManagerUsesOpenClickyResourceNames() throws {
         let manager = CodexHomeManager(
             fileManager: .default,

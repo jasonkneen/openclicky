@@ -93,7 +93,9 @@ final class CompanionManager: ObservableObject {
     let textModeWindowManager = ClickyTextModeWindowManager()
     let agentDockWindowManager = ClickyAgentDockWindowManager()
     let settingsWindowManager = OpenClickySettingsWindowManager()
+    let logViewerWindowManager = OpenClickyLogViewerWindowManager()
     let codexHomeManager = CodexHomeManager()
+    let nativeComputerUseController = OpenClickyNativeComputerUseController()
     @Published private(set) var codexAgentSessions: [CodexAgentSession]
     @Published private(set) var activeCodexAgentSessionID: UUID
     let codexHUDWindowManager = CodexHUDWindowManager()
@@ -237,8 +239,24 @@ final class CompanionManager: ObservableObject {
         UserDefaults.standard.set(resolvedModel, forKey: "selectedComputerUseModel")
     }
 
+    func setNativeComputerUseEnabled(_ enabled: Bool) {
+        nativeComputerUseController.setEnabled(enabled)
+    }
+
+    func refreshNativeComputerUseStatus() {
+        nativeComputerUseController.refreshStatus()
+    }
+
+    func refreshNativeComputerUseFocusedTarget() {
+        _ = nativeComputerUseController.refreshFocusedTarget()
+    }
+
     func showSettingsWindow() {
         settingsWindowManager.show(companionManager: self)
+    }
+
+    func showLogViewerWindow() {
+        logViewerWindowManager.show()
     }
 
     func setTutorModeEnabled(_ enabled: Bool) {
@@ -837,6 +855,14 @@ final class CompanionManager: ObservableObject {
     private func handleFinalVoiceTranscript(_ finalTranscript: String) {
         lastTranscript = finalTranscript
         print("Companion received transcript: \(finalTranscript)")
+        OpenClickyMessageLogStore.shared.append(
+            lane: "voice",
+            direction: "incoming",
+            event: "voice.transcript",
+            fields: [
+                "text": finalTranscript
+            ]
+        )
         ClickyAnalytics.trackUserMessageSent(transcript: finalTranscript)
         if submitPendingAgentVoiceFollowUp(finalTranscript) {
             return
@@ -853,6 +879,22 @@ final class CompanionManager: ObservableObject {
     // MARK: - Companion Prompt
 
     private func startAgentTaskIfRequested(from transcript: String) -> Bool {
+        if let taskCreationInstruction = Self.agentTaskCreationInstruction(from: transcript) {
+            guard !taskCreationInstruction.isEmpty else {
+                speakShortSystemResponse("what should the agent do?")
+                return true
+            }
+
+            print("OpenClicky agent task creation request detected: \(taskCreationInstruction)")
+            startVoiceAgentTask(instruction: taskCreationInstruction)
+            return true
+        }
+
+        if Self.isIncompleteAgentTaskCreationRequest(from: transcript) {
+            speakShortSystemResponse("what should the agent do?")
+            return true
+        }
+
         let explicitInstruction = Self.clickyAgentInstruction(from: transcript)
 
         if let explicitInstruction {
@@ -1179,6 +1221,74 @@ final class CompanionManager: ObservableObject {
             .trimmingCharacters(in: CharacterSet(charactersIn: " \n\t.,:;!?-"))
     }
 
+    private static func agentTaskCreationInstruction(from transcript: String) -> String? {
+        let candidate = normalizedCommandCandidate(from: transcript)
+        guard !candidate.isEmpty else { return nil }
+
+        let patterns = [
+            #"(?i)^\s*(?:(?:clicky|openclicky)\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:create|start|spawn|run|launch|kick\s+off|set\s+up)\s+(?:an?\s+|the\s+)?(?:new\s+)?(?:background\s+)?(?:agent|codex)\s*(?:task|job|session)?\s+(?:to|for|that|which|who)?\s*(.+?)\s*$"#,
+            #"(?i)^\s*(?:(?:clicky|openclicky)\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:ask|tell|have|get)\s+(?:an?\s+|the\s+)?(?:agent|codex)\s+to\s+(.+?)\s*$"#
+        ]
+
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(candidate.startIndex..<candidate.endIndex, in: candidate)
+            guard let match = regex.firstMatch(in: candidate, range: range),
+                  let instructionRange = Range(match.range(at: 1), in: candidate) else { continue }
+            let instruction = cleanedAgentTaskInstruction(String(candidate[instructionRange]))
+            return isAgentTaskPlaceholderInstruction(instruction) ? nil : instruction
+        }
+
+        return nil
+    }
+
+    private static func isIncompleteAgentTaskCreationRequest(from transcript: String) -> Bool {
+        let candidate = normalizedCommandCandidate(from: transcript)
+        guard !candidate.isEmpty else { return false }
+
+        let patterns = [
+            #"(?i)^\s*(?:(?:clicky|openclicky)\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:create|start|spawn|run|launch|kick\s+off|set\s+up)\s+(?:an?\s+|the\s+)?(?:new\s+)?(?:background\s+)?(?:agent|codex)\s*(?:task|job|session)?[\s\.\!\?]*$"#,
+            #"(?i)^\s*(?:(?:clicky|openclicky)\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:ask|tell|have|get)\s+(?:an?\s+|the\s+)?(?:agent|codex)(?:\s+to)?[\s\.\!\?]*$"#
+        ]
+
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(candidate.startIndex..<candidate.endIndex, in: candidate)
+            if regex.firstMatch(in: candidate, range: range) != nil {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    private static func cleanedAgentTaskInstruction(_ instruction: String) -> String {
+        instruction
+            .trimmingCharacters(in: CharacterSet(charactersIn: " \n\t.,:;!?-"))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func isAgentTaskPlaceholderInstruction(_ instruction: String) -> Bool {
+        let normalized = instruction
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return ["agent", "task", "job", "session", "agent task", "agent job", "codex task"].contains(normalized)
+    }
+
+    private static func agentTaskDirective(from responseText: String) -> String? {
+        let pattern = #"(?is)\[AGENT_TASK:\s*(.+?)\s*\]"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(responseText.startIndex..<responseText.endIndex, in: responseText)
+        guard let match = regex.firstMatch(in: responseText, range: range),
+              let instructionRange = Range(match.range(at: 1), in: responseText) else {
+            return nil
+        }
+
+        let instruction = cleanedAgentTaskInstruction(String(responseText[instructionRange]))
+        return instruction.isEmpty ? nil : instruction
+    }
+
     private static func localAppOpenRequest(from transcript: String) -> OpenClickyAppOpenRequest? {
         let trimmedTranscript = normalizedCommandCandidate(from: transcript)
         guard !trimmedTranscript.isEmpty else { return nil }
@@ -1436,6 +1546,16 @@ final class CompanionManager: ObservableObject {
         if agentDockItems.count > 6 {
             agentDockItems.removeFirst(agentDockItems.count - 6)
         }
+        OpenClickyMessageLogStore.shared.append(
+            lane: "agent",
+            direction: "outgoing",
+            event: "openclicky.agent_task.created",
+            fields: [
+                "sessionID": agentSession.id.uuidString,
+                "title": agentSession.title,
+                "instruction": instruction
+            ]
+        )
 
         latestVoiceResponseCard = ClickyResponseCard(
             source: .voice,
@@ -1616,6 +1736,15 @@ final class CompanionManager: ObservableObject {
         }
 
         do {
+            if nativeComputerUseController.isEnabled {
+                do {
+                    let capture = try await nativeComputerUseController.captureFocusedWindowAsJPEG()
+                    return try writeNativeComputerUseScreenContext(capture)
+                } catch {
+                    print("OpenClicky Agent Mode: native CUA Swift focused-window context unavailable: \(error)")
+                }
+            }
+
             let captures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG()
             return try writeCapturedScreenContext(captures)
         } catch {
@@ -1649,6 +1778,25 @@ final class CompanionManager: ObservableObject {
             source: "queued screen handoff",
             capturedAt: Date(),
             attachments: attachments
+        )
+    }
+
+    private func writeNativeComputerUseScreenContext(_ capture: OpenClickyComputerUseWindowCapture) throws -> CodexAgentScreenContext {
+        let directory = try createAgentScreenContextDirectory()
+        let batchID = Self.agentContextBatchID()
+        let fileURL = directory.appendingPathComponent("\(batchID)-cua-swift-window.jpg", isDirectory: false)
+        try capture.imageData.write(to: fileURL, options: .atomic)
+
+        return CodexAgentScreenContext(
+            source: "native CUA Swift focused-window context",
+            capturedAt: Date(),
+            attachments: [
+                CodexAgentScreenContextAttachment(
+                    label: capture.label,
+                    fileURL: fileURL,
+                    note: capture.agentContextNote
+                )
+            ]
         )
     }
 
@@ -1771,6 +1919,7 @@ final class CompanionManager: ObservableObject {
     - if the screenshot doesn't seem relevant to their question, just answer the question directly.
     - you can help with anything — coding, writing, general knowledge, brainstorming.
     - OpenClicky can open apps and use the computer through Agent Mode. direct action requests like "open chrome", "click that", "type this", "scroll down", or "switch to safari" are normally routed to Agent Mode before you answer. if the user asks whether you can do those things, say yes: OpenClicky can do that through Agent Mode.
+    - if the user asks you to create, start, spawn, run, launch, or set up an agent task and that request reaches this voice model, do not say you will do it in normal prose. return exactly [AGENT_TASK: the task the agent should do] and no other text. OpenClicky will create the background agent from that directive.
     - you do not have live web, search, or weather tools in this voice path. for current weather, live news, prices, schedules, or anything time-sensitive that is not visible on screen, say that live lookup is not wired into voice yet and suggest using agent mode for a live research task. do not invent current weather.
     - never say "simply" or "just".
     - don't read out code verbatim. describe what the code does or what needs to change conversationally.
@@ -1880,6 +2029,11 @@ final class CompanionManager: ObservableObject {
                 )
 
                 guard !Task.isCancelled else { return }
+
+                if let agentInstruction = Self.agentTaskDirective(from: fullResponseText) {
+                    startVoiceAgentTask(instruction: agentInstruction)
+                    return
+                }
 
                 // Parse the [POINT:...] tag from Claude's response
                 let parseResult = Self.parsePointingCoordinates(from: fullResponseText)
@@ -1996,6 +2150,15 @@ final class CompanionManager: ObservableObject {
             } catch {
                 ClickyAnalytics.trackResponseError(error: error.localizedDescription)
                 print("⚠️ Companion response error: \(error)")
+                OpenClickyMessageLogStore.shared.append(
+                    lane: "voice",
+                    direction: "incoming",
+                    event: "voice.response_error",
+                    fields: [
+                        "transcript": transcript,
+                        "error": error.localizedDescription
+                    ]
+                )
                 speakResponseFailureFallback(error)
             }
 

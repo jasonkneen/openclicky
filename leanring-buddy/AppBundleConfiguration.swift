@@ -16,6 +16,7 @@ enum AppBundleConfiguration {
     static let userDeepgramAPIKeyDefaultsKey = "openClickyDeepgramAPIKey"
     static let userVoiceTranscriptionProviderDefaultsKey = "openClickyVoiceTranscriptionProvider"
     static let userAdvancedModeDefaultsKey = "openClickyAdvancedModeEnabled"
+    static let userNativeComputerUseDefaultsKey = "openClickyNativeComputerUseEnabled"
 
     static func postHogAPIKey() -> String? {
         stringValue(

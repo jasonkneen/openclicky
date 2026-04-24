@@ -11,6 +11,7 @@ struct ClickyCodexConfigTemplate: Equatable {
     var bundledSkillsDirectoryName: String
     var learnedSkillsDirectoryName: String
     var includeOpenAIDeveloperDocsMCP: Bool
+    var cuaDriverMCPCommand: String?
 
     init(
         model: String = OpenClickyModelCatalog.defaultCodexActionsModelID,
@@ -19,7 +20,8 @@ struct ClickyCodexConfigTemplate: Equatable {
         modelInstructionsFileName: String = "OpenClickyModelInstructions.md",
         bundledSkillsDirectoryName: String = "OpenClickyBundledSkills",
         learnedSkillsDirectoryName: String = "OpenClickyLearnedSkills",
-        includeOpenAIDeveloperDocsMCP: Bool = true
+        includeOpenAIDeveloperDocsMCP: Bool = true,
+        cuaDriverMCPCommand: String? = CuaDriverMCPConfiguration.resolvedCommandPath()
     ) {
         self.model = model
         self.reasoningEffort = reasoningEffort
@@ -28,6 +30,7 @@ struct ClickyCodexConfigTemplate: Equatable {
         self.bundledSkillsDirectoryName = bundledSkillsDirectoryName
         self.learnedSkillsDirectoryName = learnedSkillsDirectoryName
         self.includeOpenAIDeveloperDocsMCP = includeOpenAIDeveloperDocsMCP
+        self.cuaDriverMCPCommand = cuaDriverMCPCommand
     }
 
     var openAICompatibleEndpoint: URL {
@@ -80,6 +83,19 @@ struct ClickyCodexConfigTemplate: Equatable {
             ])
         }
 
+        if let cuaDriverMCPCommand = normalizedOptionalString(cuaDriverMCPCommand) {
+            lines.append(contentsOf: [
+                "",
+                "[mcp_servers.cuaDriver]",
+                "command = \"\(escape(cuaDriverMCPCommand))\"",
+                "args = [\"mcp\"]",
+                "",
+                "[mcp_servers.cuaDriver.env]",
+                "CUA_DRIVER_TELEMETRY_ENABLED = \"false\"",
+                "CUA_TELEMETRY_ENABLED = \"false\""
+            ])
+        }
+
         lines.append(contentsOf: [
             "",
             "[[skills.config]]",
@@ -100,10 +116,42 @@ struct ClickyCodexConfigTemplate: Equatable {
         ClickyCodexBackend.isDefaultOpenAIBaseURL(workerBaseURL) ? "chatgpt" : "apikey"
     }
 
+    private func normalizedOptionalString(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     private func escape(_ value: String) -> String {
         value
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
+    }
+}
+
+enum CuaDriverMCPConfiguration {
+    static let environmentOverrideKey = "OPENCLICKY_CUA_DRIVER_MCP_COMMAND"
+    static let knownCommandPaths = [
+        "/Applications/CuaDriver.app/Contents/MacOS/cua-driver",
+        "/usr/local/bin/cua-driver",
+        "/opt/homebrew/bin/cua-driver"
+    ]
+
+    static func resolvedCommandPath(
+        fileManager: FileManager = .default,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> String? {
+        if let override = normalized(environment[environmentOverrideKey]) {
+            return override
+        }
+
+        return knownCommandPaths.first { fileManager.isExecutableFile(atPath: $0) || fileManager.fileExists(atPath: $0) }
+    }
+
+    private static func normalized(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 
