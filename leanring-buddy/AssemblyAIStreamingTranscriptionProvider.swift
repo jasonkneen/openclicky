@@ -26,16 +26,20 @@ final class AssemblyAIStreamingTranscriptionProvider: BuddyTranscriptionProvider
     let displayName = "AssemblyAI"
     let requiresSpeechRecognitionPermission = false
 
+    private let apiKey = AppBundleConfiguration.assemblyAIAPIKey()
     private let tokenProxyURLString = AppBundleConfiguration.stringValue(forKey: "AssemblyAITokenProxyURL")
 
     var isConfigured: Bool {
+        if apiKey != nil {
+            return true
+        }
         guard let tokenProxyURL = resolvedTokenProxyURL else { return false }
         return tokenProxyURL.absoluteString != Self.placeholderTokenProxyURL
     }
 
     var unavailableExplanation: String? {
         guard !isConfigured else { return nil }
-        return "AssemblyAI streaming is not configured. Add AssemblyAITokenProxyURL to Info.plist."
+        return "AssemblyAI streaming is not configured. Add an AssemblyAI API key or AssemblyAITokenProxyURL."
     }
 
     /// Single long-lived URLSession shared across all streaming sessions.
@@ -50,18 +54,23 @@ final class AssemblyAIStreamingTranscriptionProvider: BuddyTranscriptionProvider
         onFinalTranscriptReady: @escaping (String) -> Void,
         onError: @escaping (Error) -> Void
     ) async throws -> any BuddyStreamingTranscriptionSession {
-        guard let resolvedTokenProxyURL else {
+        guard apiKey != nil || resolvedTokenProxyURL != nil else {
             throw AssemblyAIStreamingTranscriptionProviderError(
                 message: unavailableExplanation ?? "AssemblyAI streaming is not configured."
             )
         }
 
-        // Fetch a fresh temporary token from the proxy before each session
-        let temporaryToken = try await fetchTemporaryToken(from: resolvedTokenProxyURL)
-        print("🎙️ AssemblyAI: fetched temporary token (\(temporaryToken.prefix(20))...)")
+        let temporaryToken: String?
+        if let resolvedTokenProxyURL {
+            // Fetch a fresh temporary token from the proxy before each session
+            temporaryToken = try await fetchTemporaryToken(from: resolvedTokenProxyURL)
+            print("🎙️ AssemblyAI: fetched temporary token")
+        } else {
+            temporaryToken = nil
+        }
 
         let session = AssemblyAIStreamingTranscriptionSession(
-            apiKey: nil,
+            apiKey: apiKey,
             temporaryToken: temporaryToken,
             urlSession: sharedWebSocketURLSession,
             keyterms: keyterms,
@@ -159,6 +168,7 @@ private final class AssemblyAIStreamingTranscriptionSession: NSObject, BuddyStre
     private var activeTurnTranscriptText = ""
     private var storedTurnTranscriptsByOrder: [Int: StoredTurnTranscript] = [:]
     private var explicitFinalTranscriptDeadlineWorkItem: DispatchWorkItem?
+    private var isCancelled = false
 
     init(
         apiKey: String?,
@@ -230,6 +240,7 @@ private final class AssemblyAIStreamingTranscriptionSession: NSObject, BuddyStre
 
     func cancel() {
         stateQueue.async {
+            self.isCancelled = true
             self.explicitFinalTranscriptDeadlineWorkItem?.cancel()
             self.explicitFinalTranscriptDeadlineWorkItem = nil
         }
@@ -415,6 +426,8 @@ private final class AssemblyAIStreamingTranscriptionSession: NSObject, BuddyStre
     private func failSession(with error: Error) {
         resolveReadyContinuationIfNeeded(with: .failure(error))
         stateQueue.async {
+            guard !self.isCancelled else { return }
+
             let latestTranscriptText = self.bestAvailableTranscriptText()
 
             if self.isAwaitingExplicitFinalTranscript

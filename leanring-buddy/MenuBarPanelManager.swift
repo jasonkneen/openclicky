@@ -32,6 +32,7 @@ final class MenuBarPanelManager: NSObject {
     private var clickOutsideMonitor: Any?
     private var dismissPanelObserver: NSObjectProtocol?
     private var contentSizeObserver: NSObjectProtocol?
+    private var contentResizeWorkItem: DispatchWorkItem?
     private var isPanelPinned = false
 
     private let companionManager: CompanionManager
@@ -149,12 +150,13 @@ final class MenuBarPanelManager: NSObject {
     // MARK: - Panel Lifecycle
 
     private func showPanel() {
+        let isCreatingPanel = panel == nil
         if panel == nil {
             createPanel()
         }
 
         if !isPanelPinned {
-            positionPanelBelowStatusItem()
+            positionPanelBelowStatusItem(allowFittingSize: !isCreatingPanel)
         } else {
             enforcePanelMinimumSize()
         }
@@ -162,6 +164,10 @@ final class MenuBarPanelManager: NSObject {
         panel?.makeKeyAndOrderFront(nil)
         panel?.orderFrontRegardless()
         installClickOutsideMonitor()
+
+        if isCreatingPanel {
+            resizeVisiblePanelToCurrentContent(after: 0.08)
+        }
     }
 
     private func hidePanel() {
@@ -218,7 +224,7 @@ final class MenuBarPanelManager: NSObject {
         applyPinnedPanelBehavior()
     }
 
-    private func positionPanelBelowStatusItem() {
+    private func positionPanelBelowStatusItem(allowFittingSize: Bool = true) {
         guard let panel else { return }
         guard let buttonWindow = statusItem?.button?.window else { return }
 
@@ -235,7 +241,10 @@ final class MenuBarPanelManager: NSObject {
         )
         let maximumPanelHeight = min(availablePanelHeight, transientPanelMaximumContentHeight)
 
-        let actualPanelHeight = preferredPanelHeight(maximumPanelHeight: maximumPanelHeight)
+        let actualPanelHeight = preferredPanelHeight(
+            maximumPanelHeight: maximumPanelHeight,
+            allowFittingSize: allowFittingSize
+        )
 
         // Horizontally center the panel beneath the status item icon
         let currentPanelWidth = max(panel.frame.width, panelWidth)
@@ -254,21 +263,28 @@ final class MenuBarPanelManager: NSObject {
     }
 
     private func resizeVisiblePanelToCurrentContent() {
+        resizeVisiblePanelToCurrentContent(after: 0.03)
+    }
+
+    private func resizeVisiblePanelToCurrentContent(after delay: TimeInterval) {
         guard let panel, panel.isVisible else { return }
 
-        DispatchQueue.main.async {
+        contentResizeWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self, let panel = self.panel, panel.isVisible else { return }
             if self.isPanelPinned {
                 self.resizePinnedPanelToCurrentContent()
             } else {
                 self.positionPanelBelowStatusItem()
             }
         }
+        contentResizeWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
     }
 
-    private func preferredPanelHeight(maximumPanelHeight: CGFloat) -> CGFloat {
-        let fittingSize = panel?.contentView?.fittingSize ?? CGSize(width: panelWidth, height: panelHeight)
-        let measuredPanelHeight = max(panelMinimumSize.height, fittingSize.height)
-        return min(measuredPanelHeight, maximumPanelHeight)
+    private func preferredPanelHeight(maximumPanelHeight: CGFloat, allowFittingSize: Bool = true) -> CGFloat {
+        let currentHeight = panel?.frame.height ?? panelHeight
+        return min(max(panelMinimumSize.height, currentHeight), maximumPanelHeight)
     }
 
     private func resizePinnedPanelToCurrentContent() {

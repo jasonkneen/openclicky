@@ -12,6 +12,9 @@ enum AppBundleConfiguration {
     static let userElevenLabsAPIKeyDefaultsKey = "openClickyElevenLabsAPIKey"
     static let userElevenLabsVoiceIDDefaultsKey = "openClickyElevenLabsVoiceID"
     static let userCodexAgentAPIKeyDefaultsKey = "openClickyCodexAgentAPIKey"
+    static let userAssemblyAIAPIKeyDefaultsKey = "openClickyAssemblyAIAPIKey"
+    static let userDeepgramAPIKeyDefaultsKey = "openClickyDeepgramAPIKey"
+    static let userVoiceTranscriptionProviderDefaultsKey = "openClickyVoiceTranscriptionProvider"
 
     static func postHogAPIKey() -> String? {
         stringValue(
@@ -35,6 +38,21 @@ enum AppBundleConfiguration {
             forKey: "OpenAIAPIKey",
             environmentKeys: ["OPENAI_API_KEY"]
         ) ?? localDevelopmentEnvironmentValue(forKey: "OPENAI_API_KEY")
+    }
+
+    static func assemblyAIAPIKey() -> String? {
+        userDefaultsValue(forKey: userAssemblyAIAPIKeyDefaultsKey) ?? stringValue(
+            forKey: "AssemblyAIAPIKey",
+            environmentKeys: ["ASSEMBLYAI_API_KEY", "ASSEMBLY_AI_API_KEY"]
+        ) ?? localDevelopmentEnvironmentValue(forKey: "ASSEMBLYAI_API_KEY")
+            ?? localDevelopmentEnvironmentValue(forKey: "ASSEMBLY_AI_API_KEY")
+    }
+
+    static func deepgramAPIKey() -> String? {
+        userDefaultsValue(forKey: userDeepgramAPIKeyDefaultsKey) ?? stringValue(
+            forKey: "DeepgramAPIKey",
+            environmentKeys: ["DEEPGRAM_API_KEY"]
+        ) ?? localDevelopmentEnvironmentValue(forKey: "DEEPGRAM_API_KEY")
     }
 
     static func elevenLabsAPIKey() -> String? {

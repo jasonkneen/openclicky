@@ -38,6 +38,11 @@ struct ClickyAgentDockItem: Identifiable, Equatable {
     var createdAt: Date
 }
 
+private struct OpenClickyAppOpenRequest {
+    let appName: String
+    let instruction: String
+}
+
 @MainActor
 final class CompanionManager: ObservableObject {
     @Published private(set) var voiceState: CompanionVoiceState = .idle
@@ -84,6 +89,7 @@ final class CompanionManager: ObservableObject {
     let overlayWindowManager = OverlayWindowManager()
     let textModeWindowManager = ClickyTextModeWindowManager()
     let agentDockWindowManager = ClickyAgentDockWindowManager()
+    let codexHomeManager = CodexHomeManager()
     @Published private(set) var codexAgentSessions: [CodexAgentSession]
     @Published private(set) var activeCodexAgentSessionID: UUID
     let codexHUDWindowManager = CodexHUDWindowManager()
@@ -101,6 +107,11 @@ final class CompanionManager: ObservableObject {
     private static let openAIAPIKey = AppBundleConfiguration.openAIAPIKey()
     private static let elevenLabsAPIKey = AppBundleConfiguration.elevenLabsAPIKey()
     private static let elevenLabsVoiceID = AppBundleConfiguration.elevenLabsVoiceID()
+    private static let tutorModeDefaultsKey = "isTutorModeEnabled"
+
+    private static func initialTutorModeEnabled() -> Bool {
+        UserDefaults.standard.object(forKey: tutorModeDefaultsKey) as? Bool ?? true
+    }
 
     private lazy var claudeAPI: ClaudeAPI = {
         return ClaudeAPI(
@@ -134,6 +145,7 @@ final class CompanionManager: ObservableObject {
     /// The currently running AI response task, if any. Cancelled when the user
     /// speaks again so a new response can begin immediately.
     private var currentResponseTask: Task<Void, Never>?
+    private var fallbackSpeechSynthesizer: NSSpeechSynthesizer?
 
     private var shortcutTransitionCancellable: AnyCancellable?
     private var controlDoubleTapCancellable: AnyCancellable?
@@ -196,7 +208,7 @@ final class CompanionManager: ObservableObject {
     @Published var selectedComputerUseModel: String = OpenClickyModelCatalog.computerUseModel(
         withID: UserDefaults.standard.string(forKey: "selectedComputerUseModel") ?? OpenClickyModelCatalog.defaultComputerUseModelID
     ).id
-    @Published var isTutorModeEnabled: Bool = UserDefaults.standard.bool(forKey: "isTutorModeEnabled")
+    @Published var isTutorModeEnabled: Bool = CompanionManager.initialTutorModeEnabled()
     private let userActivityIdleDetector = UserActivityIdleDetector()
     private var isTutorObservationInFlight = false
 
@@ -217,7 +229,7 @@ final class CompanionManager: ObservableObject {
 
     func setTutorModeEnabled(_ enabled: Bool) {
         isTutorModeEnabled = enabled
-        UserDefaults.standard.set(enabled, forKey: "isTutorModeEnabled")
+        UserDefaults.standard.set(enabled, forKey: Self.tutorModeDefaultsKey)
         if enabled {
             ensureCursorOverlayVisibleForAgentTask()
             startTutorIdleObservation()
@@ -245,6 +257,20 @@ final class CompanionManager: ObservableObject {
             apiKey: AppBundleConfiguration.elevenLabsAPIKey(),
             voiceID: AppBundleConfiguration.elevenLabsVoiceID()
         )
+    }
+
+    func setAssemblyAIAPIKey(_ apiKey: String) {
+        persistOptionalSecret(apiKey, defaultsKey: AppBundleConfiguration.userAssemblyAIAPIKeyDefaultsKey)
+        buddyDictationManager.setTranscriptionProvider(buddyDictationManager.transcriptionProviderID)
+    }
+
+    func setDeepgramAPIKey(_ apiKey: String) {
+        persistOptionalSecret(apiKey, defaultsKey: AppBundleConfiguration.userDeepgramAPIKeyDefaultsKey)
+        buddyDictationManager.setTranscriptionProvider(buddyDictationManager.transcriptionProviderID)
+    }
+
+    func setVoiceTranscriptionProvider(_ providerID: String) {
+        buddyDictationManager.setTranscriptionProvider(providerID)
     }
 
     func setCodexAgentAPIKey(_ apiKey: String) {
@@ -547,7 +573,17 @@ final class CompanionManager: ObservableObject {
     // MARK: - Private
 
     private func loadBundledKnowledgeIndex() {
-        bundledKnowledgeIndex = WikiManager.Index.loadForAppBundle()
+        let bundledIndex = WikiManager.Index.loadForAppBundle()
+        let memoriesDirectory = codexHomeManager.memoriesDirectory
+
+        do {
+            try FileManager.default.createDirectory(at: memoriesDirectory, withIntermediateDirectories: true)
+            let memoryIndex = try WikiManager.Index.load(articleRoots: [memoriesDirectory], skillRoots: [])
+            bundledKnowledgeIndex = bundledIndex.combined(with: memoryIndex)
+        } catch {
+            print("⚠️ OpenClicky memory index load failed: \(error)")
+            bundledKnowledgeIndex = bundledIndex
+        }
     }
 
     /// Triggers the system microphone prompt if the user has never been asked.
@@ -685,8 +721,7 @@ final class CompanionManager: ObservableObject {
             NotificationCenter.default.post(name: .clickyDismissPanel, object: nil)
 
             // Cancel any in-progress response and TTS from a previous utterance
-            currentResponseTask?.cancel()
-            elevenLabsTTSClient.stopPlayback()
+            interruptCurrentVoiceResponse()
             clearDetectedElementLocation()
 
             // Dismiss the onboarding prompt if it's showing
@@ -738,7 +773,41 @@ final class CompanionManager: ObservableObject {
     // MARK: - Companion Prompt
 
     private func startAgentTaskIfRequested(from transcript: String) -> Bool {
-        guard let instruction = Self.clickyAgentInstruction(from: transcript) else {
+        let explicitInstruction = Self.clickyAgentInstruction(from: transcript)
+
+        if let explicitInstruction {
+            guard !explicitInstruction.isEmpty else {
+                print("OpenClicky agent trigger detected without an instruction.")
+                speakShortSystemResponse("say what you want the agent to do after the agent trigger.")
+                return true
+            }
+
+            let instruction = Self.normalizedAgentTaskInstruction(from: explicitInstruction)
+            if let appOpenRequest = Self.localAppOpenRequest(from: instruction) {
+                openRequestedApplication(appOpenRequest)
+                return true
+            }
+            if Self.isIncompleteLocalAppOpenRequest(from: instruction) {
+                speakShortSystemResponse("what app should I open?")
+                return true
+            }
+
+            print("OpenClicky agent task detected; starting agent task: \(instruction)")
+            startVoiceAgentTask(instruction: instruction)
+            return true
+        }
+
+        if let appOpenRequest = Self.localAppOpenRequest(from: transcript) {
+            openRequestedApplication(appOpenRequest)
+            return true
+        }
+
+        if Self.isIncompleteLocalAppOpenRequest(from: transcript) {
+            speakShortSystemResponse("what app should I open?")
+            return true
+        }
+
+        guard let instruction = Self.implicitComputerUseInstruction(from: transcript) else {
             print("OpenClicky agent trigger not detected; routing transcript to voice companion.")
             return false
         }
@@ -749,9 +818,53 @@ final class CompanionManager: ObservableObject {
             return true
         }
 
-        print("OpenClicky agent trigger detected; starting agent task: \(instruction)")
-        startVoiceAgentTask(instruction: instruction)
+        let normalizedInstruction = Self.normalizedAgentTaskInstruction(from: instruction)
+        if let appOpenRequest = Self.localAppOpenRequest(from: normalizedInstruction) {
+            openRequestedApplication(appOpenRequest)
+            return true
+        }
+        if Self.isIncompleteLocalAppOpenRequest(from: normalizedInstruction) {
+            speakShortSystemResponse("what app should I open?")
+            return true
+        }
+
+        print("OpenClicky agent task detected; starting agent task: \(normalizedInstruction)")
+        startVoiceAgentTask(instruction: normalizedInstruction)
         return true
+    }
+
+    private func openRequestedApplication(_ request: OpenClickyAppOpenRequest) {
+        if launchApplication(named: request.appName) {
+            speakShortSystemResponse("opening \(request.appName).")
+            return
+        }
+
+        print("OpenClicky app open fallback to Agent Mode: \(request.instruction)")
+        startVoiceAgentTask(instruction: request.instruction)
+    }
+
+    private func launchApplication(named appName: String) -> Bool {
+        if let bundleIdentifier = Self.applicationBundleIdentifier(for: appName),
+           let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) {
+            return NSWorkspace.shared.open(appURL)
+        }
+
+        if let appURL = Self.standardApplicationURL(named: appName) {
+            return NSWorkspace.shared.open(appURL)
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = ["-a", appName]
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
+            print("OpenClicky app open failed for \(appName): \(error)")
+            return false
+        }
     }
 
     private func showTextModeInputAtCursor() {
@@ -779,8 +892,7 @@ final class CompanionManager: ObservableObject {
 
         lastTranscript = trimmedText
         ClickyAnalytics.trackUserMessageSent(transcript: trimmedText)
-        currentResponseTask?.cancel()
-        elevenLabsTTSClient.stopPlayback()
+        interruptCurrentVoiceResponse()
         clearDetectedElementLocation()
 
         if startAgentTaskIfRequested(from: trimmedText) {
@@ -853,6 +965,241 @@ final class CompanionManager: ObservableObject {
         }
     }
 
+    private static func normalizedAgentTaskInstruction(from instruction: String) -> String {
+        let trimmedInstruction = normalizedCommandCandidate(from: instruction)
+        guard !trimmedInstruction.isEmpty else { return trimmedInstruction }
+
+        let pattern = #"(?i)^\s*(?:(?:can|could|would|will)\s+you\s+|please\s+|(?:ask|tell)\s+(?:an?\s+|the\s+)?agent\s+to\s+)(.+?)[\.\!\?]*\s*$"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(
+                in: trimmedInstruction,
+                range: NSRange(trimmedInstruction.startIndex..<trimmedInstruction.endIndex, in: trimmedInstruction)
+              ),
+              let taskRange = Range(match.range(at: 1), in: trimmedInstruction) else {
+            return trimmedInstruction
+        }
+
+        return String(trimmedInstruction[taskRange])
+            .trimmingCharacters(in: CharacterSet(charactersIn: " \n\t.,:;!?-"))
+    }
+
+    private static func localAppOpenRequest(from transcript: String) -> OpenClickyAppOpenRequest? {
+        let trimmedTranscript = normalizedCommandCandidate(from: transcript)
+        guard !trimmedTranscript.isEmpty else { return nil }
+
+        let pattern = #"(?i)^\s*(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:(?:ask|tell)\s+(?:an?\s+|the\s+)?agent\s+to\s+)?(?:open|launch|start|switch\s+to)\s+(?:up\s+)?(.+?)(?:\s+for\s+me)?[\.\!\?]*\s*$"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(
+                in: trimmedTranscript,
+                range: NSRange(trimmedTranscript.startIndex..<trimmedTranscript.endIndex, in: trimmedTranscript)
+              ),
+              let targetRange = Range(match.range(at: 1), in: trimmedTranscript) else {
+            return nil
+        }
+
+        let rawTarget = String(trimmedTranscript[targetRange])
+        let normalizedTarget = normalizedApplicationName(from: rawTarget)
+        guard !normalizedTarget.isEmpty else { return nil }
+
+        return OpenClickyAppOpenRequest(
+            appName: normalizedTarget,
+            instruction: "Open \(normalizedTarget)."
+        )
+    }
+
+    private static func isIncompleteLocalAppOpenRequest(from transcript: String) -> Bool {
+        let candidate = normalizedCommandCandidate(from: transcript)
+        let pattern = #"(?i)^\s*(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:(?:ask|tell)\s+(?:an?\s+|the\s+)?agent\s+to\s+)?(?:open|launch|start|switch\s+to)(?:\s+up)?[\s\.\!\?]*$"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return false }
+        let range = NSRange(candidate.startIndex..<candidate.endIndex, in: candidate)
+        return regex.firstMatch(in: candidate, range: range) != nil
+    }
+
+    private static func normalizedCommandCandidate(from transcript: String) -> String {
+        var candidate = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let prefixPatterns = [
+            #"(?i)^\s*(?:hey|ok|okay|right|so)[\s,]+"#,
+            #"(?i)^\s*(?:let's|lets)\s+try\s+(?:that|this)\s+again[\s,]+"#
+        ]
+
+        var didStripPrefix = true
+        while didStripPrefix {
+            didStripPrefix = false
+            for pattern in prefixPatterns {
+                guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+                let range = NSRange(candidate.startIndex..<candidate.endIndex, in: candidate)
+                guard let match = regex.firstMatch(in: candidate, range: range),
+                      let matchRange = Range(match.range, in: candidate) else { continue }
+                candidate.removeSubrange(matchRange)
+                candidate = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+                didStripPrefix = true
+            }
+        }
+
+        return candidate
+    }
+
+    private static func normalizedApplicationName(from rawTarget: String) -> String {
+        var target = rawTarget.trimmingCharacters(in: .whitespacesAndNewlines)
+        target = target.trimmingCharacters(in: CharacterSet(charactersIn: ".,:;!?- "))
+
+        let removableSuffixes = [" app", " application"]
+        for suffix in removableSuffixes where target.localizedCaseInsensitiveContains(suffix) {
+            if target.lowercased().hasSuffix(suffix) {
+                target.removeLast(suffix.count)
+                target = target.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+
+        let lowered = target.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current).lowercased()
+        switch lowered {
+        case "chrome", "google chrome":
+            return "Google Chrome"
+        case "safari":
+            return "Safari"
+        case "xcode":
+            return "Xcode"
+        case "terminal":
+            return "Terminal"
+        case "finder":
+            return "Finder"
+        case "settings", "system settings":
+            return "System Settings"
+        case "mail":
+            return "Mail"
+        case "messages":
+            return "Messages"
+        case "notes":
+            return "Notes"
+        case "calendar":
+            return "Calendar"
+        case "slack":
+            return "Slack"
+        case "cursor":
+            return "Cursor"
+        case "codex":
+            return "Codex"
+        default:
+            return target
+        }
+    }
+
+    private static func applicationBundleIdentifier(for appName: String) -> String? {
+        switch appName {
+        case "Google Chrome":
+            return "com.google.Chrome"
+        case "Safari":
+            return "com.apple.Safari"
+        case "Xcode":
+            return "com.apple.dt.Xcode"
+        case "Terminal":
+            return "com.apple.Terminal"
+        case "Finder":
+            return "com.apple.finder"
+        case "System Settings":
+            return "com.apple.systempreferences"
+        case "Mail":
+            return "com.apple.mail"
+        case "Messages":
+            return "com.apple.MobileSMS"
+        case "Notes":
+            return "com.apple.Notes"
+        case "Calendar":
+            return "com.apple.iCal"
+        case "Slack":
+            return "com.tinyspeck.slackmacgap"
+        default:
+            return nil
+        }
+    }
+
+    private static func standardApplicationURL(named appName: String) -> URL? {
+        let applicationDirectories = [
+            "/Applications",
+            "/System/Applications",
+            "\(NSHomeDirectory())/Applications"
+        ]
+
+        return applicationDirectories
+            .map { URL(fileURLWithPath: $0).appendingPathComponent("\(appName).app", isDirectory: true) }
+            .first { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    private static func implicitComputerUseInstruction(from transcript: String) -> String? {
+        let trimmedTranscript = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTranscript.isEmpty else { return nil }
+
+        let foldedTranscript = trimmedTranscript.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        let tokenMatches = foldedTranscript.matches(of: /[A-Za-z0-9]+/)
+        let tokens = tokenMatches.map { match in
+            String(foldedTranscript[match.range]).lowercased()
+        }
+        guard !tokens.isEmpty else { return nil }
+
+        if beginsWithInstructionQuestion(tokens) {
+            return nil
+        }
+
+        if hasPoliteComputerUseRequest(tokens) || startsWithComputerUseAction(tokens) {
+            return trimmedTranscript
+        }
+
+        return nil
+    }
+
+    private static func beginsWithInstructionQuestion(_ tokens: [String]) -> Bool {
+        guard let firstToken = tokens.first else { return false }
+        switch firstToken {
+        case "how", "where", "what", "why", "when":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func hasPoliteComputerUseRequest(_ tokens: [String]) -> Bool {
+        for index in tokens.indices {
+            let token = tokens[index]
+            let nextIndex = index + 1
+            let secondNextIndex = index + 2
+
+            if token == "please",
+               nextIndex < tokens.count,
+               isComputerUseActionVerb(tokens[nextIndex]) {
+                return true
+            }
+
+            if ["can", "could", "would", "will"].contains(token),
+               nextIndex < tokens.count,
+               tokens[nextIndex] == "you",
+               secondNextIndex < tokens.count,
+               isComputerUseActionVerb(tokens[secondNextIndex]) {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    private static func startsWithComputerUseAction(_ tokens: [String]) -> Bool {
+        var index = 0
+        while index < tokens.count, ["hey", "ok", "okay", "please"].contains(tokens[index]) {
+            index += 1
+        }
+        guard index < tokens.count else { return false }
+        return isComputerUseActionVerb(tokens[index])
+    }
+
+    private static func isComputerUseActionVerb(_ token: String) -> Bool {
+        switch token {
+        case "open", "launch", "start", "switch", "close", "quit", "click", "press", "type", "scroll", "drag", "move", "select", "choose", "use", "search", "browse", "research", "find":
+            return true
+        default:
+            return false
+        }
+    }
+
     private static func legacyClickyAgentInstruction(from transcript: String) -> String? {
         let triggerPattern = #"\b(?:hey[\s,]+)?(?:open[\s,.-]*)?clicky[\s,.-]+agent\b"#
         guard let triggerRange = transcript.range(
@@ -869,8 +1216,7 @@ final class CompanionManager: ObservableObject {
     }
 
     private func startVoiceAgentTask(instruction: String) {
-        currentResponseTask?.cancel()
-        elevenLabsTTSClient.stopPlayback()
+        interruptCurrentVoiceResponse()
         ensureCursorOverlayVisibleForAgentTask()
 
         let dockItemID = UUID()
@@ -912,6 +1258,7 @@ final class CompanionManager: ObservableObject {
                     self.voiceState = .responding
                 }
             } catch {
+                guard !Self.isExpectedCancellation(error) else { return }
                 ClickyAnalytics.trackTTSError(error: error.localizedDescription)
                 print("ElevenLabs TTS error: \(error)")
                 speakResponseFailureFallback(error)
@@ -1027,6 +1374,14 @@ final class CompanionManager: ObservableObject {
         }
     }
 
+    private func interruptCurrentVoiceResponse() {
+        currentResponseTask?.cancel()
+        currentResponseTask = nil
+        elevenLabsTTSClient.stopPlayback()
+        fallbackSpeechSynthesizer?.stopSpeaking()
+        fallbackSpeechSynthesizer = nil
+    }
+
     private func prepareAgentScreenContextForNextTurn() async -> CodexAgentScreenContext? {
         if !handoffQueue.isEmpty {
             let queuedRegions = handoffQueue
@@ -1134,11 +1489,12 @@ final class CompanionManager: ObservableObject {
         guard let targetScreen else { return }
 
         let screenFrame = targetScreen.frame
+        let visibleFrame = targetScreen.visibleFrame
         detectedElementBubbleText = acknowledgement
         detectedElementDisplayFrame = screenFrame
         detectedElementScreenLocation = CGPoint(
-            x: screenFrame.maxX - 52,
-            y: screenFrame.maxY - 92
+            x: visibleFrame.maxX - 58,
+            y: visibleFrame.maxY - 92
         )
     }
 
@@ -1165,7 +1521,7 @@ final class CompanionManager: ObservableObject {
     }
 
     private func speakShortSystemResponse(_ text: String) {
-        currentResponseTask?.cancel()
+        interruptCurrentVoiceResponse()
         currentResponseTask = Task {
             self.voiceState = .processing
             do {
@@ -1173,6 +1529,7 @@ final class CompanionManager: ObservableObject {
                     self.voiceState = .responding
                 }
             } catch {
+                guard !Self.isExpectedCancellation(error) else { return }
                 speakResponseFailureFallback(error)
             }
 
@@ -1194,6 +1551,7 @@ final class CompanionManager: ObservableObject {
     - if the user's question relates to what's on their screen, reference specific things you see.
     - if the screenshot doesn't seem relevant to their question, just answer the question directly.
     - you can help with anything — coding, writing, general knowledge, brainstorming.
+    - OpenClicky can open apps and use the computer through Agent Mode. direct action requests like "open chrome", "click that", "type this", "scroll down", or "switch to safari" are normally routed to Agent Mode before you answer. if the user asks whether you can do those things, say yes: OpenClicky can do that through Agent Mode.
     - you do not have live web, search, or weather tools in this voice path. for current weather, live news, prices, schedules, or anything time-sensitive that is not visible on screen, say that live lookup is not wired into voice yet and suggest using agent mode for a live research task. do not invent current weather.
     - never say "simply" or "just".
     - don't read out code verbatim. describe what the code does or what needs to change conversationally.
@@ -1227,6 +1585,7 @@ final class CompanionManager: ObservableObject {
     your job:
     - proactively guide them one step at a time when they pause.
     - point at the button, menu, field, panel, or visible area they should use next.
+    - know that OpenClicky can open apps and use the computer through Agent Mode when the user gives a direct action request.
     - if they completed a step, acknowledge it briefly and give the next step.
     - if they appear off track, gently redirect.
     - teach concepts only when they are useful for the next action.
@@ -1234,7 +1593,7 @@ final class CompanionManager: ObservableObject {
 
     style:
     - short spoken response, lowercase, casual, no markdown, no emojis.
-    - do not claim you clicked or controlled anything. you can guide and point; the user controls the computer.
+    - do not claim you clicked or controlled anything in tutor observations. you can guide and point; direct action requests are handled by Agent Mode.
 
     element pointing:
     append exactly one [POINT:x,y:label] tag at the end when a visible target would help. use [POINT:none] only when pointing would not help.
@@ -1250,8 +1609,7 @@ final class CompanionManager: ObservableObject {
     /// Claude's response may include a [POINT:x,y:label] tag which triggers
     /// the buddy to fly to that element on screen.
     private func sendTranscriptToClaudeWithScreenshot(transcript: String) {
-        currentResponseTask?.cancel()
-        elevenLabsTTSClient.stopPlayback()
+        interruptCurrentVoiceResponse()
 
         currentResponseTask = Task {
             // Stay in processing (spinner) state — no streaming text displayed
@@ -1389,6 +1747,7 @@ final class CompanionManager: ObservableObject {
                             self.voiceState = .responding
                         }
                     } catch {
+                        guard !Self.isExpectedCancellation(error) else { return }
                         ClickyAnalytics.trackTTSError(error: error.localizedDescription)
                         print("⚠️ ElevenLabs TTS error: \(error)")
                         speakResponseFailureFallback(error)
@@ -1396,6 +1755,8 @@ final class CompanionManager: ObservableObject {
                 }
             } catch is CancellationError {
                 // User spoke again — response was interrupted
+            } catch where Self.isExpectedCancellation(error) {
+                // User spoke again — URLSession/AVFoundation surfaced cancellation as NSError.
             } catch {
                 ClickyAnalytics.trackResponseError(error: error.localizedDescription)
                 print("⚠️ Companion response error: \(error)")
@@ -1495,6 +1856,8 @@ final class CompanionManager: ObservableObject {
             }
         } catch is CancellationError {
             // A normal voice interaction interrupted the tutor observation.
+        } catch where Self.isExpectedCancellation(error) {
+            // A normal voice interaction interrupted the tutor observation.
         } catch {
             print("Tutor observation error: \(error)")
         }
@@ -1548,15 +1911,23 @@ final class CompanionManager: ObservableObject {
                 onTextChunk: onTextChunk
             )
         case .openAI:
-            openAIAPI.model = selectedVoiceResponseModel.id
-            let (text, _) = try await openAIAPI.analyzeImage(
+            return try await analyzeOpenAIOrCodexVoiceResponse(
                 images: images,
+                model: selectedVoiceResponseModel.id,
                 systemPrompt: systemPrompt,
                 conversationHistory: conversationHistory,
-                userPrompt: userPrompt
+                userPrompt: userPrompt,
+                onTextChunk: onTextChunk
             )
-            await onTextChunk(text)
-            return text
+        case .codex:
+            return try await analyzeCodexVoiceResponse(
+                images: images,
+                model: selectedVoiceResponseModel.id,
+                systemPrompt: systemPrompt,
+                conversationHistory: conversationHistory,
+                userPrompt: userPrompt,
+                onTextChunk: onTextChunk
+            )
         }
     }
 
@@ -1599,8 +1970,98 @@ final class CompanionManager: ObservableObject {
         return text
     }
 
+    private func analyzeOpenAIOrCodexVoiceResponse(
+        images: [(data: Data, label: String)],
+        model: String,
+        systemPrompt: String,
+        conversationHistory: [(userPlaceholder: String, assistantResponse: String)] = [],
+        userPrompt: String,
+        onTextChunk: @MainActor @Sendable (String) -> Void
+    ) async throws -> String {
+        if AppBundleConfiguration.openAIAPIKey() != nil {
+            openAIAPI.model = model
+            let (text, _) = try await openAIAPI.analyzeImage(
+                images: images,
+                systemPrompt: systemPrompt,
+                conversationHistory: conversationHistory,
+                userPrompt: userPrompt
+            )
+            await onTextChunk(text)
+            return text
+        }
+
+        return try await analyzeCodexVoiceResponse(
+            images: images,
+            model: model,
+            systemPrompt: systemPrompt,
+            conversationHistory: conversationHistory,
+            userPrompt: userPrompt,
+            onTextChunk: onTextChunk
+        )
+    }
+
+    private func analyzeCodexVoiceResponse(
+        images: [(data: Data, label: String)],
+        model: String,
+        systemPrompt: String,
+        conversationHistory: [(userPlaceholder: String, assistantResponse: String)] = [],
+        userPrompt: String,
+        onTextChunk: @MainActor @Sendable (String) -> Void
+    ) async throws -> String {
+        let detector = CodexPointDetector(model: model)
+        return try await detector.analyzeImageResponse(
+            images: images,
+            systemPrompt: systemPrompt,
+            conversationHistory: conversationHistory,
+            userPrompt: userPrompt,
+            onTextChunk: onTextChunk
+        )
+    }
+
     private func captureAllScreensForVoiceResponseIfAvailable() async throws -> [CompanionScreenCapture] {
         try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG()
+    }
+
+    private func analyzeComputerUsePointingResponse(
+        image: (data: Data, label: String),
+        capture: CompanionScreenCapture,
+        systemPrompt: String,
+        userPrompt: String,
+        onTextChunk: @MainActor @Sendable (String) -> Void
+    ) async throws -> String {
+        let selectedPointingModel = OpenClickyModelCatalog.computerUseModel(withID: selectedComputerUseModel)
+
+        switch selectedPointingModel.provider {
+        case .anthropic:
+            return try await analyzeClaudeResponse(
+                images: [image],
+                model: selectedPointingModel.id,
+                systemPrompt: systemPrompt,
+                userPrompt: userPrompt,
+                onTextChunk: onTextChunk
+            )
+        case .codex:
+            let detector = CodexPointDetector(model: selectedPointingModel.id)
+            let text = try await detector.detectPointTag(
+                screenshotData: image.data,
+                screenshotLabel: image.label,
+                userQuestion: userPrompt,
+                systemPrompt: systemPrompt,
+                displayWidthInPixels: capture.screenshotWidthInPixels,
+                displayHeightInPixels: capture.screenshotHeightInPixels
+            )
+            await onTextChunk(text)
+            return text
+        case .openAI:
+            openAIAPI.model = selectedPointingModel.id
+            let (text, _) = try await openAIAPI.analyzeImage(
+                images: [image],
+                systemPrompt: systemPrompt,
+                userPrompt: userPrompt
+            )
+            await onTextChunk(text)
+            return text
+        }
     }
 
     private func attemptProactiveElementPointingIfUseful(
@@ -1609,18 +2070,38 @@ final class CompanionManager: ObservableObject {
         screenCaptures: [CompanionScreenCapture]
     ) async {
         guard Self.shouldAttemptProactivePointing(for: transcript) else { return }
-        guard let anthropicAPIKey = AppBundleConfiguration.anthropicAPIKey() else { return }
         guard let targetScreenCapture = screenCaptures.first(where: { $0.isCursorScreen }) ?? screenCaptures.first else { return }
 
-        let detector = ElementLocationDetector(apiKey: anthropicAPIKey, model: selectedComputerUseModel)
-        guard let displayLocalLocation = await detector.detectElementLocation(
-            screenshotData: targetScreenCapture.imageData,
-            userQuestion: "\(transcript)\n\nOpenClicky's answer: \(spokenText)",
-            displayWidthInPoints: targetScreenCapture.displayWidthInPoints,
-            displayHeightInPoints: targetScreenCapture.displayHeightInPoints
-        ) else {
+        let selectedPointingModel = OpenClickyModelCatalog.computerUseModel(withID: selectedComputerUseModel)
+        let userQuestion = "\(transcript)\n\nOpenClicky's answer: \(spokenText)"
+        let displayLocalLocation: CGPoint?
+
+        switch selectedPointingModel.provider {
+        case .anthropic:
+            guard let anthropicAPIKey = AppBundleConfiguration.anthropicAPIKey() else { return }
+            let detector = ElementLocationDetector(apiKey: anthropicAPIKey, model: selectedPointingModel.id)
+            displayLocalLocation = await detector.detectElementLocation(
+                screenshotData: targetScreenCapture.imageData,
+                userQuestion: userQuestion,
+                displayWidthInPoints: targetScreenCapture.displayWidthInPoints,
+                displayHeightInPoints: targetScreenCapture.displayHeightInPoints
+            )
+        case .codex:
+            let detector = CodexPointDetector(model: selectedPointingModel.id)
+            displayLocalLocation = await detector.detectDisplayLocalPoint(
+                screenshotData: targetScreenCapture.imageData,
+                screenshotLabel: targetScreenCapture.label,
+                userQuestion: userQuestion,
+                displayWidthInPixels: targetScreenCapture.screenshotWidthInPixels,
+                displayHeightInPixels: targetScreenCapture.screenshotHeightInPixels,
+                displayWidthInPoints: targetScreenCapture.displayWidthInPoints,
+                displayHeightInPoints: targetScreenCapture.displayHeightInPoints
+            )
+        case .openAI:
             return
         }
+
+        guard let displayLocalLocation else { return }
 
         let displayFrame = targetScreenCapture.displayFrame
         let globalLocation = CGPoint(
@@ -1727,10 +2208,32 @@ final class CompanionManager: ObservableObject {
     /// Speaks a neutral error message using macOS system TTS so failures in
     /// Claude or the configured voice provider report the correct source.
     private func speakResponseFailureFallback(_ error: Error) {
+        guard !Self.isExpectedCancellation(error) else { return }
+
         let utterance = userFacingResponseFailureMessage(for: error)
         let synthesizer = NSSpeechSynthesizer()
+        fallbackSpeechSynthesizer?.stopSpeaking()
+        fallbackSpeechSynthesizer = synthesizer
         synthesizer.startSpeaking(utterance)
         voiceState = .responding
+    }
+
+    private static func isExpectedCancellation(_ error: Error) -> Bool {
+        if error is CancellationError {
+            return true
+        }
+
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled {
+            return true
+        }
+
+        if nsError.domain == NSCocoaErrorDomain && nsError.code == NSUserCancelledError {
+            return true
+        }
+
+        let description = String(describing: error).lowercased()
+        return description == "cancellationerror()" || description.contains("cancelled") || description.contains("canceled")
     }
 
     private func userFacingResponseFailureMessage(for error: Error) -> String {
@@ -1926,9 +2429,9 @@ final class CompanionManager: ObservableObject {
                 let dimensionInfo = " (image dimensions: \(cursorScreenCapture.screenshotWidthInPixels)x\(cursorScreenCapture.screenshotHeightInPixels) pixels)"
                 let labeledImages = [(data: cursorScreenCapture.imageData, label: cursorScreenCapture.label + dimensionInfo)]
 
-                let fullResponseText = try await analyzeClaudeResponse(
-                    images: labeledImages,
-                    model: selectedComputerUseModel,
+                let fullResponseText = try await analyzeComputerUsePointingResponse(
+                    image: labeledImages[0],
+                    capture: cursorScreenCapture,
                     systemPrompt: Self.onboardingDemoSystemPrompt,
                     userPrompt: "look around my screen and find something interesting to point at",
                     onTextChunk: { _ in }
@@ -1984,8 +2487,22 @@ final class CompanionManager: ObservableObject {
     func showMemoryWindow() {
         wikiViewerPanelManager.show(
             index: bundledKnowledgeIndex,
-            sourceRootURL: Bundle.main.resourceURL ?? CodexRuntimeLocator.sourceAppResourcesDirectory()
+            sourceRootURL: codexHomeManager.memoriesDirectory,
+            onCreateMemory: { [weak self] title, body in
+                guard let self else {
+                    throw NSError(domain: "OpenClicky.Memory", code: 3, userInfo: [
+                        NSLocalizedDescriptionKey: "OpenClicky couldn't reach the memory manager."
+                    ])
+                }
+                return try self.createMemory(title: title, body: body)
+            }
         )
+    }
+
+    func createMemory(title: String, body: String) throws -> WikiManager.Article {
+        let article = try codexHomeManager.saveMemory(title: title, body: body)
+        loadBundledKnowledgeIndex()
+        return article
     }
 
     func dismissLatestResponseCard() {
@@ -2081,9 +2598,7 @@ final class CompanionManager: ObservableObject {
     }
 
     func debugResetTransientUI() {
-        currentResponseTask?.cancel()
-        currentResponseTask = nil
-        elevenLabsTTSClient.stopPlayback()
+        interruptCurrentVoiceResponse()
         clearDetectedElementLocation()
         dismissLatestResponseCard()
         clearHandoffQueue()

@@ -187,7 +187,10 @@ final class CodexProcessManager {
             if let id = CodexJSON.int(message["id"]) {
                 let continuation = pending.removeValue(forKey: id)
                 if let error = CodexJSON.dictionary(message["error"]) {
-                    let text = CodexJSON.string(error["message"]) ?? "Codex app-server returned an error."
+                    var text = CodexJSON.string(error["message"]) ?? "Codex app-server returned an error."
+                    if let dataText = Self.readableErrorData(error["data"]), !dataText.isEmpty {
+                        text += "\n\(dataText)"
+                    }
                     continuation?.resume(throwing: CodexRPCError(message: text))
                 } else {
                     let result = CodexJSON.dictionary(message["result"]) ?? [:]
@@ -203,6 +206,22 @@ final class CodexProcessManager {
                 self?.onStderrLine?("Could not parse Codex RPC line: \(line)")
             }
         }
+    }
+
+    private static func readableErrorData(_ value: Any?) -> String? {
+        guard let value else { return nil }
+
+        if let text = value as? String {
+            return text
+        }
+
+        guard JSONSerialization.isValidJSONObject(value),
+              let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]),
+              let text = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+
+        return text
     }
 
     private func failAllPendingRequests(message: String) {

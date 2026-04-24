@@ -197,11 +197,7 @@ final class CodexAgentSession: ObservableObject, Identifiable {
                 "cwd": workingDirectoryPath,
                 "approvalPolicy": "never",
                 "model": model,
-                "effort": homeManager.reasoningEffort,
-                "responsesapiClientMetadata": [
-                    "client": "openclicky",
-                    "surface": "agent-mode"
-                ]
+                "effort": homeManager.reasoningEffort
             ])
         } catch {
             lastErrorMessage = error.localizedDescription
@@ -243,7 +239,13 @@ final class CodexAgentSession: ObservableObject, Identifiable {
         let baseInstructions = (try? String(contentsOf: layout.modelInstructionsFile, encoding: .utf8))
             ?? "You are OpenClicky, a friendly macOS cursor companion with Codex Agent Mode."
         let developerInstructions = """
-        You are running inside OpenClicky Agent Mode on macOS. Be direct, helpful, and careful. Prefer concrete actions over vague advice. If a task requires destructive filesystem, git, credentials, or system permission changes, explain the action before doing it.
+        You are running inside OpenClicky Agent Mode on macOS. Be direct, helpful, and careful. Prefer concrete actions over vague advice.
+
+        You are allowed to help with computer-use tasks. When the user asks you to open an app, switch apps, click, type, scroll, inspect the screen, or otherwise operate the Mac, use the available Codex computer-use/app-server capabilities to do it instead of only explaining how. If an action is unavailable in the current runtime, say that clearly and give the closest useful next step.
+
+        You are allowed to perform web research when the user asks for current information, web search, browsing, or research. Use the available network, browser, or search capabilities in the runtime; cite the pages or URLs you relied on in your final response. Do not tell the user voice mode lacks live web access once a task is running in Agent Mode.
+
+        If a task requires destructive filesystem, git, credentials, or system permission changes, explain the action before doing it.
         """
 
         let threadStart = try await processManager.sendRequest(method: "thread/start", params: [
@@ -258,10 +260,7 @@ final class CodexAgentSession: ObservableObject, Identifiable {
             "developerInstructions": developerInstructions,
             "personality": "friendly",
             "ephemeral": false,
-            "sessionStartSource": "startup",
-            "dynamicTools": [],
-            "experimentalRawEvents": false,
-            "persistExtendedHistory": false
+            "sessionStartSource": "startup"
         ])
 
         if let thread = CodexJSON.dictionary(threadStart["thread"]),
@@ -329,7 +328,7 @@ final class CodexAgentSession: ObservableObject, Identifiable {
             status = .ready
             playAgentDoneSoundIfAvailable()
         case "error":
-            let text = CodexJSON.string(params["message"]) ?? "Codex app-server emitted an error."
+            let text = Self.notificationErrorMessage(from: params) ?? "Codex app-server emitted an error."
             lastErrorMessage = text
             status = .failed(text)
             entries.append(CodexTranscriptEntry(role: .system, text: text))
@@ -344,6 +343,22 @@ final class CodexAgentSession: ObservableObject, Identifiable {
         default:
             break
         }
+    }
+
+    private static func notificationErrorMessage(from params: [String: Any]) -> String? {
+        if let text = CodexJSON.string(params["message"]), !text.isEmpty {
+            return text
+        }
+
+        guard let error = CodexJSON.dictionary(params["error"]) else { return nil }
+
+        let message = CodexJSON.string(error["message"]) ?? "Codex app-server emitted an error."
+        let details = CodexJSON.string(error["additionalDetails"])
+        if let details, !details.isEmpty, details != message {
+            return "\(message)\n\(details)"
+        }
+
+        return message
     }
 
     private func handleCompletedItem(_ itemValue: Any?) {

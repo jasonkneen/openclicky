@@ -39,6 +39,10 @@ final class CodexHomeManager {
         applicationSupportDirectory.appendingPathComponent("CodexHome", isDirectory: true)
     }
 
+    var memoriesDirectory: URL {
+        codexHomeDirectory.appendingPathComponent("memories", isDirectory: true)
+    }
+
     var modelProviderID: String {
         ClickyCodexBackend.isDefaultOpenAIBaseURL(workerBaseURL)
             ? ClickyCodexConfigTemplate.defaultModelProviderID
@@ -49,7 +53,7 @@ final class CodexHomeManager {
         let home = codexHomeDirectory
         try fileManager.createDirectory(at: home, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: home.appendingPathComponent("sessions", isDirectory: true), withIntermediateDirectories: true)
-        try fileManager.createDirectory(at: home.appendingPathComponent("memories", isDirectory: true), withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: memoriesDirectory, withIntermediateDirectories: true)
 
         let modelInstructions = home.appendingPathComponent(modelInstructionsFileName, isDirectory: false)
         if let source = resourceURL(named: modelInstructionsFileName, bundle: bundle) {
@@ -97,6 +101,57 @@ final class CodexHomeManager {
         )
     }
 
+    @discardableResult
+    func saveMemory(title: String, body: String, createdAt: Date = Date()) throws -> WikiManager.Article {
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !trimmedTitle.isEmpty else {
+            throw NSError(domain: "OpenClicky.Memory", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "OpenClicky needs a title before it can save a memory."
+            ])
+        }
+
+        guard !trimmedBody.isEmpty else {
+            throw NSError(domain: "OpenClicky.Memory", code: 2, userInfo: [
+                NSLocalizedDescriptionKey: "OpenClicky needs some memory content before saving."
+            ])
+        }
+
+        try fileManager.createDirectory(at: memoriesDirectory, withIntermediateDirectories: true)
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
+
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.timeZone = TimeZone(secondsFromGMT: 0)
+
+        let slug = Self.slug(from: trimmedTitle)
+        let baseFilename = "\(formatter.string(from: createdAt))-\(slug)"
+        let destinationURL = uniqueMemoryFileURL(baseFilename: baseFilename)
+        let markdown = """
+        ---
+        title: "\(Self.escapeFrontmatterValue(trimmedTitle))"
+        created: \(isoFormatter.string(from: createdAt))
+        ---
+
+        # \(trimmedTitle)
+
+        \(trimmedBody)
+        """
+
+        try markdown.write(to: destinationURL, atomically: true, encoding: .utf8)
+
+        return WikiManager.Article(
+            relativePath: destinationURL.lastPathComponent,
+            title: trimmedTitle,
+            body: markdown,
+            aliases: []
+        )
+    }
+
     private func resourceURL(named name: String, bundle: Bundle) -> URL? {
         if let bundled = bundle.url(forResource: (name as NSString).deletingPathExtension, withExtension: (name as NSString).pathExtension.isEmpty ? nil : (name as NSString).pathExtension) {
             return bundled
@@ -132,6 +187,29 @@ final class CodexHomeManager {
             try fileManager.removeItem(at: destination)
         }
         try fileManager.copyItem(at: source, to: destination)
+    }
+
+    private func uniqueMemoryFileURL(baseFilename: String) -> URL {
+        var attempt = 0
+        while true {
+            let suffix = attempt == 0 ? "" : "-\(attempt + 1)"
+            let candidate = memoriesDirectory.appendingPathComponent("\(baseFilename)\(suffix).md", isDirectory: false)
+            if !fileManager.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+            attempt += 1
+        }
+    }
+
+    private static func slug(from title: String) -> String {
+        let folded = title.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+        let lowered = folded.lowercased()
+        let pieces = lowered.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
+        return pieces.isEmpty ? "memory" : pieces.joined(separator: "-")
+    }
+
+    private static func escapeFrontmatterValue(_ value: String) -> String {
+        value.replacingOccurrences(of: "\"", with: "\\\"")
     }
 
     private static func defaultApplicationSupportDirectory(fileManager: FileManager) -> URL {

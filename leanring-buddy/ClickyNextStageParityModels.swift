@@ -43,10 +43,27 @@ enum WikiManager {
             let wikiRoot = resourcesRoot.appendingPathComponent("OpenClickyBundledWikiSeed", isDirectory: true)
             let skillsRoot = resourcesRoot.appendingPathComponent("OpenClickyBundledSkills", isDirectory: true)
 
-            return Index(
-                articles: try loadArticles(root: wikiRoot, fileManager: fileManager),
-                skills: try loadSkills(root: skillsRoot, fileManager: fileManager)
+            return try load(
+                articleRoots: [wikiRoot],
+                skillRoots: [skillsRoot],
+                fileManager: fileManager
             )
+        }
+
+        static func load(articleRoots: [URL], skillRoots: [URL], fileManager: FileManager = .default) throws -> Index {
+            let articles = try articleRoots.flatMap { try loadArticles(root: $0, fileManager: fileManager) }
+            let skills = try skillRoots.flatMap { try loadSkills(root: $0, fileManager: fileManager) }
+            return Index(articles: articles, skills: skills)
+        }
+
+        func combined(with other: Index) -> Index {
+            let mergedArticles = Dictionary(grouping: articles + other.articles, by: \.id)
+                .compactMap { $0.value.last }
+                .sorted { $0.relativePath.localizedStandardCompare($1.relativePath) == .orderedAscending }
+            let mergedSkills = Dictionary(grouping: skills + other.skills, by: \.id)
+                .compactMap { $0.value.last }
+                .sorted { $0.identifier.localizedStandardCompare($1.identifier) == .orderedAscending }
+            return Index(articles: mergedArticles, skills: mergedSkills)
         }
 
         func article(containingTitle query: String) -> Article? {
@@ -530,4 +547,3 @@ struct HandoffQueuedRegionScreenshot: Identifiable, Equatable {
         ]
     }
 }
-

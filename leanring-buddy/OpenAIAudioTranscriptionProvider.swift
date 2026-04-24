@@ -17,7 +17,7 @@ struct OpenAIAudioTranscriptionProviderError: LocalizedError {
 }
 
 final class OpenAIAudioTranscriptionProvider: BuddyTranscriptionProvider {
-    private let apiKey = AppBundleConfiguration.stringValue(forKey: "OpenAIAPIKey")
+    private let apiKey = AppBundleConfiguration.openAIAPIKey()
     private let modelName = AppBundleConfiguration.stringValue(forKey: "OpenAITranscriptionModel")
         ?? "gpt-4o-transcribe"
 
@@ -30,7 +30,7 @@ final class OpenAIAudioTranscriptionProvider: BuddyTranscriptionProvider {
 
     var unavailableExplanation: String? {
         guard !isConfigured else { return nil }
-        return "OpenAI transcription is not configured. Add OpenAIAPIKey to Info.plist."
+        return "OpenAI transcription is not configured. Add a Codex/OpenAI key."
     }
 
     func startStreamingSession(

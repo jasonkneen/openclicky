@@ -97,6 +97,8 @@ struct CompanionPanelView: View {
                     knowledgeIndex: companionManager.bundledKnowledgeIndex,
                     responseCard: companionManager.latestResponseCard,
                     transcriptionProviderDisplayName: companionManager.buddyDictationManager.transcriptionProviderDisplayName,
+                    transcriptionProviderID: companionManager.buddyDictationManager.transcriptionProviderID,
+                    setVoiceTranscriptionProvider: { companionManager.setVoiceTranscriptionProvider($0) },
                     isClickyCursorEnabled: companionManager.isClickyCursorEnabled,
                     setClickyCursorEnabled: { companionManager.setClickyCursorEnabled($0) },
                     isTutorModeEnabled: companionManager.isTutorModeEnabled,
@@ -109,6 +111,8 @@ struct CompanionPanelView: View {
                     setAnthropicAPIKey: { companionManager.setAnthropicAPIKey($0) },
                     setElevenLabsAPIKey: { companionManager.setElevenLabsAPIKey($0) },
                     setElevenLabsVoiceID: { companionManager.setElevenLabsVoiceID($0) },
+                    setAssemblyAIAPIKey: { companionManager.setAssemblyAIAPIKey($0) },
+                    setDeepgramAPIKey: { companionManager.setDeepgramAPIKey($0) },
                     setCodexAgentAPIKey: { companionManager.setCodexAgentAPIKey($0) },
                     replayOnboarding: {},
                     quitClicky: { NSApp.terminate(nil) },
@@ -824,6 +828,8 @@ struct CompanionPanelView: View {
             knowledgeIndex: companionManager.bundledKnowledgeIndex,
             responseCard: companionManager.latestResponseCard,
             transcriptionProviderDisplayName: companionManager.buddyDictationManager.transcriptionProviderDisplayName,
+            transcriptionProviderID: companionManager.buddyDictationManager.transcriptionProviderID,
+            setVoiceTranscriptionProvider: { companionManager.setVoiceTranscriptionProvider($0) },
             isClickyCursorEnabled: companionManager.isClickyCursorEnabled,
             setClickyCursorEnabled: { companionManager.setClickyCursorEnabled($0) },
             isTutorModeEnabled: companionManager.isTutorModeEnabled,
@@ -835,6 +841,8 @@ struct CompanionPanelView: View {
             setAnthropicAPIKey: { companionManager.setAnthropicAPIKey($0) },
             setElevenLabsAPIKey: { companionManager.setElevenLabsAPIKey($0) },
             setElevenLabsVoiceID: { companionManager.setElevenLabsVoiceID($0) },
+            setAssemblyAIAPIKey: { companionManager.setAssemblyAIAPIKey($0) },
+            setDeepgramAPIKey: { companionManager.setDeepgramAPIKey($0) },
             setCodexAgentAPIKey: { companionManager.setCodexAgentAPIKey($0) },
             replayOnboarding: {},
             quitClicky: { NSApp.terminate(nil) },
@@ -914,7 +922,7 @@ struct CompanionPanelView: View {
     private var speechToTextProviderRow: some View {
         HStack {
             HStack(spacing: 4) {
-                Image(systemName: "mic.badge.waveform")
+                Image(systemName: "waveform")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(DS.Colors.textTertiary)
                     .frame(width: 16)

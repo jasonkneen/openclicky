@@ -82,6 +82,10 @@ final class ElevenLabsTTSClient {
         } catch is CancellationError {
             throw CancellationError()
         } catch {
+            guard !Self.isExpectedCancellation(error) else {
+                throw CancellationError()
+            }
+
             try await speakWithSystemSpeech(
                 text,
                 reason: "TTS request failed: \(error.localizedDescription)",
@@ -147,6 +151,9 @@ final class ElevenLabsTTSClient {
         while player.isPlaying {
             try await Task.sleep(nanoseconds: 100_000_000)
             try Task.checkCancellation()
+            guard audioPlayer === player else {
+                throw CancellationError()
+            }
         }
 
         if audioPlayer === player {
@@ -185,10 +192,31 @@ final class ElevenLabsTTSClient {
         while synthesizer.isSpeaking {
             try await Task.sleep(nanoseconds: 100_000_000)
             try Task.checkCancellation()
+            guard speechSynthesizer === synthesizer else {
+                throw CancellationError()
+            }
         }
 
         if speechSynthesizer === synthesizer {
             speechSynthesizer = nil
         }
+    }
+
+    private static func isExpectedCancellation(_ error: Error) -> Bool {
+        if error is CancellationError {
+            return true
+        }
+
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled {
+            return true
+        }
+
+        if nsError.domain == NSCocoaErrorDomain && nsError.code == NSUserCancelledError {
+            return true
+        }
+
+        let description = String(describing: error).lowercased()
+        return description == "cancellationerror()" || description.contains("cancelled") || description.contains("canceled")
     }
 }

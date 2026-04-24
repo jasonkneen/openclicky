@@ -3,6 +3,7 @@ import Foundation
 enum OpenClickyModelProvider: String, Equatable {
     case anthropic
     case openAI
+    case codex
 
     var displayName: String {
         switch self {
@@ -10,6 +11,8 @@ enum OpenClickyModelProvider: String, Equatable {
             return "Anthropic"
         case .openAI:
             return "OpenAI"
+        case .codex:
+            return "Codex"
         }
     }
 }
@@ -28,6 +31,8 @@ enum OpenClickyModelCatalog {
     static let voiceResponseModels: [OpenClickyModelOption] = [
         OpenClickyModelOption(id: "claude-sonnet-4-6", label: "Claude Sonnet", provider: .anthropic),
         OpenClickyModelOption(id: "claude-opus-4-6", label: "Claude Opus", provider: .anthropic),
+        OpenClickyModelOption(id: "claude-haiku-4-5", label: "Claude Haiku", provider: .anthropic),
+        OpenClickyModelOption(id: "gpt-5.5", label: "GPT-5.5", provider: .openAI),
         OpenClickyModelOption(id: "gpt-5.4", label: "GPT-5.4", provider: .openAI),
         OpenClickyModelOption(id: "gpt-5.4-mini", label: "GPT-5.4 Mini", provider: .openAI),
         OpenClickyModelOption(id: "gpt-5.2", label: "GPT-5.2", provider: .openAI)
@@ -35,10 +40,15 @@ enum OpenClickyModelCatalog {
 
     static let computerUseModels: [OpenClickyModelOption] = [
         OpenClickyModelOption(id: "claude-sonnet-4-6", label: "Claude Sonnet", provider: .anthropic),
-        OpenClickyModelOption(id: "claude-opus-4-6", label: "Claude Opus", provider: .anthropic)
+        OpenClickyModelOption(id: "claude-opus-4-6", label: "Claude Opus", provider: .anthropic),
+        OpenClickyModelOption(id: "gpt-5.5", label: "GPT-5.5", provider: .codex),
+        OpenClickyModelOption(id: "gpt-5.4", label: "GPT-5.4", provider: .codex),
+        OpenClickyModelOption(id: "gpt-5.4-mini", label: "GPT-5.4 Mini", provider: .codex),
+        OpenClickyModelOption(id: "gpt-5.2", label: "GPT-5.2", provider: .codex)
     ]
 
     static let codexActionsModels: [OpenClickyModelOption] = [
+        OpenClickyModelOption(id: "gpt-5.5", label: "GPT-5.5", provider: .openAI),
         OpenClickyModelOption(id: "gpt-5.4", label: "GPT-5.4", provider: .openAI),
         OpenClickyModelOption(id: "gpt-5.4-mini", label: "GPT-5.4 Mini", provider: .openAI),
         OpenClickyModelOption(id: "gpt-5.3-codex", label: "GPT-5.3 Codex", provider: .openAI),

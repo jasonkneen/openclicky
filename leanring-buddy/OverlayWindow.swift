@@ -725,9 +725,9 @@ private struct ClickyAgentDockStackView: View {
     @State private var hoveredItemID: UUID?
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 8) {
+        VStack(alignment: .trailing, spacing: 6) {
             ForEach(companionManager.agentDockItems) { item in
-                HStack(spacing: 8) {
+                HStack(spacing: 10) {
                     if hoveredItemID == item.id {
                         ClickyAgentDockHoverCard(
                             item: item,
@@ -742,11 +742,16 @@ private struct ClickyAgentDockStackView: View {
                             .transition(.opacity.combined(with: .move(edge: .trailing)))
                     }
 
-                    ClickyAgentDockItemView(item: item)
-                        .onTapGesture {
-                            companionManager.openAgentDockItem(item.id)
-                        }
+                    Button {
+                        companionManager.openAgentDockItem(item.id)
+                    } label: {
+                        ClickyAgentDockItemView(item: item)
+                    }
+                    .buttonStyle(.plain)
+                    .contentShape(Rectangle())
+                    .pointerCursor()
                 }
+                .contentShape(Rectangle())
                 .onHover { isHovering in
                     withAnimation(.spring(response: 0.26, dampingFraction: 0.84)) {
                         hoveredItemID = isHovering ? item.id : nil
@@ -754,49 +759,105 @@ private struct ClickyAgentDockStackView: View {
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .trailing)
-        .padding(.top, 40)
-        .padding(.bottom, 56)
-        .padding(.leading, 56)
-        .padding(.trailing, 96)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+        .padding(.top, 10)
+        .padding(.trailing, 10)
         .animation(.spring(response: 0.36, dampingFraction: 0.78), value: companionManager.agentDockItems)
     }
 }
 
 private struct ClickyAgentDockItemView: View {
     let item: ClickyAgentDockItem
+    @State private var isStatusAnimating = false
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color.black.opacity(0.70))
-                .frame(width: 44, height: 44)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(item.accentTheme.cursorColor.opacity(0.42), lineWidth: 1.2)
+            RoundedRectangle(cornerRadius: 19, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color.black.opacity(0.82),
+                            Color(hex: "#101827").opacity(0.78)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
                 )
-                .shadow(color: item.accentTheme.cursorColor.opacity(0.34), radius: 18, x: 0, y: 10)
-                .shadow(color: item.accentTheme.cursorColor.opacity(0.46), radius: 10, x: 0, y: 6)
-                .shadow(color: Color.black.opacity(0.38), radius: 6, x: 0, y: 4)
+                .frame(width: 54, height: 54)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 19, style: .continuous)
+                        .stroke(
+                            LinearGradient(
+                                colors: [
+                                    Color.white.opacity(0.26),
+                                    item.accentTheme.cursorColor.opacity(0.36),
+                                    Color.white.opacity(0.04)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 1.1
+                        )
+                )
+                .shadow(color: item.accentTheme.cursorColor.opacity(0.30), radius: 24, x: 0, y: 12)
+                .shadow(color: item.accentTheme.cursorColor.opacity(0.62), radius: 15, x: 0, y: 0)
+                .shadow(color: Color.black.opacity(0.50), radius: 10, x: 0, y: 5)
 
             Triangle()
                 .fill(item.accentTheme.cursorColor)
-                .frame(width: 22, height: 22)
+                .frame(width: 24, height: 24)
                 .rotationEffect(.degrees(-35))
-                .shadow(color: item.accentTheme.cursorColor.opacity(0.74), radius: 8, x: 0, y: 0)
-                .frame(width: 44, height: 44)
+                .shadow(color: item.accentTheme.cursorColor.opacity(0.86), radius: 10, x: 0, y: 0)
+                .frame(width: 54, height: 54)
+
+            statusIndicator
+                .offset(x: 2, y: -2)
+        }
+        .frame(width: 66, height: 66, alignment: .center)
+        .help(item.title)
+        .onAppear {
+            isStatusAnimating = true
+        }
+        .onChange(of: item.status) { _ in
+            isStatusAnimating = false
+            DispatchQueue.main.async {
+                isStatusAnimating = true
+            }
+        }
+    }
+
+    private var statusIndicator: some View {
+        ZStack {
+            if shouldPulse {
+                Circle()
+                    .stroke(statusColor.opacity(statusPulseOpacity), lineWidth: 2)
+                    .frame(width: statusPulseSize, height: statusPulseSize)
+                    .scaleEffect(isStatusAnimating ? statusPulseScale : 0.72)
+                    .opacity(isStatusAnimating ? 0.08 : statusPulseOpacity)
+                    .animation(
+                        .easeInOut(duration: statusPulseDuration).repeatForever(autoreverses: false),
+                        value: isStatusAnimating
+                    )
+            }
 
             Circle()
                 .fill(statusColor)
-                .frame(width: 10, height: 10)
+                .frame(width: 11, height: 11)
                 .overlay(
                     Circle()
-                        .stroke(Color.white.opacity(0.25), lineWidth: 1)
+                        .stroke(Color.white.opacity(item.status == .done ? 0.42 : 0.28), lineWidth: 1)
                 )
-                .shadow(color: statusColor.opacity(0.68), radius: 4, x: 0, y: 0)
-                .offset(x: 1, y: -1)
+                .shadow(color: statusColor.opacity(statusGlowOpacity), radius: statusGlowRadius, x: 0, y: 0)
+                .scaleEffect(statusCoreScale)
+                .animation(
+                    shouldPulse
+                        ? .easeInOut(duration: statusPulseDuration * 0.5).repeatForever(autoreverses: true)
+                        : .easeOut(duration: DS.Animation.fast),
+                    value: isStatusAnimating
+                )
         }
-        .help(item.title)
+        .frame(width: 26, height: 26)
+        .accessibilityLabel(statusAccessibilityLabel)
     }
 
     private var statusColor: Color {
@@ -809,6 +870,99 @@ private struct ClickyAgentDockItemView: View {
             return Color(hex: "#34D399")
         case .failed:
             return Color(hex: "#FF6369")
+        }
+    }
+
+    private var shouldPulse: Bool {
+        switch item.status {
+        case .starting, .running, .failed:
+            return true
+        case .done:
+            return false
+        }
+    }
+
+    private var statusPulseDuration: Double {
+        switch item.status {
+        case .starting:
+            return 1.1
+        case .running:
+            return 0.82
+        case .failed:
+            return 0.62
+        case .done:
+            return 1
+        }
+    }
+
+    private var statusPulseScale: CGFloat {
+        switch item.status {
+        case .failed:
+            return 1.35
+        default:
+            return 1.18
+        }
+    }
+
+    private var statusPulseSize: CGFloat {
+        switch item.status {
+        case .failed:
+            return 26
+        default:
+            return 24
+        }
+    }
+
+    private var statusPulseOpacity: Double {
+        switch item.status {
+        case .starting:
+            return 0.62
+        case .running:
+            return 0.76
+        case .failed:
+            return 0.88
+        case .done:
+            return 0
+        }
+    }
+
+    private var statusGlowOpacity: Double {
+        switch item.status {
+        case .done:
+            return 0.88
+        case .failed:
+            return 0.95
+        default:
+            return 0.72
+        }
+    }
+
+    private var statusGlowRadius: CGFloat {
+        switch item.status {
+        case .done:
+            return 5
+        case .failed:
+            return 7
+        default:
+            return 6
+        }
+    }
+
+    private var statusCoreScale: CGFloat {
+        guard shouldPulse else { return 1 }
+        return isStatusAnimating ? 1.08 : 0.88
+    }
+
+    private var statusAccessibilityLabel: String {
+        switch item.status {
+        case .starting:
+            return "Agent task is starting"
+        case .running:
+            return "Agent task is working"
+        case .done:
+            return "Agent task is done"
+        case .failed:
+            return "Agent task needs attention"
         }
     }
 }
@@ -903,7 +1057,7 @@ private struct ClickyAgentDockHoverCard: View {
     let dismiss: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 8) {
                 Text(displayTitle)
                     .font(.system(size: 10, weight: .heavy, design: .rounded))
@@ -937,15 +1091,16 @@ private struct ClickyAgentDockHoverCard: View {
             Text(progressText)
                 .font(.system(size: 16, weight: .heavy))
                 .foregroundColor(DS.Colors.textPrimary)
-                .lineLimit(2)
-                .minimumScaleFactor(0.76)
+                .lineLimit(3)
+                .minimumScaleFactor(0.82)
+                .fixedSize(horizontal: false, vertical: true)
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("Follow up")
                     .font(.system(size: 10, weight: .heavy))
                     .foregroundColor(DS.Colors.textTertiary)
 
-                HStack(spacing: 8) {
+                FlowLayout(spacing: 8, rowSpacing: 8) {
                     Button(action: voice) {
                         Label("Voice", systemImage: "mic")
                     }
@@ -963,9 +1118,9 @@ private struct ClickyAgentDockHoverCard: View {
                 }
             }
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 16)
-        .frame(minWidth: 330, maxWidth: 330, minHeight: 112, alignment: .leading)
+        .padding(.horizontal, 26)
+        .padding(.vertical, 22)
+        .frame(width: 390, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(
@@ -1081,7 +1236,7 @@ private final class ClickyAgentDockPanel: NSPanel {
 @MainActor
 final class ClickyAgentDockWindowManager {
     private var panel: NSPanel?
-    private let dockSize = NSSize(width: 760, height: 520)
+    private let dockSize = NSSize(width: 520, height: 190)
 
     func show(companionManager: CompanionManager, onScreen screen: NSScreen) {
         if panel == nil {
@@ -1109,6 +1264,8 @@ final class ClickyAgentDockWindowManager {
         dockPanel.hasShadow = false
         dockPanel.hidesOnDeactivate = false
         dockPanel.isReleasedWhenClosed = false
+        dockPanel.isMovable = false
+        dockPanel.isMovableByWindowBackground = false
         dockPanel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
 
         let rootView = ClickyAgentDockStackView(companionManager: companionManager)
@@ -1121,8 +1278,11 @@ final class ClickyAgentDockWindowManager {
 
     private func positionPanel(onScreen screen: NSScreen) {
         guard let panel else { return }
-        let x = screen.frame.maxX - dockSize.width - 24
-        let y = screen.frame.maxY - dockSize.height - 96
+        let frame = screen.frame
+        let visibleFrame = screen.visibleFrame
+        let x = visibleFrame.maxX - dockSize.width - 16
+        let topInset = max(56, frame.maxY - visibleFrame.maxY + 56)
+        let y = frame.maxY - dockSize.height - topInset
         panel.setFrame(NSRect(x: x, y: y, width: dockSize.width, height: dockSize.height), display: true)
     }
 }

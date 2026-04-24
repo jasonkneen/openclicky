@@ -6,6 +6,8 @@ struct CodexAgentModePanelSection: View {
     var knowledgeIndex: WikiManager.Index
     var responseCard: ClickyResponseCard?
     var transcriptionProviderDisplayName: String
+    var transcriptionProviderID: String
+    var setVoiceTranscriptionProvider: (String) -> Void
     var isClickyCursorEnabled: Bool
     var setClickyCursorEnabled: (Bool) -> Void
     var isTutorModeEnabled: Bool
@@ -18,6 +20,8 @@ struct CodexAgentModePanelSection: View {
     var setAnthropicAPIKey: (String) -> Void
     var setElevenLabsAPIKey: (String) -> Void
     var setElevenLabsVoiceID: (String) -> Void
+    var setAssemblyAIAPIKey: (String) -> Void
+    var setDeepgramAPIKey: (String) -> Void
     var setCodexAgentAPIKey: (String) -> Void
     var replayOnboarding: () -> Void
     var quitClicky: () -> Void
@@ -244,9 +248,13 @@ struct CodexAgentModeSettingsSheet: View {
     @AppStorage(AppBundleConfiguration.userElevenLabsAPIKeyDefaultsKey) private var userElevenLabsAPIKey = ""
     @AppStorage(AppBundleConfiguration.userElevenLabsVoiceIDDefaultsKey) private var userElevenLabsVoiceID = ""
     @AppStorage(AppBundleConfiguration.userCodexAgentAPIKeyDefaultsKey) private var userCodexAgentAPIKey = ""
+    @AppStorage(AppBundleConfiguration.userAssemblyAIAPIKeyDefaultsKey) private var userAssemblyAIAPIKey = ""
+    @AppStorage(AppBundleConfiguration.userDeepgramAPIKeyDefaultsKey) private var userDeepgramAPIKey = ""
     var knowledgeIndex: WikiManager.Index
     var responseCard: ClickyResponseCard?
     var transcriptionProviderDisplayName: String
+    var transcriptionProviderID: String
+    var setVoiceTranscriptionProvider: (String) -> Void
     var isClickyCursorEnabled: Bool
     var setClickyCursorEnabled: (Bool) -> Void
     var isTutorModeEnabled: Bool
@@ -258,6 +266,8 @@ struct CodexAgentModeSettingsSheet: View {
     var setAnthropicAPIKey: (String) -> Void
     var setElevenLabsAPIKey: (String) -> Void
     var setElevenLabsVoiceID: (String) -> Void
+    var setAssemblyAIAPIKey: (String) -> Void
+    var setDeepgramAPIKey: (String) -> Void
     var setCodexAgentAPIKey: (String) -> Void
     var replayOnboarding: () -> Void
     var quitClicky: () -> Void
@@ -291,7 +301,7 @@ struct CodexAgentModeSettingsSheet: View {
 
                     settingsSection(
                         title: "Screen pointing model",
-                        subtitle: "Used for Anthropic Computer Use cursor pointing. This stays separate so OpenAI voice responses do not break pointing."
+                        subtitle: "Used for cursor pointing. Claude uses Anthropic Computer Use; Codex uses local Codex sign-in and image input."
                     ) {
                         modelOptionGrid(
                             options: OpenClickyModelCatalog.computerUseModels,
@@ -342,6 +352,32 @@ struct CodexAgentModeSettingsSheet: View {
                                 )
                             )
 
+                            settingsSecureField(
+                                label: "AssemblyAI key",
+                                placeholder: "Streaming transcription",
+                                systemImage: "waveform",
+                                value: Binding(
+                                    get: { userAssemblyAIAPIKey },
+                                    set: { newValue in
+                                        userAssemblyAIAPIKey = newValue
+                                        setAssemblyAIAPIKey(newValue)
+                                    }
+                                )
+                            )
+
+                            settingsSecureField(
+                                label: "Deepgram key",
+                                placeholder: "Streaming transcription",
+                                systemImage: "waveform",
+                                value: Binding(
+                                    get: { userDeepgramAPIKey },
+                                    set: { newValue in
+                                        userDeepgramAPIKey = newValue
+                                        setDeepgramAPIKey(newValue)
+                                    }
+                                )
+                            )
+
                             settingsTextField(
                                 label: "ElevenLabs voice ID",
                                 placeholder: "Voice ID",
@@ -377,9 +413,11 @@ struct CodexAgentModeSettingsSheet: View {
                         VStack(spacing: 8) {
                             settingsValueRow(
                                 label: "Transcription provider",
-                                systemImage: "mic.badge.waveform",
+                                systemImage: "waveform",
                                 value: transcriptionProviderDisplayName
                             )
+
+                            transcriptionProviderGrid
 
                             clickyCursorToggleRow
                             tutorModeToggleRow
@@ -598,6 +636,56 @@ struct CodexAgentModeSettingsSheet: View {
         }
         .buttonStyle(.plain)
         .pointerCursor()
+    }
+
+    private var transcriptionProviderGrid: some View {
+        let columns = [
+            GridItem(.flexible(), spacing: 6),
+            GridItem(.flexible(), spacing: 6)
+        ]
+
+        return LazyVGrid(columns: columns, alignment: .leading, spacing: 6) {
+            ForEach(BuddyTranscriptionProviderID.allCases) { option in
+                Button {
+                    setVoiceTranscriptionProvider(option.rawValue)
+                } label: {
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text(option.label)
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundColor(transcriptionProviderID == option.rawValue ? DS.Colors.textPrimary : DS.Colors.textTertiary)
+                                .lineLimit(1)
+
+                            Spacer(minLength: 4)
+
+                            if transcriptionProviderID == option.rawValue {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundColor(DS.Colors.accentText)
+                            }
+                        }
+
+                        Text(option.subtitle)
+                            .font(.system(size: 8, weight: .medium))
+                            .foregroundColor(DS.Colors.textTertiary)
+                            .lineLimit(1)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 7)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(transcriptionProviderID == option.rawValue ? DS.Colors.accentText.opacity(0.14) : Color.white.opacity(0.055))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .stroke(transcriptionProviderID == option.rawValue ? DS.Colors.accentText.opacity(0.7) : DS.Colors.borderSubtle.opacity(0.75), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+            }
+        }
     }
 
     private func settingsSecureField(label: String, placeholder: String, systemImage: String, value: Binding<String>) -> some View {

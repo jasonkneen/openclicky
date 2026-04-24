@@ -233,6 +233,7 @@ final class BuddyDictationManager: NSObject, ObservableObject {
     )
     @Published private(set) var microphoneButtonRecordingStartedAt: Date?
     @Published private(set) var transcriptionProviderDisplayName = ""
+    @Published private(set) var transcriptionProviderID = BuddyTranscriptionProviderID.automatic.rawValue
     @Published var lastErrorMessage: String?
     @Published private(set) var currentPermissionProblem: BuddyDictationPermissionProblem?
 
@@ -262,7 +263,7 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         return AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined
     }
 
-    private let transcriptionProvider: any BuddyTranscriptionProvider
+    private var transcriptionProvider: any BuddyTranscriptionProvider
     private let audioEngine = AVAudioEngine()
     private var activeTranscriptionSession: (any BuddyStreamingTranscriptionSession)?
     private var activeStartSource: BuddyDictationStartSource?
@@ -281,10 +282,23 @@ final class BuddyDictationManager: NSObject, ObservableObject {
     private var lastPermissionRequestCompletedAt: Date?
 
     override init() {
+        let transcriptionProviderID = BuddyTranscriptionProviderFactory.selectedProviderID().rawValue
         let transcriptionProvider = BuddyTranscriptionProviderFactory.makeDefaultProvider()
         self.transcriptionProvider = transcriptionProvider
+        self.transcriptionProviderID = transcriptionProviderID
         self.transcriptionProviderDisplayName = transcriptionProvider.displayName
         super.init()
+    }
+
+    func setTranscriptionProvider(_ providerID: String) {
+        guard !isDictationInProgress else { return }
+        let resolvedProviderID = BuddyTranscriptionProviderID(rawValue: providerID)?.rawValue
+            ?? BuddyTranscriptionProviderID.automatic.rawValue
+        UserDefaults.standard.set(resolvedProviderID, forKey: AppBundleConfiguration.userVoiceTranscriptionProviderDefaultsKey)
+        transcriptionProviderID = resolvedProviderID
+        let transcriptionProvider = BuddyTranscriptionProviderFactory.makeProvider(preferredProviderID: resolvedProviderID)
+        self.transcriptionProvider = transcriptionProvider
+        transcriptionProviderDisplayName = transcriptionProvider.displayName
     }
 
     func updateContextualKeyterms(_ contextualKeyterms: [String]) {
@@ -561,6 +575,12 @@ final class BuddyDictationManager: NSObject, ObservableObject {
 
     private func handleRecognitionError(_ error: Error) {
         if hasFinishedCurrentDictationSession {
+            return
+        }
+
+        if isNoSpeechDetectedError(error), latestRecognizedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            print("BuddyDictationManager: no speech detected; treating as cancelled interaction")
+            cancelCurrentDictation(preserveDraftText: false)
             return
         }
 
@@ -862,5 +882,17 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         }
 
         return fallback
+    }
+
+    private func isNoSpeechDetectedError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        if nsError.domain == "kAFAssistantErrorDomain", nsError.code == 1110 {
+            return true
+        }
+
+        let localizedDescription = error.localizedDescription
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return localizedDescription.contains("no speech detected")
     }
 }
