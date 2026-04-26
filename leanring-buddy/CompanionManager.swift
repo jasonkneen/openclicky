@@ -1276,6 +1276,16 @@ final class CompanionManager: ObservableObject {
         max(0, Int((end.timeIntervalSince(start) * 1000).rounded()))
     }
 
+    static func voiceResponseCompletionAudioPlaybackState(
+        spokenText: String,
+        playbackFinished: Bool
+    ) -> String {
+        guard !spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return "empty"
+        }
+        return playbackFinished ? "finished" : "interrupted"
+    }
+
     private static func truncatedLogText(_ value: String, maxLength: Int) -> String {
         let flattened = value
             .components(separatedBy: .whitespacesAndNewlines)
@@ -5167,9 +5177,8 @@ final class CompanionManager: ObservableObject {
 
     private func updateAgentDockItem(for sessionID: UUID, status: CodexAgentSessionStatus) {
         guard let itemIndex = agentDockItems.lastIndex(where: { $0.sessionID == sessionID }) else { return }
-        let activitySummary = codexAgentSessions
-            .first(where: { $0.id == sessionID })?
-            .latestActivitySummary
+        let session = codexAgentSessions.first(where: { $0.id == sessionID })
+        let activitySummary = session?.latestActivitySummary
 
         switch status {
         case .starting:
@@ -5195,6 +5204,10 @@ final class CompanionManager: ObservableObject {
                 ]
             )
         case .stopped:
+            if agentDockItems[itemIndex].status == .starting,
+               session?.hasVisibleActivity == false {
+                break
+            }
             completeAgentRequestTimingIfNeeded(sessionID: sessionID, status: "cancelled")
             break
         }
@@ -5953,11 +5966,6 @@ final class CompanionManager: ObservableObject {
                                     "spokenTextLength": spokenText.count
                                 ]
                             )
-                            var completionFields = self.voiceResponseExecutionFields()
-                            completionFields["spokenTextLength"] = spokenText.count
-                            completionFields["pointed"] = parseResult.coordinate != nil
-                            completionFields["audioPlaybackState"] = "started"
-                            Task { await completeRequest(extra: completionFields) }
                         }
                         self.markRequestStageCompleted(
                             route: "voice.response",
@@ -5973,7 +5981,18 @@ final class CompanionManager: ObservableObject {
                         )
                     } catch {
                         guard !Self.isExpectedCancellation(error) else {
-                            await completeRequest(status: "cancelled", extra: ["cancelledAt": "tts"])
+                            await completeRequest(
+                                status: "cancelled",
+                                extra: [
+                                    "cancelledAt": "tts",
+                                    "spokenTextLength": spokenText.count,
+                                    "pointed": parseResult.coordinate != nil,
+                                    "audioPlaybackState": Self.voiceResponseCompletionAudioPlaybackState(
+                                        spokenText: spokenText,
+                                        playbackFinished: false
+                                    )
+                                ]
+                            )
                             return
                         }
                         ClickyAnalytics.trackTTSError(error: error.localizedDescription)
@@ -5997,7 +6016,10 @@ final class CompanionManager: ObservableObject {
                 var completionFields = self.voiceResponseExecutionFields()
                 completionFields["spokenTextLength"] = spokenText.count
                 completionFields["pointed"] = parseResult.coordinate != nil
-                completionFields["audioPlaybackState"] = spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "empty" : "finished"
+                completionFields["audioPlaybackState"] = Self.voiceResponseCompletionAudioPlaybackState(
+                    spokenText: spokenText,
+                    playbackFinished: true
+                )
                 await completeRequest(extra: completionFields)
             } catch is CancellationError {
                 // User spoke again — response was interrupted

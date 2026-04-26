@@ -65,4 +65,25 @@ struct leanring_buddyTests {
             ) == nil
         )
     }
+
+    @Test func voiceResponseCompletionStateWaitsForPlaybackToFinish() async throws {
+        #expect(
+            CompanionManager.voiceResponseCompletionAudioPlaybackState(
+                spokenText: "yes, i can hear you.",
+                playbackFinished: true
+            ) == "finished"
+        )
+        #expect(
+            CompanionManager.voiceResponseCompletionAudioPlaybackState(
+                spokenText: "yes, i can hear you.",
+                playbackFinished: false
+            ) == "interrupted"
+        )
+        #expect(
+            CompanionManager.voiceResponseCompletionAudioPlaybackState(
+                spokenText: "   ",
+                playbackFinished: false
+            ) == "empty"
+        )
+    }
 }
