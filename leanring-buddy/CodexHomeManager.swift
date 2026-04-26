@@ -104,14 +104,14 @@ final class CodexHomeManager {
 
         let skills = home.appendingPathComponent(bundledSkillsDirectoryName, isDirectory: true)
         if let source = resourceURL(named: bundledSkillsDirectoryName, bundle: bundle) {
-            try copyReplacingItem(at: source, to: skills)
+            try copyDirectoryIfMissing(at: source, to: skills)
         } else {
             try fileManager.createDirectory(at: skills, withIntermediateDirectories: true)
         }
 
         let wikiSeed = home.appendingPathComponent(bundledWikiSeedDirectoryName, isDirectory: true)
         if let source = resourceURL(named: bundledWikiSeedDirectoryName, bundle: bundle) {
-            try copyReplacingItem(at: source, to: wikiSeed)
+            try copyDirectoryIfMissing(at: source, to: wikiSeed)
         } else {
             try fileManager.createDirectory(at: wikiSeed, withIntermediateDirectories: true)
         }
@@ -292,6 +292,24 @@ final class CodexHomeManager {
     private func copyReplacingItem(at source: URL, to destination: URL) throws {
         if fileManager.fileExists(atPath: destination.path) {
             guard try !itemsAppearEqual(source, destination) else { return }
+            try archiveExistingItem(at: destination, reason: "runtime-replacement")
+        }
+        try fileManager.copyItem(at: source, to: destination)
+    }
+
+    private func copyDirectoryIfMissing(at source: URL, to destination: URL) throws {
+        var isDirectory: ObjCBool = false
+        if fileManager.fileExists(atPath: destination.path, isDirectory: &isDirectory), isDirectory.boolValue {
+            // Avoid a full recursive directory comparison/copy on every new
+            // Agent Mode session. The bundled skills/wiki seed trees can be
+            // large, and the old `copyReplacingItem` path walked every file on
+            // the main actor before Codex could start, which caused beachballs
+            // and clipped the spoken acknowledgement. Existing directories are
+            // durable runtime state; app updates can still refresh small files
+            // above, while these heavy trees are seeded once.
+            return
+        }
+        if fileManager.fileExists(atPath: destination.path) {
             try archiveExistingItem(at: destination, reason: "runtime-replacement")
         }
         try fileManager.copyItem(at: source, to: destination)

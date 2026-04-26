@@ -452,3 +452,349 @@ final class MenuBarPanelManager: NSObject {
         enforcePanelMinimumSize()
     }
 }
+
+// MARK: - Agent Menu Bar Status Items
+
+@MainActor
+final class AgentMenuBarStatusManager: NSObject {
+    private var statusItemsByItemID: [UUID: NSStatusItem] = [:]
+    private var latestItemsByID: [UUID: ClickyAgentDockItem] = [:]
+    private var syncTask: Task<Void, Never>?
+    private var activePopover: NSPopover?
+    private weak var companionManager: CompanionManager?
+
+    func scheduleSync(companionManager: CompanionManager) {
+        syncTask?.cancel()
+        syncTask = Task { [weak companionManager, weak self] in
+            try? await Task.sleep(nanoseconds: 180_000_000)
+            await MainActor.run {
+                guard let self, let companionManager else { return }
+                self.sync(companionManager: companionManager)
+            }
+        }
+    }
+
+    func sync(companionManager: CompanionManager) {
+        self.companionManager = companionManager
+        let visibleItems = Array(companionManager.agentDockItems.suffix(5))
+        latestItemsByID = Dictionary(uniqueKeysWithValues: visibleItems.map { ($0.id, $0) })
+
+        let visibleIDs = Set(visibleItems.map(\.id))
+        let staleIDs = statusItemsByItemID.keys.filter { !visibleIDs.contains($0) }
+        for itemID in staleIDs {
+            if let statusItem = statusItemsByItemID.removeValue(forKey: itemID) {
+                NSStatusBar.system.removeStatusItem(statusItem)
+            }
+        }
+
+        for item in visibleItems {
+            let statusItem = statusItemsByItemID[item.id] ?? makeStatusItem(for: item)
+            statusItemsByItemID[item.id] = statusItem
+            update(statusItem: statusItem, with: item)
+        }
+    }
+
+    private func makeStatusItem(for item: ClickyAgentDockItem) -> NSStatusItem {
+        let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        if let button = statusItem.button {
+            button.identifier = NSUserInterfaceItemIdentifier(item.id.uuidString)
+            button.target = self
+            button.action = #selector(agentStatusItemClicked(_:))
+            button.imagePosition = .imageOnly
+        }
+        return statusItem
+    }
+
+    private func update(statusItem: NSStatusItem, with item: ClickyAgentDockItem) {
+        guard let button = statusItem.button else { return }
+        button.toolTip = tooltip(for: item)
+        button.image = makeAgentStatusIcon(theme: item.accentTheme, status: item.status)
+        button.image?.isTemplate = false
+    }
+
+    @objc private func agentStatusItemClicked(_ sender: NSStatusBarButton) {
+        guard let rawID = sender.identifier?.rawValue,
+              let itemID = UUID(uuidString: rawID),
+              let item = latestItemsByID[itemID] else { return }
+
+        if let activePopover, activePopover.isShown {
+            activePopover.performClose(nil)
+            if activePopover.contentViewController?.representedObject as? UUID == itemID {
+                return
+            }
+        }
+
+        guard let companionManager else { return }
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.animates = true
+        let rootView = AgentMenuBarStatusPopoverView(
+            item: item,
+            canOpenDashboard: companionManager.isAdvancedModeEnabled,
+            voice: { [weak companionManager] in
+                companionManager?.prepareVoiceFollowUpForAgentDockItem(item.id)
+            },
+            text: { [weak companionManager] in
+                companionManager?.showTextFollowUpForAgentDockItem(item.id)
+            },
+            dashboard: { [weak companionManager] in
+                companionManager?.openAgentDockItem(item.id)
+            },
+            close: { [weak popover] in
+                popover?.performClose(nil)
+            },
+            stop: { [weak companionManager, weak popover] in
+                popover?.performClose(nil)
+                companionManager?.stopAgentDockItem(item.id)
+            }
+        )
+        let controller = NSHostingController(rootView: rootView)
+        controller.representedObject = itemID
+        popover.contentViewController = controller
+        popover.contentSize = NSSize(width: 320, height: 250)
+        activePopover = popover
+        popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
+    }
+
+    private func tooltip(for item: ClickyAgentDockItem) -> String {
+        let status: String
+        switch item.status {
+        case .starting: status = "Starting"
+        case .running: status = "Working"
+        case .done: status = "Done"
+        case .failed: status = "Needs attention"
+        }
+        let title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return title.isEmpty ? "Agent: \(status)" : "Agent: \(status) — \(title)"
+    }
+
+    private func makeAgentStatusIcon(theme: ClickyAccentTheme, status: ClickyAgentDockStatus) -> NSImage {
+        let size: CGFloat = 18
+        let image = NSImage(size: NSSize(width: size, height: size))
+        image.lockFocus()
+        NSColor.clear.setFill()
+        NSRect(x: 0, y: 0, width: size, height: size).fill()
+
+        let accent = Self.nsColor(for: theme)
+        let center = CGPoint(x: size * 0.48, y: size * 0.50)
+        let radius: CGFloat = 7.2
+
+        let ring = NSBezierPath(ovalIn: NSRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2))
+        accent.withAlphaComponent(status == .running ? 0.36 : 0.20).setStroke()
+        ring.lineWidth = status == .running ? 2.0 : 1.2
+        ring.stroke()
+
+        let triangleSize = size * 0.55
+        let height = triangleSize * sqrt(3.0) / 2.0
+        let top = CGPoint(x: center.x, y: center.y + height / 1.5)
+        let bottomLeft = CGPoint(x: center.x - triangleSize / 2, y: center.y - height / 3)
+        let bottomRight = CGPoint(x: center.x + triangleSize / 2, y: center.y - height / 3)
+        let angle = -35.0 * .pi / 180.0
+        func rotate(_ point: CGPoint) -> CGPoint {
+            let dx = point.x - center.x, dy = point.y - center.y
+            let cosA = CGFloat(cos(angle)), sinA = CGFloat(sin(angle))
+            return CGPoint(x: center.x + cosA * dx - sinA * dy, y: center.y + sinA * dx + cosA * dy)
+        }
+        let path = NSBezierPath()
+        path.move(to: rotate(top))
+        path.line(to: rotate(bottomLeft))
+        path.line(to: rotate(bottomRight))
+        path.close()
+        accent.setFill()
+        path.fill()
+
+        let dotColor: NSColor
+        switch status {
+        case .starting: dotColor = NSColor.systemBlue
+        case .running: dotColor = accent
+        case .done: dotColor = NSColor.systemGreen
+        case .failed: dotColor = NSColor.systemRed
+        }
+        dotColor.setFill()
+        NSBezierPath(ovalIn: NSRect(x: size - 6.2, y: size - 6.2, width: 5.4, height: 5.4)).fill()
+        NSColor.white.withAlphaComponent(0.55).setStroke()
+        let dotStroke = NSBezierPath(ovalIn: NSRect(x: size - 6.2, y: size - 6.2, width: 5.4, height: 5.4))
+        dotStroke.lineWidth = 0.7
+        dotStroke.stroke()
+
+        image.unlockFocus()
+        return image
+    }
+
+    private static func nsColor(for theme: ClickyAccentTheme) -> NSColor {
+        switch theme {
+        case .blue: return NSColor(calibratedRed: 0.20, green: 0.50, blue: 1.00, alpha: 1)
+        case .mint: return NSColor(calibratedRed: 0.21, green: 0.83, blue: 0.60, alpha: 1)
+        case .amber: return NSColor(calibratedRed: 0.98, green: 0.80, blue: 0.08, alpha: 1)
+        case .rose: return NSColor(calibratedRed: 1.00, green: 0.31, blue: 0.37, alpha: 1)
+        }
+    }
+}
+
+private struct AgentMenuBarStatusPopoverView: View {
+    let item: ClickyAgentDockItem
+    let canOpenDashboard: Bool
+    let voice: () -> Void
+    let text: () -> Void
+    let dashboard: () -> Void
+    let close: () -> Void
+    let stop: () -> Void
+    @State private var isConfirmingStop = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 10) {
+                Text("AGENT")
+                    .font(.system(size: 11, weight: .heavy, design: .rounded))
+                    .kerning(1.6)
+                    .foregroundColor(item.accentTheme.cursorColor)
+                Spacer()
+                Text(statusText)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(statusColor)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(statusColor.opacity(0.18)))
+            }
+
+            Text(titleText)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(.white)
+                .lineLimit(2)
+                .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(progressText)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(Color.white.opacity(0.82))
+                    .lineLimit(4)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let linkTarget {
+                    Button {
+                        NSWorkspace.shared.open(linkTarget)
+                    } label: {
+                        Label(linkButtonTitle(for: linkTarget), systemImage: "arrow.up.right.square")
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.system(size: 12, weight: .semibold))
+                }
+            }
+
+            HStack(spacing: 8) {
+                stopControls
+                Spacer(minLength: 8)
+                Button("Voice", action: voice)
+                Button("Text", action: text)
+                if canOpenDashboard {
+                    Button("Dashboard", action: dashboard)
+                }
+            }
+            .buttonStyle(.borderless)
+            .font(.system(size: 12, weight: .semibold))
+        }
+        .overlay(alignment: .topTrailing) {
+            Button(action: close) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .bold))
+            }
+            .buttonStyle(.borderless)
+            .foregroundColor(Color.white.opacity(0.72))
+            .offset(x: 8, y: -8)
+        }
+        .padding(12)
+        .frame(width: 320, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [item.accentTheme.cursorColor.opacity(0.20), Color(hex: "#111827")],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        )
+    }
+
+    @ViewBuilder
+    private var stopControls: some View {
+        if isConfirmingStop {
+            Button("Confirm stop") {
+                isConfirmingStop = false
+                stop()
+            }
+            .foregroundColor(Color(hex: "#FFB4BA"))
+            Button("Keep") {
+                isConfirmingStop = false
+            }
+        } else {
+            Button("Stop") {
+                isConfirmingStop = true
+            }
+            .foregroundColor(Color(hex: "#FFB4BA"))
+        }
+    }
+
+    private var linkTarget: URL? {
+        Self.firstOpenableURL(in: progressText)
+    }
+
+    private func linkButtonTitle(for url: URL) -> String {
+        url.isFileURL ? "Open \(url.lastPathComponent)" : "Open link"
+    }
+
+    private static func firstOpenableURL(in text: String) -> URL? {
+        let patterns = [
+            #"`((?:file://)?/[^`]+)`"#,
+            #"((?:file://)?/Users/[^\s`]+)"#,
+            #"(https?://[^\s`]+)"#
+        ]
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(text.startIndex..<text.endIndex, in: text)
+            guard let match = regex.firstMatch(in: text, range: range), match.numberOfRanges > 1,
+                  let matchRange = Range(match.range(at: 1), in: text) else { continue }
+            let raw = String(text[matchRange])
+                .trimmingCharacters(in: CharacterSet(charactersIn: "`'\".,)\n\t "))
+            if raw.hasPrefix("file://"), let url = URL(string: raw) { return url }
+            if raw.hasPrefix("http://") || raw.hasPrefix("https://") { return URL(string: raw) }
+            if raw.hasPrefix("/") { return URL(fileURLWithPath: raw) }
+        }
+        return nil
+    }
+
+    private var titleText: String {
+        let title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return title.isEmpty ? "Agent task" : title
+    }
+
+    private var progressText: String {
+        if let caption = item.caption?.trimmingCharacters(in: .whitespacesAndNewlines), !caption.isEmpty {
+            return caption
+        }
+        switch item.status {
+        case .starting: return "An agent is getting ready."
+        case .running: return "An agent is working on this."
+        case .done: return "The agent has completed the task."
+        case .failed: return "The agent needs attention."
+        }
+    }
+
+    private var statusText: String {
+        switch item.status {
+        case .starting: return "Starting"
+        case .running: return "Working"
+        case .done: return "Done"
+        case .failed: return "Attention"
+        }
+    }
+
+    private var statusColor: Color {
+        switch item.status {
+        case .starting: return Color(hex: "#93C5FD")
+        case .running: return item.accentTheme.cursorColor
+        case .done: return Color(hex: "#34D399")
+        case .failed: return Color(hex: "#FF6369")
+        }
+    }
+}

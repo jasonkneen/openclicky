@@ -8,7 +8,6 @@
 
 /* Begin PBXBuildFile section */
 		AA00BB032F6500030039DA55 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = AA00BB022F6500020039DA55 /* Sparkle */; };
-		AA00BB062F6500060039DA55 /* PostHog in Frameworks */ = {isa = PBXBuildFile; productRef = AA00BB052F6500050039DA55 /* PostHog */; };
 		AA20BF010000000000000001 /* OpenClickyWidgetModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA20FR010000000000000001 /* OpenClickyWidgetModels.swift */; };
 		AA20BF020000000000000001 /* OpenClickyWidgetSnapshotReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA20FR020000000000000001 /* OpenClickyWidgetSnapshotReader.swift */; };
 		AA20BF030000000000000001 /* OpenClickyWidgets.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA20FR030000000000000001 /* OpenClickyWidgets.swift */; };
@@ -102,7 +101,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				AA00BB032F6500030039DA55 /* Sparkle in Frameworks */,
-				AA00BB062F6500060039DA55 /* PostHog in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -188,7 +186,6 @@
 			name = "leanring-buddy";
 			packageProductDependencies = (
 				AA00BB022F6500020039DA55 /* Sparkle */,
-				AA00BB052F6500050039DA55 /* PostHog */,
 			);
 			productName = "leanring-buddy";
 			productReference = 28F22CBF2F56440300A0FC59 /* OpenClicky.app */;
@@ -297,7 +294,6 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				AA00BB012F6500010039DA55 /* XCRemoteSwiftPackageReference "Sparkle" */,
-				AA00BB042F6500040039DA55 /* XCRemoteSwiftPackageReference "posthog-ios" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 28F22CC02F56440300A0FC59 /* Products */;
@@ -828,14 +824,6 @@
 				minimumVersion = 2.9.0;
 			};
 		};
-		AA00BB042F6500040039DA55 /* XCRemoteSwiftPackageReference "posthog-ios" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/PostHog/posthog-ios.git";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 3.0.0;
-			};
-		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -843,11 +831,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = AA00BB012F6500010039DA55 /* XCRemoteSwiftPackageReference "Sparkle" */;
 			productName = Sparkle;
-		};
-		AA00BB052F6500050039DA55 /* PostHog */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = AA00BB042F6500040039DA55 /* XCRemoteSwiftPackageReference "posthog-ios" */;
-			productName = PostHog;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

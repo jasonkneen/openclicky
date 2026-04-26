@@ -11,7 +11,6 @@
 import AppKit
 import Combine
 import Foundation
-import PostHog
 import ScreenCaptureKit
 import SwiftUI
 
@@ -215,6 +214,7 @@ final class CompanionManager: ObservableObject {
     let overlayWindowManager = OverlayWindowManager()
     let textModeWindowManager = ClickyTextModeWindowManager()
     let agentDockWindowManager = ClickyAgentDockWindowManager()
+    let agentMenuBarStatusManager = AgentMenuBarStatusManager()
     let settingsWindowManager = OpenClickySettingsWindowManager()
     let logViewerWindowManager = OpenClickyLogViewerWindowManager()
     let widgetStateStore = OpenClickyWidgetStateStore()
@@ -285,6 +285,13 @@ final class CompanionManager: ObservableObject {
         )
     }()
 
+    private lazy var deepgramTTSClient: DeepgramTTSClient = {
+        return DeepgramTTSClient(
+            apiKey: AppBundleConfiguration.deepgramAPIKey(),
+            voiceID: AppBundleConfiguration.deepgramTTSVoice()
+        )
+    }()
+
     /// Currently selected TTS provider. Persisted to UserDefaults under
     /// `openClickyTTSProvider`. Default ElevenLabs.
     @Published var selectedTTSProvider: OpenClickyTTSProvider =
@@ -298,16 +305,73 @@ final class CompanionManager: ObservableObject {
         switch selectedTTSProvider {
         case .elevenLabs: return elevenLabsTTSClient
         case .cartesia:   return cartesiaTTSClient
+        case .deepgram:   return deepgramTTSClient
+        }
+    }
+
+    /// Logging label for the active TTS provider — used in
+    /// `markRequestStageCompleted` so request logs report the provider
+    /// that actually handled the audio (not a hardcoded "ElevenLabs").
+    private var activeTTSControllerName: String {
+        switch selectedTTSProvider {
+        case .elevenLabs: return "ElevenLabsTTSClient"
+        case .cartesia:   return "CartesiaTTSClient"
+        case .deepgram:   return "DeepgramTTSClient"
+        }
+    }
+
+    private var activeTTSExecutionMethodSpeakText: String {
+        switch selectedTTSProvider {
+        case .elevenLabs: return "ElevenLabsTTSClient.speakText"
+        case .cartesia:   return "CartesiaTTSClient.speakText"
+        case .deepgram:   return "DeepgramTTSClient.speakText"
+        }
+    }
+
+    private var activeTTSExecutionMethodBeginStreaming: String {
+        switch selectedTTSProvider {
+        case .elevenLabs: return "ElevenLabsTTSClient.beginStreamingResponse"
+        case .cartesia:   return "CartesiaTTSClient.beginStreamingResponse"
+        case .deepgram:   return "DeepgramTTSClient.beginStreamingResponse"
+        }
+    }
+
+    func setDeepgramTTSVoice(_ voice: String) {
+        let trimmed = voice.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            UserDefaults.standard.removeObject(forKey: AppBundleConfiguration.userDeepgramTTSVoiceDefaultsKey)
+        } else {
+            UserDefaults.standard.set(trimmed, forKey: AppBundleConfiguration.userDeepgramTTSVoiceDefaultsKey)
+        }
+        deepgramTTSClient.updateConfiguration(
+            apiKey: AppBundleConfiguration.deepgramAPIKey(),
+            voiceID: AppBundleConfiguration.deepgramTTSVoice()
+        )
+        if selectedTTSProvider == .deepgram {
+            FillerPhraseLibrary.shared.prepare(client: deepgramTTSClient)
         }
     }
 
     func setTTSProvider(_ provider: OpenClickyTTSProvider) {
         guard selectedTTSProvider != provider else { return }
-        voiceTTSClient.stopPlayback()
-        selectedTTSProvider = provider
-        UserDefaults.standard.set(provider.rawValue, forKey: AppBundleConfiguration.userTTSProviderDefaultsKey)
-        voiceTTSClient.warmUpConnection()
-        FillerPhraseLibrary.shared.prepare(client: voiceTTSClient)
+        // Defer the @Published mutation to the next runloop tick — the
+        // SwiftUI Picker invokes this from within a view update, and
+        // setting `selectedTTSProvider` synchronously triggers a publish
+        // mid-render ("Publishing changes from within view updates...").
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.voiceTTSClient.stopPlayback()
+            self.selectedTTSProvider = provider
+            UserDefaults.standard.set(provider.rawValue, forKey: AppBundleConfiguration.userTTSProviderDefaultsKey)
+            self.voiceTTSClient.warmUpConnection()
+            FillerPhraseLibrary.shared.prepare(client: self.voiceTTSClient)
+        }
+    }
+
+    func setSpeculativePreFireEnabled(_ enabled: Bool) {
+        speculativePreFireEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: AppBundleConfiguration.userSpeculativePreFireDefaultsKey)
+        if !enabled { discardActiveSpeculativeFire(reason: "disabled") }
     }
 
     func setCartesiaAPIKey(_ apiKey: String) {
@@ -363,6 +427,48 @@ final class CompanionManager: ObservableObject {
     /// responder. Used as the candidate task when Haiku offers an agent.
     private var lastVoiceUserTranscript: String?
     private static let pendingAgentOfferTTL: TimeInterval = 90
+
+    // MARK: Speculative pre-fire state
+    //
+    // While the user is still talking, Deepgram emits interim
+    // transcripts every ~200ms. When a partial is "stable" (unchanged
+    // for ~1.5s) and looks like a pure question with no screen
+    // dependency, we kick off a speculative Claude call against that
+    // partial. Tokens stream into `speculativeBufferedDelta` but DO NOT
+    // play yet — we wait for the user to release the key. If the final
+    // transcript matches the partial we fired against, we commit the
+    // buffered tokens straight into the TTS pipeline (instant audio).
+    // If the final diverges, we cancel and fall through to the normal
+    // path. All speculative work runs on its own Task — this never
+    // blocks the main actor's cursor tracking, audio capture, or any
+    // in-flight Cartesia/ElevenLabs playback.
+
+    /// Whether speculative pre-fire is enabled (Settings → Voice).
+    @Published var speculativePreFireEnabled: Bool =
+        UserDefaults.standard.bool(forKey: AppBundleConfiguration.userSpeculativePreFireDefaultsKey)
+
+    private struct SpeculativeFire {
+        let partialTranscript: String
+        let firedAt: Date
+        let task: Task<String, Error>
+        /// Tokens accumulated from the streaming response. NOT pushed
+        /// to TTS yet — held until commit (final matches) or discard.
+        var bufferedContinuation: String
+        let assistantPrefillText: String?
+        let imagesUsed: Int
+        let chosenFiller: FillerPhraseLibrary.FillerSelection?
+    }
+    private var activeSpeculativeFire: SpeculativeFire?
+    /// Counter to prevent runaway re-fires when the user keeps
+    /// extending a partial across many stability windows.
+    private var speculativeFireCountThisUtterance: Int = 0
+    private static let speculativeMaxFiresPerUtterance = 2
+    private static let speculativeMinWordCount = 4
+    /// Last-seen partial text + arrival time, used to detect stability.
+    private var lastObservedPartial: String?
+    private var lastObservedPartialAt: Date?
+    /// Scheduled re-evaluation of stability after the dwell window.
+    private var speculativeStabilityDwellTask: Task<Void, Never>?
     private var lastAgentContextSessionID: UUID?
     private var announcedAgentFileURLs: Set<String> = []
     private var liveHandledComputerUseFingerprints: Set<String> = []
@@ -496,6 +602,8 @@ final class CompanionManager: ObservableObject {
     }
     private let userActivityIdleDetector = UserActivityIdleDetector()
     private var isTutorObservationInFlight = false
+    private var lastVoiceInteractionCompletedAt: Date = .distantPast
+    private static let tutorObservationVoiceCooldown: TimeInterval = 90
 
     func setSelectedModel(_ model: String) {
         let selectedVoiceResponseModel = OpenClickyModelCatalog.voiceResponseModel(withID: model)
@@ -505,9 +613,13 @@ final class CompanionManager: ObservableObject {
         applyVoiceResponseModelSettings(selectedVoiceResponseModel)
         switch selectedVoiceResponseModel.provider {
         case .anthropic:
-            claudeAgentSDKAPI?.warmUp(systemPrompt: currentVoiceResponseSystemPrompt())
+            if AppBundleConfiguration.anthropicAPIKey() == nil {
+                claudeAgentSDKAPI?.warmUp(systemPrompt: currentVoiceResponseSystemPrompt())
+            }
         case .openAI, .codex:
-            codexVoiceSession.warmUp(systemPrompt: currentVoiceResponseSystemPrompt())
+            if selectedVoiceResponseModel.provider == .codex || AppBundleConfiguration.openAIAPIKey() == nil {
+                codexVoiceSession.warmUp(systemPrompt: currentVoiceResponseSystemPrompt())
+            }
         }
     }
 
@@ -655,11 +767,22 @@ final class CompanionManager: ObservableObject {
     }
 
     func publishWidgetSnapshot() {
-        widgetStateStore.publishSnapshot(from: self)
+        agentMenuBarStatusManager.scheduleSync(companionManager: self)
+        // Temporarily disabled while stabilizing Agent Mode. Widget publishing
+        // touches filesystem state and asks WidgetKit to reload timelines; if
+        // it runs during Codex startup/streaming it can add more main-thread
+        // pressure. The voice/agent experience is the priority.
+        return
+        // widgetStateStore.publishSnapshot(from: self)
     }
 
     func scheduleWidgetSnapshotPublish() {
-        widgetStateStore.scheduleSnapshotPublish(from: self)
+        agentMenuBarStatusManager.scheduleSync(companionManager: self)
+        // Temporarily disabled while stabilizing Agent Mode. Agent status and
+        // transcript deltas call this frequently, so keep widgets out of the
+        // hot path until the lockup is fully gone.
+        return
+        // widgetStateStore.scheduleSnapshotPublish(from: self)
     }
 
     func handleWidgetDeepLink(_ url: URL) {
@@ -787,18 +910,13 @@ final class CompanionManager: ObservableObject {
     /// Whether the user has submitted their email during onboarding.
     @Published var hasSubmittedEmail: Bool = UserDefaults.standard.bool(forKey: "hasSubmittedEmail")
 
-    /// Submits the user's email to FormSpark and identifies them in PostHog.
+    /// Submits the user's email to FormSpark.
     func submitEmail(_ email: String) {
         let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedEmail.isEmpty else { return }
 
         hasSubmittedEmail = true
         UserDefaults.standard.set(true, forKey: "hasSubmittedEmail")
-
-        // Identify user in PostHog
-        PostHogSDK.shared.identify(trimmedEmail, userProperties: [
-            "email": trimmedEmail
-        ])
 
         // Submit to FormSpark
         Task {
@@ -832,7 +950,7 @@ final class CompanionManager: ObservableObject {
         let selectedVoiceResponseModel = OpenClickyModelCatalog.voiceResponseModel(withID: selectedModel)
         switch selectedVoiceResponseModel.provider {
         case .anthropic:
-            if let claudeAgentSDKAPI {
+            if AppBundleConfiguration.anthropicAPIKey() == nil, let claudeAgentSDKAPI {
                 claudeAgentSDKAPI.warmUp(systemPrompt: currentVoiceResponseSystemPrompt())
             }
             // Always force-init the HTTP ClaudeAPI client too. Its
@@ -846,7 +964,9 @@ final class CompanionManager: ObservableObject {
             }
         case .openAI, .codex:
             codexVoiceSession.model = selectedVoiceResponseModel.id
-            codexVoiceSession.warmUp(systemPrompt: currentVoiceResponseSystemPrompt())
+            if selectedVoiceResponseModel.provider == .codex || AppBundleConfiguration.openAIAPIKey() == nil {
+                codexVoiceSession.warmUp(systemPrompt: currentVoiceResponseSystemPrompt())
+            }
         }
         // Force-init the active TTS provider and prime its TLS
         // handshake. The first sentence's TTS request would otherwise
@@ -1455,17 +1575,18 @@ final class CompanionManager: ObservableObject {
 
         switch selectedVoiceResponseModel.provider {
         case .anthropic:
-            if claudeAgentSDKAPI != nil {
+            if AppBundleConfiguration.anthropicAPIKey() != nil {
+                fields["executionMethod"] = "ClaudeAPI.analyzeImageStreaming"
+                fields["authMode"] = "anthropic_api_key_primary"
+                fields["transport"] = "sse"
+                fields["streamingMethod"] = "URLSession.bytes"
+                fields["agentSDKFallbackAvailable"] = claudeAgentSDKAPI != nil
+            } else if claudeAgentSDKAPI != nil {
                 fields["executionMethod"] = "ClaudeAgentSDKAPI.analyzeImageStreaming"
                 fields["authMode"] = "local_claude_agent_sdk_primary"
                 fields["transport"] = "agent_sdk_query"
                 fields["streamingMethod"] = "claude_agent_sdk_query"
-                fields["apiKeyFallback"] = AppBundleConfiguration.anthropicAPIKey() != nil
-            } else if AppBundleConfiguration.anthropicAPIKey() != nil {
-                fields["executionMethod"] = "ClaudeAPI.analyzeImageStreaming"
-                fields["authMode"] = "anthropic_api_key_fallback"
-                fields["transport"] = "sse"
-                fields["streamingMethod"] = "URLSession.bytes"
+                fields["apiKeyFallback"] = false
             } else {
                 fields["executionMethod"] = "ClaudeAgentSDKAPI.analyzeImageStreaming"
                 fields["authMode"] = "local_claude_agent_sdk_missing"
@@ -1473,11 +1594,19 @@ final class CompanionManager: ObservableObject {
                 fields["streamingMethod"] = "claude_agent_sdk_query"
             }
         case .openAI:
-            fields["executionMethod"] = "CodexVoiceSession.analyzeImageStreaming"
-            fields["authMode"] = "local_codex_chatgpt_primary"
-            fields["transport"] = "codex_app_server_stdio"
-            fields["streamingMethod"] = "codex_app_server_agentMessage_delta"
-            fields["apiKeyFallback"] = AppBundleConfiguration.openAIAPIKey() != nil
+            if AppBundleConfiguration.openAIAPIKey() != nil {
+                fields["executionMethod"] = "OpenAIAPI.analyzeImageStreaming"
+                fields["authMode"] = "openai_api_key_primary"
+                fields["transport"] = "responses_api_sse"
+                fields["streamingMethod"] = "URLSession.bytes"
+                fields["codexFallbackAvailable"] = true
+            } else {
+                fields["executionMethod"] = "CodexVoiceSession.analyzeImageStreaming"
+                fields["authMode"] = "local_codex_chatgpt_primary"
+                fields["transport"] = "codex_app_server_stdio"
+                fields["streamingMethod"] = "codex_app_server_agentMessage_delta"
+                fields["apiKeyFallback"] = false
+            }
         case .codex:
             fields["executionMethod"] = "CodexVoiceSession.analyzeImageStreaming"
             fields["authMode"] = "local_codex_chatgpt_primary"
@@ -1529,6 +1658,11 @@ final class CompanionManager: ObservableObject {
 
             ClickyAnalytics.trackPushToTalkStarted()
 
+            // Reset speculative-fire counters so this utterance starts
+            // with a clean budget. The previous turn's state cannot
+            // influence this one.
+            resetSpeculativeFireForNewUtterance()
+
             // Kick off the screenshot the moment the key goes down so it
             // captures in parallel with audio recording instead of blocking
             // the response path after the final transcript arrives.
@@ -1569,6 +1703,7 @@ final class CompanionManager: ObservableObject {
         activeRequestTiming = requestTiming
         defer { activeRequestTiming = nil }
         print("Companion received transcript: \(finalTranscript)")
+        lastVoiceInteractionCompletedAt = Date()
         OpenClickyMessageLogStore.shared.append(
             lane: "voice",
             direction: "incoming",
@@ -1579,6 +1714,17 @@ final class CompanionManager: ObservableObject {
             ]
         )
         ClickyAnalytics.trackUserMessageSent(transcript: finalTranscript)
+
+        // The final transcript ends the live-partial window for every
+        // route, including local/direct routes that return before the
+        // normal voice-response path. Cancel the dwell timer here so it
+        // cannot fire a stale speculative model request after a quick
+        // local response has already completed.
+        speculativeStabilityDwellTask?.cancel()
+        speculativeStabilityDwellTask = nil
+        lastObservedPartial = nil
+        lastObservedPartialAt = nil
+
         if handleAgentCancellationRequestIfNeeded(from: finalTranscript) {
             return
         }
@@ -1610,6 +1756,16 @@ final class CompanionManager: ObservableObject {
         // reply offers to spin up an agent — the user's confirmation on
         // the next turn will then have something to delegate.
         lastVoiceUserTranscript = finalTranscript
+
+        // Speculative pre-fire commit path. If the partial we fired
+        // against matches the final, hand the in-flight Claude task
+        // straight to the TTS pipeline — saves the entire model TTFT
+        // window. Otherwise fall through to the normal capture+fire.
+        if let committed = consumeSpeculativeFireIfMatches(finalTranscript) {
+            commitSpeculativeFire(committed, transcript: finalTranscript)
+            return
+        }
+
         sendTranscriptToClaudeWithScreenshot(transcript: finalTranscript)
     }
 
@@ -1617,6 +1773,11 @@ final class CompanionManager: ObservableObject {
 
     private func handleLiveComputerUseTranscript(_ partialTranscript: String) {
         let trimmedTranscript = partialTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Independent of CUA: track this partial for the speculative
+        // pre-fire path. Fires its own background Task when stable.
+        observePartialForSpeculativePreFire(trimmedTranscript)
+
         let isShortKnownAppRequest = Self.bareLocalAppOpenRequest(from: trimmedTranscript) != nil
         guard trimmedTranscript.count >= 8 || isShortKnownAppRequest else { return }
 
@@ -1662,7 +1823,21 @@ final class CompanionManager: ObservableObject {
         if let appOpenRequest = Self.localAppOpenRequest(from: trimmedTranscript) {
             let fingerprint = Self.directComputerUseFingerprint(kind: "app", value: appOpenRequest.appName)
             guard !liveHandledComputerUseFingerprints.contains(fingerprint) else { return }
-            liveHandledComputerUseFingerprints.insert(fingerprint)
+            guard Self.canResolveApplicationWithoutShellOpen(named: appOpenRequest.appName) else {
+                OpenClickyMessageLogStore.shared.append(
+                    lane: "computer-use",
+                    direction: "incoming",
+                    event: "native_cua.live_partial.app_candidate_unresolved",
+                    fields: [
+                        "partialTranscript": trimmedTranscript,
+                        "executor": "native_cua",
+                        "route": "native_cua.open_app",
+                        "executionMethod": "launchApplication(named:)",
+                        "appName": appOpenRequest.appName
+                    ]
+                )
+                return
+            }
             let requestTiming = beginRequestTiming(source: "voice_live_partial", text: trimmedTranscript)
             OpenClickyMessageLogStore.shared.append(
                 lane: "computer-use",
@@ -1678,7 +1853,9 @@ final class CompanionManager: ObservableObject {
                 ]
             )
             withActiveRequestTiming(requestTiming) {
-                _ = openRequestedApplication(appOpenRequest, shouldSpeak: false)
+                if openRequestedApplication(appOpenRequest, shouldSpeak: false) {
+                    liveHandledComputerUseFingerprints.insert(fingerprint)
+                }
             }
             return
         }
@@ -3014,7 +3191,8 @@ final class CompanionManager: ObservableObject {
 
         do {
             try process.run()
-            return true
+            process.waitUntilExit()
+            return process.terminationStatus == 0
         } catch {
             print("OpenClicky app open failed for arguments \(arguments): \(error)")
             return false
@@ -3065,6 +3243,10 @@ final class CompanionManager: ObservableObject {
         }
 
         if handleAgentStatusQuestionIfNeeded(from: trimmedText) {
+            return
+        }
+
+        if acceptPendingAgentOfferIfConfirmed(from: trimmedText) {
             return
         }
 
@@ -3404,6 +3586,447 @@ final class CompanionManager: ObservableObject {
     /// rather than "answer this question yourself". Used to gate
     /// `submitContextualAgentFollowUp` so an idle running agent doesn't
     /// silently absorb every subsequent voice turn.
+    // MARK: - Speculative pre-fire
+
+    private func resetSpeculativeFireForNewUtterance() {
+        discardActiveSpeculativeFire(reason: "new_utterance")
+        speculativeFireCountThisUtterance = 0
+        lastObservedPartial = nil
+        lastObservedPartialAt = nil
+        speculativeStabilityDwellTask?.cancel()
+        speculativeStabilityDwellTask = nil
+    }
+
+    /// Tracks the latest interim transcript and re-arms a stability
+    /// dwell timer. When the partial holds steady for 1.5s and passes
+    /// the eligibility predicate, fires a speculative Claude call on
+    /// its own background Task. Multi-threaded by design — the fire's
+    /// HTTP request, screenshot use, and token buffering all run
+    /// outside the main actor.
+    private func observePartialForSpeculativePreFire(_ partialTranscript: String) {
+        guard speculativePreFireEnabled else { return }
+        guard !partialTranscript.isEmpty else { return }
+        // If a fire is already running for the SAME partial prefix
+        // we're still extending, leave it alone — the extension may
+        // simply finish the same sentence and the running call will
+        // commit cleanly. Only re-fire when the partial has changed
+        // its meaning (i.e., extended past the fired-against prefix
+        // by enough words to be a different question).
+        if let active = activeSpeculativeFire,
+           partialTranscript.hasPrefix(active.partialTranscript),
+           Self.wordCount(in: partialTranscript) - Self.wordCount(in: active.partialTranscript) < 4 {
+            lastObservedPartial = partialTranscript
+            lastObservedPartialAt = Date()
+            return
+        }
+
+        // Partial diverged — discard any in-flight fire so the next
+        // stable window can produce a fresh one.
+        if let active = activeSpeculativeFire,
+           !partialTranscript.hasPrefix(active.partialTranscript) {
+            discardActiveSpeculativeFire(reason: "partial_diverged")
+        }
+
+        lastObservedPartial = partialTranscript
+        lastObservedPartialAt = Date()
+
+        speculativeStabilityDwellTask?.cancel()
+        let snapshot = partialTranscript
+        speculativeStabilityDwellTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            await MainActor.run {
+                guard let self else { return }
+                guard self.speculativePreFireEnabled else { return }
+                guard self.lastObservedPartial == snapshot else { return }
+                guard self.activeSpeculativeFire == nil else { return }
+                guard self.speculativeFireCountThisUtterance < Self.speculativeMaxFiresPerUtterance else { return }
+                guard Self.partialIsEligibleForSpeculativeFire(snapshot) else { return }
+                self.fireSpeculativePreFire(forPartial: snapshot)
+            }
+        }
+    }
+
+    /// Predicate gating which partials are worth a speculative fire.
+    /// Conservative — must look like a pure standalone question with
+    /// no screen reference, no correction, no agent intent.
+    private static func partialIsEligibleForSpeculativeFire(_ partialTranscript: String) -> Bool {
+        let normalized = partialTranscript
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased()
+
+        guard wordCount(in: normalized) >= speculativeMinWordCount else { return false }
+        if quickLocalVoiceResponseText(for: partialTranscript) != nil { return false }
+
+        // Reject anything that already routes elsewhere.
+        if isAgentRoutingCandidate(partialTranscript) { return false }
+        if explicitNewTaskInstruction(from: partialTranscript) != nil { return false }
+        if agentTaskCreationInstruction(from: partialTranscript) != nil { return false }
+        if clickyAgentInstruction(from: partialTranscript) != nil { return false }
+        if permissiveAgentInstruction(from: partialTranscript) != nil { return false }
+        if isCancelAllAgentTasksRequest(partialTranscript) { return false }
+        if isCancelCurrentAgentTaskRequest(partialTranscript) { return false }
+
+        // Reject deictic / correction phrasings — these almost always
+        // depend on screen state or imply the user is mid-revision.
+        let deicticBlocklist = [
+            " this", " that", " here", " these", " those",
+            " no,", " no.", " actually", " wait", " scratch", " i mean",
+            " click", " press", " type", " open ", " close ",
+            " switch ", " show me", " hide ", " select ",
+            " screen", " can you see", " do you see", " looking at",
+            " the file", " the button",
+            " the window", " the panel", " the menu", " this app",
+            " that app", " that file", " this tab"
+        ]
+        for needle in deicticBlocklist where normalized.contains(needle) {
+            return false
+        }
+
+        // Require the partial to start with a question/conversational lead.
+        let allowedLeads = [
+            "what ", "what's ", "whats ", "who ", "who's ", "whos ",
+            "why ", "when ", "where ", "how ", "is ", "are ", "do ",
+            "does ", "can you ", "could you ", "would you ", "should i ",
+            "tell me ", "explain ", "summarize ", "describe ",
+            "give me ", "help me understand "
+        ]
+        for lead in allowedLeads where normalized.hasPrefix(lead) {
+            return true
+        }
+        return false
+    }
+
+    private static func wordCount(in text: String) -> Int {
+        text.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).count
+    }
+
+    /// Fires the speculative Claude call. Tokens stream into the
+    /// active fire's buffer but are NOT pushed through TTS yet — the
+    /// audio path waits for `commitSpeculativeFire`.
+    private func fireSpeculativePreFire(forPartial partialTranscript: String) {
+        speculativeFireCountThisUtterance += 1
+        let firedAt = Date()
+
+        OpenClickyMessageLogStore.shared.append(
+            lane: "voice",
+            direction: "outgoing",
+            event: "speculative.fire",
+            fields: [
+                "partialTranscript": partialTranscript,
+                "fireOrdinal": speculativeFireCountThisUtterance,
+                "voiceModel": selectedModel
+            ]
+        )
+
+        // Speculative pre-fire already hides model latency by starting
+        // while the user is still talking. Do not add a filler; it makes
+        // committed text-only responses sound stitched together.
+        let chosenFiller: FillerPhraseLibrary.FillerSelection? = nil
+        let assistantPrefillText: String? = nil
+
+        // Track buffered text on the actor; the streaming closure pushes
+        // appends here. The Task runs detached for the HTTP work.
+        let speculativeBufferRef = SpeculativeBufferRef()
+        let speculativeFireForCapture = partialTranscript
+        let task = Task<String, Error> { [weak self] in
+            guard let self else { throw CancellationError() }
+
+            // Use the prewarmed screenshot if it's fresh — don't
+            // recapture mid-utterance. Stale = falls back to no image.
+            let labeledImages: [(data: Data, label: String)] = await MainActor.run {
+                guard self.prewarmedScreenshotTask != nil,
+                      let started = self.prewarmedScreenshotStartedAt,
+                      Date().timeIntervalSince(started) <= Self.prewarmedScreenshotMaxAge else {
+                    return [(data: Data, label: String)]()
+                }
+                // Don't consume the prewarmed task here — the final
+                // path may still need it. Leave it in place; we just
+                // peek at its current value via a separate await.
+                return []
+            }
+
+            let history = await MainActor.run {
+                self.conversationHistory.map { entry in
+                    (userPlaceholder: entry.userTranscript, assistantResponse: entry.assistantResponse)
+                }
+            }
+
+            let voiceSystemPrompt = await MainActor.run { self.currentVoiceResponseSystemPrompt() }
+
+            let userPromptForClaude: String = {
+                if labeledImages.isEmpty {
+                    return "\(speculativeFireForCapture)\n\nNo screenshot is available. Answer from the transcript only and use [POINT:none]."
+                }
+                return speculativeFireForCapture
+            }()
+
+            do {
+                return try await self.analyzeVoiceResponse(
+                    images: labeledImages,
+                    systemPrompt: voiceSystemPrompt,
+                    conversationHistory: history,
+                    userPrompt: userPromptForClaude,
+                    assistantPrefill: assistantPrefillText,
+                    onTextChunk: { accumulatedText in
+                        speculativeBufferRef.value = accumulatedText
+                    }
+                )
+            } catch {
+                throw error
+            }
+        }
+
+        activeSpeculativeFire = SpeculativeFire(
+            partialTranscript: partialTranscript,
+            firedAt: firedAt,
+            task: task,
+            bufferedContinuation: "",
+            assistantPrefillText: assistantPrefillText,
+            imagesUsed: 0,
+            chosenFiller: chosenFiller
+        )
+        // Watch the buffer ref so we can update bufferedContinuation
+        // — it's a class so the closure mutates the same storage.
+        Task { [weak self] in
+            while !(self?.activeSpeculativeFireTaskIsDone ?? true) {
+                try? await Task.sleep(nanoseconds: 50_000_000)
+                await MainActor.run {
+                    self?.activeSpeculativeFire?.bufferedContinuation = speculativeBufferRef.value
+                }
+            }
+            await MainActor.run {
+                self?.activeSpeculativeFire?.bufferedContinuation = speculativeBufferRef.value
+            }
+        }
+    }
+
+    /// True only when there is no active fire OR the fire's task has
+    /// completed. Used by the buffer-mirror loop to know when to stop.
+    private var activeSpeculativeFireTaskIsDone: Bool {
+        guard let task = activeSpeculativeFire?.task else { return true }
+        return task.isCancelled
+    }
+
+    /// Cancel + drop any in-flight speculative fire. Called when the
+    /// partial diverges, the user disables the feature, or the final
+    /// transcript doesn't match.
+    private func discardActiveSpeculativeFire(reason: String) {
+        guard let active = activeSpeculativeFire else { return }
+        active.task.cancel()
+        OpenClickyMessageLogStore.shared.append(
+            lane: "voice",
+            direction: "internal",
+            event: "speculative.discard",
+            fields: [
+                "reason": reason,
+                "firedPartial": active.partialTranscript,
+                "bufferedChars": active.bufferedContinuation.count
+            ]
+        )
+        activeSpeculativeFire = nil
+    }
+
+    /// If the final transcript matches (prefix-equal to) the partial
+    /// we speculatively fired against, return the active fire so the
+    /// caller can commit its buffered tokens straight to TTS. Returns
+    /// nil otherwise; caller falls through to the normal response path.
+    private func consumeSpeculativeFireIfMatches(_ finalTranscript: String) -> SpeculativeFire? {
+        guard let active = activeSpeculativeFire else { return nil }
+        let normalized = finalTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        let firedNormalized = active.partialTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Accept exact match OR final extends the partial by ≤4 words
+        // (Deepgram often delivers a slightly longer final after the
+        // last interim — punctuation, smart-format additions).
+        let isExactMatch = normalized == firedNormalized
+        let extensionWords = Self.wordCount(in: normalized) - Self.wordCount(in: firedNormalized)
+        let isCleanExtension = normalized.hasPrefix(firedNormalized) && extensionWords >= 0 && extensionWords <= 4
+        guard isExactMatch || isCleanExtension else {
+            discardActiveSpeculativeFire(reason: "final_diverged")
+            return nil
+        }
+
+        OpenClickyMessageLogStore.shared.append(
+            lane: "voice",
+            direction: "internal",
+            event: "speculative.commit",
+            fields: [
+                "firedPartial": active.partialTranscript,
+                "finalTranscript": normalized,
+                "extensionWords": extensionWords,
+                "bufferedChars": active.bufferedContinuation.count,
+                "elapsedSeconds": Date().timeIntervalSince(active.firedAt)
+            ]
+        )
+        activeSpeculativeFire = nil
+        return active
+    }
+
+    /// Mutable container for token-stream buffering across the actor
+    /// boundary. The streaming `onTextChunk` closure runs on the main
+    /// actor; the Task that polls the buffer also runs on main, so
+    /// access is serialized. We use a class so the captured reference
+    /// in the closure points to the same storage as the polling loop.
+    private final class SpeculativeBufferRef: @unchecked Sendable {
+        var value: String = ""
+    }
+
+    /// Hands a matched speculative fire to the live TTS pipeline.
+    /// Schedules the filler PCM head-of-queue, then pumps any tokens
+    /// already buffered through the sentence streamer, then awaits the
+    /// in-flight Claude task for the tail. Mirrors the late half of
+    /// `sendTranscriptToClaudeWithScreenshot`.
+    private func commitSpeculativeFire(_ fire: SpeculativeFire, transcript: String) {
+        interruptCurrentVoiceResponse()
+        let timing = activeRequestTiming
+        let executionStartedAt = markRequestExecutionStarted(
+            route: "voice.response",
+            timing: timing,
+            extra: voiceResponseExecutionFields()
+        )
+        let ttsStartedAt = Date()
+        var didMarkAudioStarted = false
+
+        currentResponseTask = Task {
+            self.voiceState = .processing
+            var didCompleteRequest = false
+            func completeRequest(status: String = "success", extra: [String: Any] = [:]) async {
+                await MainActor.run {
+                    guard !didCompleteRequest else { return }
+                    didCompleteRequest = true
+                    var fields = self.voiceResponseExecutionFields()
+                    extra.forEach { fields[$0.key] = $0.value }
+                    fields["speculativeCommit"] = true
+                    self.markRequestCompleted(
+                        route: "voice.response",
+                        executionStartedAt: executionStartedAt,
+                        timing: timing,
+                        status: status,
+                        extra: fields
+                    )
+                }
+            }
+
+            do {
+                let streamingTTSSession = self.voiceTTSClient.beginStreamingResponse {
+                    guard !didMarkAudioStarted else { return }
+                    didMarkAudioStarted = true
+                    self.voiceState = .responding
+                    self.markRequestStageCompleted(
+                        route: "voice.response",
+                        stage: "tts_audio_started",
+                        stageStartedAt: ttsStartedAt,
+                        timing: timing,
+                        extra: [
+                            "executor": "tts",
+                            "executionMethod": "voiceTTSClient.beginStreamingResponse",
+                            "controller": "voiceTTSClient",
+                            "speculativeCommit": true
+                        ]
+                    )
+                }
+
+                if let chosenFiller = fire.chosenFiller {
+                    streamingTTSSession.enqueuePrebakedSamples(chosenFiller.samples)
+                }
+
+                // Push whatever tokens have already accumulated. The
+                // speculative call may have completed already, in
+                // which case fire.task.value returns immediately;
+                // otherwise we drain the live continuation as it
+                // arrives.
+                var emittedSpokenSoFar = ""
+                let pushDelta: (String) -> Void = { parsedSpoken in
+                    let safeSpoken = Self.stripTrailingPointTagFragment(parsedSpoken)
+                    guard safeSpoken.hasPrefix(emittedSpokenSoFar),
+                          safeSpoken.count > emittedSpokenSoFar.count else { return }
+                    let delta = String(safeSpoken.dropFirst(emittedSpokenSoFar.count))
+                    emittedSpokenSoFar = safeSpoken
+                    streamingTTSSession.appendText(delta)
+                }
+
+                // Drain the buffered continuation already collected
+                // before the task finishes.
+                let preTaskBuffer = fire.bufferedContinuation
+                if !preTaskBuffer.isEmpty {
+                    let parsed = Self.parsePointingCoordinates(from: preTaskBuffer).spokenText
+                    pushDelta(parsed)
+                }
+
+                // Wait for the speculative task to finish — it may
+                // already be done. Then push any tail tokens.
+                let continuationText: String
+                do {
+                    continuationText = try await fire.task.value
+                } catch is CancellationError {
+                    streamingTTSSession.cancel()
+                    await completeRequest(status: "cancelled", extra: ["cancelledAt": "speculative_task"])
+                    return
+                } catch {
+                    print("⚠️ Speculative commit failed: \(error)")
+                    streamingTTSSession.cancel()
+                    speakResponseFailureFallback(error)
+                    await completeRequest(status: "failed", extra: ["error": error.localizedDescription])
+                    return
+                }
+
+                let finalParsed = Self.parsePointingCoordinates(from: continuationText).spokenText
+                pushDelta(finalParsed)
+
+                let fullResponseText: String = {
+                    if let prefill = fire.assistantPrefillText, !prefill.isEmpty {
+                        return Self.combinedVoiceResponseText(
+                            prefill: prefill,
+                            continuation: continuationText
+                        )
+                    }
+                    return continuationText
+                }()
+                let parseResult = Self.parsePointingCoordinates(from: fullResponseText)
+                let spokenText = parseResult.spokenText
+
+                self.conversationHistory.append((
+                    userTranscript: transcript,
+                    assistantResponse: spokenText
+                ))
+                if self.conversationHistory.count > 10 {
+                    self.conversationHistory.removeFirst(self.conversationHistory.count - 10)
+                }
+
+                ClickyAnalytics.trackAIResponseReceived(response: spokenText)
+                self.latestVoiceResponseCard = ClickyResponseCard(
+                    source: .voice,
+                    rawText: spokenText,
+                    contextTitle: transcript
+                )
+
+                if Self.responseOffersAgentSpawn(spokenText) {
+                    self.pendingAgentOfferInstruction = transcript
+                    self.pendingAgentOfferAt = Date()
+                } else {
+                    self.pendingAgentOfferInstruction = nil
+                    self.pendingAgentOfferAt = nil
+                }
+
+                if !spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    do {
+                        try await streamingTTSSession.finish()
+                    } catch {
+                        guard !Self.isExpectedCancellation(error) else {
+                            await completeRequest(status: "cancelled", extra: ["cancelledAt": "tts"])
+                            return
+                        }
+                        ClickyAnalytics.trackTTSError(error: error.localizedDescription)
+                        speakResponseFailureFallback(error)
+                    }
+                } else {
+                    streamingTTSSession.cancel()
+                }
+
+                await completeRequest(extra: ["speculativeCommit": true])
+            }
+        }
+    }
+
     private static func isLikelyAgentFollowUpPhrasing(_ transcript: String) -> Bool {
         let normalized = transcript
             .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
@@ -3849,6 +4472,16 @@ final class CompanionManager: ObservableObject {
         let candidate = normalizedQuickLocalVoiceResponseCandidate(from: transcript)
         guard !candidate.isEmpty else { return nil }
 
+        let acknowledgementChecks = [
+            "yes", "yeah", "yep", "no", "nope", "ok", "okay",
+            "ok then", "okay then",
+            "alright", "all right", "yeah alright", "yeah all right",
+            "sounds good", "fair enough"
+        ]
+        if acknowledgementChecks.contains(candidate) {
+            return "okay."
+        }
+
         let hearingChecks = [
             "can you hear me",
             "can you hear us",
@@ -3873,6 +4506,71 @@ final class CompanionManager: ObservableObject {
         ]
         if availabilityChecks.contains(candidate) {
             return "i'm here."
+        }
+
+        let connectionChecks = [
+            "are you connected",
+            "are we connected",
+            "am i connected",
+            "are you online",
+            "are you working",
+            "checking connection",
+            "checking connection 123",
+            "checking connection one two three",
+            "connection check",
+            "connection check 123",
+            "connection check one two three"
+        ]
+        if connectionChecks.contains(candidate) {
+            return "connection is working."
+        }
+
+        let capabilityChecks = [
+            "what can you do",
+            "what can you do for me",
+            "what do you do",
+            "what are you able to do",
+            "what can openclicky do",
+            "what can clicky do"
+        ]
+        if capabilityChecks.contains(candidate) {
+            return "i can answer quick questions, look at your screen when needed, open apps and control your Mac, and hand bigger jobs to Agent Mode."
+        }
+
+        let voiceControlChecks = [
+            "checking voice",
+            "checking voice control",
+            "just checking voice",
+            "just checking voice control",
+            "test test",
+            "test 123",
+            "test one two three",
+            "testing",
+            "testing 123",
+            "testing one two three",
+            "testing testing",
+            "testing testing 123",
+            "testing testing testing",
+            "testing voice",
+            "testing voice control",
+            "testing out voice",
+            "testing out voice control",
+            "i am testing voice control",
+            "i am testing out voice control",
+            "im testing voice control",
+            "im testing out voice control"
+        ]
+        if voiceControlChecks.contains(candidate) {
+            return "voice control is working."
+        }
+
+        let slowResponseChecks = [
+            "nothing is happening",
+            "nothing happening",
+            "why is nothing happening"
+        ]
+        if slowResponseChecks.contains(candidate) {
+            return "i'm here. that last response was taking longer than expected."
         }
 
         return nil
@@ -4096,30 +4794,27 @@ final class CompanionManager: ObservableObject {
     }
 
     private static func isAgentStatusQuestion(_ transcript: String) -> Bool {
-        let normalizedTranscript = transcript
-            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-            .lowercased()
+        let normalizedTranscript = normalizedSpokenCommandText(transcript)
 
         let mentionsAgent = normalizedTranscript.contains("agent") || normalizedTranscript.contains("agents") || normalizedTranscript.contains("codex")
         guard mentionsAgent else { return false }
 
-        let statusPhrases = [
-            "how are",
-            "how is",
-            "how's",
-            "status",
-            "progress",
-            "doing",
-            "running",
-            "finished",
-            "done",
-            "up to",
-            "working on",
-            "what are",
-            "what's"
+        let statusPatterns = [
+            #"\b(?:agent|agents|codex)\s+(?:status|progress)\b"#,
+            #"\b(?:status|progress)\s+(?:of|on|for)\s+(?:my\s+|the\s+)?(?:agent|agents|codex)\b"#,
+            #"\b(?:how\s+(?:are|is|s))\s+(?:my\s+|the\s+)?(?:agent|agents|codex)\b"#,
+            #"\bwhat\s+(?:are|is|s)\s+(?:my\s+|the\s+)?(?:agent|agents|codex)\s+(?:doing|up\s+to|working\s+on)\b"#,
+            #"\bwhat\s+(?:is|s)\s+(?:my\s+|the\s+)?(?:agent|agents|codex)\s+status\b"#,
+            #"\bwhat\s+(?:is|s)\s+(?:the\s+)?(?:status|progress)\s+(?:of|on|for)\s+(?:my\s+|the\s+)?(?:agent|agents|codex)\b"#,
+            #"\b(?:is|are)\s+(?:my\s+|the\s+)?(?:agent|agents|codex)\s+(?:still\s+)?(?:running|finished|done|working)\b"#,
+            #"\b(?:agent|agents|codex)\s+(?:still\s+)?(?:doing|running|finished|done|working)\b"#,
+            #"\b(?:agent|agents|codex)\s+up\s+to\b"#,
+            #"\b(?:your|the)\s+(?:agent|agents|codex)\s+(?:status|progress)\b"#
         ]
 
-        return statusPhrases.contains { normalizedTranscript.contains($0) }
+        return statusPatterns.contains { pattern in
+            normalizedTranscript.range(of: pattern, options: .regularExpression) != nil
+        }
     }
 
     private static func spokenCount(_ count: Int, singular: String, plural: String) -> String {
@@ -4219,17 +4914,48 @@ final class CompanionManager: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Strip a leading "to/that/which/who/and/please" connector
-        // ("ask an agent to X" → "X", "have an agent please X" → "X").
+        // ("ask an agent to X" -> "X", "have an agent please X" -> "X").
         let lowercased = cleaned.lowercased()
         let connectors = ["to ", "that ", "which ", "who ", "and ", "please ", "could you ", "can you "]
         var instruction = cleaned
+        var strippedLeadingConnector = false
         for connector in connectors where lowercased.hasPrefix(connector) {
             instruction = String(cleaned.dropFirst(connector.count))
                 .trimmingCharacters(in: .whitespacesAndNewlines)
+            strippedLeadingConnector = true
             break
         }
 
         guard !instruction.isEmpty else { return nil }
+        let beforeAgent = String(folded[..<agentTokenRange.lowerBound])
+        let normalizedBeforeAgent = normalizedSpokenCommandText(beforeAgent)
+        let normalizedInstruction = normalizedSpokenCommandText(instruction)
+
+        let delegationCuePattern = #"\b(?:ask|tell|have|get|use|start|create|spin\s+up|spawn|run|launch|kick\s+off|set\s+up|send|route|hand|pass)\b"#
+        let hasDelegationCueBefore = normalizedBeforeAgent.range(
+            of: delegationCuePattern,
+            options: .regularExpression
+        ) != nil
+
+        let afterAgentImperativePattern = #"^(?:find|search|look|inspect|review|open|create|make|build|update|fix|change|edit|check|run|test|summarize|analyse|analyze|clean|audit)\b"#
+        let hasImperativeAfterAgent = normalizedInstruction.range(
+            of: afterAgentImperativePattern,
+            options: .regularExpression
+        ) != nil
+        let hasAgentTaskShape = hasDelegationCueBefore
+            || strippedLeadingConnector
+            || hasImperativeAfterAgent
+            || isLikelyAgentToolWorkInstruction(instruction)
+        guard hasAgentTaskShape else { return nil }
+
+        let beforeTokens = normalizedBeforeAgent.split(separator: " ")
+        if let lastBeforeAgent = beforeTokens.last,
+           (lastBeforeAgent == "ai" || lastBeforeAgent == "openai"),
+           !hasDelegationCueBefore,
+           !strippedLeadingConnector {
+            return nil
+        }
+
         return instruction
     }
 
@@ -4556,6 +5282,7 @@ final class CompanionManager: ObservableObject {
             "Safari",
             "Xcode",
             "Terminal",
+            "Ghostty",
             "Finder",
             "System Settings",
             "Mail",
@@ -4565,6 +5292,7 @@ final class CompanionManager: ObservableObject {
             "Calendar",
             "Slack",
             "Cursor",
+            "GitHub Desktop",
             "Codex":
             return true
         default:
@@ -5048,6 +5776,8 @@ final class CompanionManager: ObservableObject {
             return "Xcode"
         case "terminal":
             return "Terminal"
+        case "ghostty", "ghost tty", "ghostie", "ghosty":
+            return "Ghostty"
         case "finder":
             return "Finder"
         case "settings", "system settings":
@@ -5068,6 +5798,15 @@ final class CompanionManager: ObservableObject {
             return "Cursor"
         case "codex":
             return "Codex"
+        case "github desktop",
+             "git hub desktop",
+             "gate hub desktop",
+             "get hub desktop",
+             "github",
+             "git hub",
+             "gate hub",
+             "get hub":
+            return "GitHub Desktop"
         default:
             return target
         }
@@ -5388,6 +6127,8 @@ final class CompanionManager: ObservableObject {
             return ["com.apple.dt.Xcode"]
         case "Terminal":
             return ["com.apple.Terminal"]
+        case "Ghostty":
+            return ["com.mitchellh.ghostty"]
         case "Finder":
             return ["com.apple.finder"]
         case "System Settings":
@@ -5404,9 +6145,21 @@ final class CompanionManager: ObservableObject {
             return ["com.apple.iCal"]
         case "Slack":
             return ["com.tinyspeck.slackmacgap"]
+        case "GitHub Desktop":
+            return ["com.github.GitHubClient"]
         default:
             return []
         }
+    }
+
+    private static func canResolveApplicationWithoutShellOpen(named appName: String) -> Bool {
+        for bundleIdentifier in applicationBundleIdentifiers(for: appName) {
+            if NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) != nil {
+                return true
+            }
+        }
+
+        return standardApplicationURL(named: appName) != nil
     }
 
     private static func activateRunningApplication(named appName: String) {
@@ -5470,60 +6223,8 @@ final class CompanionManager: ObservableObject {
         ensureCursorOverlayVisibleForAgentTask()
 
         let dockItemID = UUID()
-        let acknowledgement = acknowledgement ?? "got it. i started an agent for \(Self.shortAgentInstructionSummary(instruction))."
-        let accentTheme = Self.nextAgentDockAccentTheme(existingCount: codexAgentSessions.count)
-        let agentSession = createAndSelectNewCodexAgentSession(
-            title: Self.shortAgentInstructionSummary(instruction),
-            accentTheme: accentTheme
-        )
-        if let timing {
-            agentRequestTimingsBySessionID[agentSession.id] = timing
-        }
-        agentExecutionStartDatesBySessionID[agentSession.id] = executionStartedAt
-        let dockItem = ClickyAgentDockItem(
-            id: dockItemID,
-            sessionID: agentSession.id,
-            title: Self.shortAgentInstructionSummary(instruction),
-            accentTheme: accentTheme,
-            status: .starting,
-            caption: acknowledgement,
-            createdAt: Date()
-        )
-
-        agentDockItems.append(dockItem)
-        if agentDockItems.count > 6 {
-            agentDockItems.removeFirst(agentDockItems.count - 6)
-        }
-        scheduleWidgetSnapshotPublish()
-        OpenClickyMessageLogStore.shared.append(
-            lane: "agent",
-            direction: "outgoing",
-            event: "openclicky.agent_task.created",
-            fields: [
-                "executor": "agent_mode",
-                "executionMethod": "CodexAgentSession.submitPromptFromUI",
-                "controller": "CodexAgentSession",
-                "model": agentSession.model,
-                "sessionID": agentSession.id.uuidString,
-                "title": agentSession.title,
-                "instruction": instruction,
-                "requestID": timing?.requestID ?? "none"
-            ]
-        )
-        markRequestStageCompleted(
-            route: "agent.start",
-            stage: "agent_created",
-            stageStartedAt: executionStartedAt,
-            timing: timing,
-            extra: [
-                "executor": "agent_mode",
-                "executionMethod": "createAndSelectNewCodexAgentSession",
-                "controller": "CompanionManager",
-                "model": agentSession.model,
-                "sessionID": agentSession.id.uuidString,
-                "title": agentSession.title
-            ]
-        )
+        let acknowledgement = acknowledgement ?? "got it. an agent is starting."
+        let dockScreen = agentDockTargetScreen()
 
         latestVoiceResponseCard = ClickyResponseCard(
             source: .voice,
@@ -5531,9 +6232,93 @@ final class CompanionManager: ObservableObject {
             contextTitle: "OpenClicky Agent"
         )
 
-        flyBuddyTowardAgentDock(acknowledgement: acknowledgement)
-        showAgentDockWindowNearCurrentScreen()
-        submitAgentPrompt(instruction, to: agentSession)
+        // Choreography: the cursor flies to the future dock/spawn point
+        // first. Keep the visual bubble intentionally short; the spoken
+        // acknowledgement can be longer, but the cursor should return quickly
+        // after the dock appears rather than staying pinned in the corner.
+        flyBuddyTowardAgentDock(acknowledgement: "got it.", on: dockScreen)
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_900_000_000)
+            clearDetectedElementLocation()
+        }
+
+        Task { @MainActor in
+            // Let the cursor visibly start/mostly complete the upward
+            // flight before the agent dock appears at the target.
+            try? await Task.sleep(nanoseconds: 650_000_000)
+
+            let accentTheme = Self.nextAgentDockAccentTheme(existingCount: codexAgentSessions.count)
+            let agentSession = createAndSelectNewCodexAgentSession(
+                title: Self.shortAgentInstructionSummary(instruction),
+                accentTheme: accentTheme
+            )
+            if let timing {
+                agentRequestTimingsBySessionID[agentSession.id] = timing
+            }
+            agentExecutionStartDatesBySessionID[agentSession.id] = executionStartedAt
+            let dockItem = ClickyAgentDockItem(
+                id: dockItemID,
+                sessionID: agentSession.id,
+                title: Self.shortAgentInstructionSummary(instruction),
+                accentTheme: accentTheme,
+                status: .starting,
+                caption: acknowledgement,
+                createdAt: Date()
+            )
+
+            agentDockItems.append(dockItem)
+            if agentDockItems.count > 6 {
+                agentDockItems.removeFirst(agentDockItems.count - 6)
+            }
+            scheduleWidgetSnapshotPublish()
+            OpenClickyMessageLogStore.shared.append(
+                lane: "agent",
+                direction: "outgoing",
+                event: "openclicky.agent_task.created",
+                fields: [
+                    "executor": "agent_mode",
+                    "executionMethod": "CodexAgentSession.submitPromptFromUI",
+                    "controller": "CodexAgentSession",
+                    "model": agentSession.model,
+                    "sessionID": agentSession.id.uuidString,
+                    "title": agentSession.title,
+                    "instruction": instruction,
+                    "requestID": timing?.requestID ?? "none",
+                    "spawnChoreography": "cursor_first_then_dock"
+                ]
+            )
+            markRequestStageCompleted(
+                route: "agent.start",
+                stage: "agent_created",
+                stageStartedAt: executionStartedAt,
+                timing: timing,
+                extra: [
+                    "executor": "agent_mode",
+                    "executionMethod": "createAndSelectNewCodexAgentSession",
+                    "controller": "CompanionManager",
+                    "model": agentSession.model,
+                    "sessionID": agentSession.id.uuidString,
+                    "title": agentSession.title,
+                    "spawnChoreography": "cursor_first_then_dock"
+                ]
+            )
+
+            if let dockScreen {
+                agentDockWindowManager.show(
+                    companionManager: self,
+                    onScreen: dockScreen,
+                    position: agentParkingPosition
+                )
+            } else {
+                showAgentDockWindowNearCurrentScreen()
+            }
+            submitAgentPrompt(
+                instruction,
+                to: agentSession,
+                includeScreenContext: Self.shouldAttachScreenContext(to: instruction)
+            )
+        }
 
         currentResponseTask = Task {
             self.voiceState = .processing
@@ -5633,20 +6418,30 @@ final class CompanionManager: ObservableObject {
         switch status {
         case .starting:
             agentDockItems[itemIndex].status = .starting
-            agentDockItems[itemIndex].caption = activitySummary ?? "Starting the agent task."
+            agentDockItems[itemIndex].caption = activitySummary ?? "An agent is getting ready."
         case .running:
             agentDockItems[itemIndex].status = .running
-            agentDockItems[itemIndex].caption = activitySummary ?? "Working through the task."
+            agentDockItems[itemIndex].caption = activitySummary ?? "An agent is working on this."
         case .ready:
+            // Codex briefly reports `.ready` after thread startup and before
+            // the actual turn starts. Do not turn that preflight ready state
+            // into "done"; it caused "the red agent is done" followed by
+            // "working" while the task had not begun yet.
+            guard let activitySummary, !activitySummary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                if agentDockItems[itemIndex].status == .starting {
+                    agentDockItems[itemIndex].caption = "An agent is getting ready."
+                }
+                return
+            }
             if agentDockItems[itemIndex].status == .running || agentDockItems[itemIndex].status == .starting {
                 agentDockItems[itemIndex].status = .done
-                agentDockItems[itemIndex].caption = activitySummary ?? "Done. Use voice or text to follow up."
+                agentDockItems[itemIndex].caption = "The agent has completed the task — \(activitySummary)"
             }
             completeAgentRequestTimingIfNeeded(sessionID: sessionID, status: "success")
             announceAgentCompletionIfNeeded(sessionID: sessionID, isSuccess: true, summary: activitySummary)
         case .failed:
             agentDockItems[itemIndex].status = .failed
-            agentDockItems[itemIndex].caption = activitySummary ?? "Needs attention. Ask for agent status to hear the error."
+            agentDockItems[itemIndex].caption = activitySummary ?? "The agent needs attention. Ask for status to hear the error."
             completeAgentRequestTimingIfNeeded(
                 sessionID: sessionID,
                 status: "failed",
@@ -5656,6 +6451,9 @@ final class CompanionManager: ObservableObject {
             )
             announceAgentCompletionIfNeeded(sessionID: sessionID, isSuccess: false, summary: activitySummary)
         case .stopped:
+            if session?.status != .stopped {
+                break
+            }
             if agentDockItems[itemIndex].status == .starting,
                session?.hasVisibleActivity == false {
                 break
@@ -5710,17 +6508,15 @@ final class CompanionManager: ObservableObject {
 
         let trimmedSummary = summary?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let agentName = session.spokenAgentSentenceName
-
         let line: String
         if isSuccess {
             line = trimmedSummary.isEmpty
-                ? "\(agentName) is done."
-                : "\(agentName) is done — \(Self.briefCompletionSummary(trimmedSummary))."
+                ? "The agent has completed the task."
+                : "The agent has completed the task — \(Self.briefCompletionSummary(trimmedSummary))."
         } else {
             line = trimmedSummary.isEmpty
-                ? "\(agentName) hit a problem."
-                : "\(agentName) hit a problem — \(Self.briefCompletionSummary(trimmedSummary))."
+                ? "The agent needs attention."
+                : "The agent needs attention — \(Self.briefCompletionSummary(trimmedSummary))."
         }
 
         // Defer to the next runloop tick — narration triggers voice-state
@@ -5765,18 +6561,32 @@ final class CompanionManager: ObservableObject {
         showCodexHUD()
     }
 
-    func dismissAgentDockItem(_ itemID: UUID) {
-        let dismissedSessionID = agentDockItems.first(where: { $0.id == itemID })?.sessionID
-        if let dismissedSessionID {
-            cancelAgentTask(sessionID: dismissedSessionID, removeDockItems: false)
-            lastNarratedAgentSuccessBySessionID.removeValue(forKey: dismissedSessionID)
-        }
+    func closeAgentDockPanel() {
+        agentDockWindowManager.hide()
+    }
 
+    func dismissAgentDockItem(_ itemID: UUID) {
+        // Dismiss is a visual close/removal only. It must not cancel the
+        // underlying Codex task; explicit Stop handles that after confirm.
         agentDockItems.removeAll { $0.id == itemID }
         if agentDockItems.isEmpty {
             agentDockWindowManager.hide()
         }
         scheduleWidgetSnapshotPublish()
+    }
+
+    func stopAgentDockItem(_ itemID: UUID) {
+        let stoppedSessionID = agentDockItems.first(where: { $0.id == itemID })?.sessionID
+        if let stoppedSessionID {
+            cancelAgentTask(sessionID: stoppedSessionID, removeDockItems: true)
+            lastNarratedAgentSuccessBySessionID.removeValue(forKey: stoppedSessionID)
+        } else {
+            agentDockItems.removeAll { $0.id == itemID }
+            if agentDockItems.isEmpty {
+                agentDockWindowManager.hide()
+            }
+            scheduleWidgetSnapshotPublish()
+        }
     }
 
     func prepareVoiceFollowUpForAgentDockItem(_ itemID: UUID) {
@@ -5791,17 +6601,30 @@ final class CompanionManager: ObservableObject {
     }
 
     func showTextFollowUpForAgentDockItem(_ itemID: UUID) {
-        guard let sessionID = agentDockItems.first(where: { $0.id == itemID })?.sessionID else { return }
+        guard let item = agentDockItems.first(where: { $0.id == itemID }),
+              let sessionID = item.sessionID else { return }
         selectCodexAgentSession(sessionID)
         let submitText: (String) -> Void = { [weak self] submittedText in
             self?.submitTextFollowUpForActiveAgent(submittedText)
         }
 
         if let textFollowUpOrigin = agentDockWindowManager.textFollowUpOrigin() {
-            textModeWindowManager.show(origin: textFollowUpOrigin, submitText: submitText)
+            textModeWindowManager.show(origin: textFollowUpOrigin, accentTheme: item.accentTheme, submitText: submitText)
         } else {
-            textModeWindowManager.show(at: NSEvent.mouseLocation, submitText: submitText)
+            textModeWindowManager.show(at: NSEvent.mouseLocation, accentTheme: item.accentTheme, submitText: submitText)
         }
+    }
+
+    func beginAgentDockDrag() {
+        agentDockWindowManager.beginDrag()
+    }
+
+    func dragAgentDock(by translation: CGSize) {
+        agentDockWindowManager.drag(by: translation)
+    }
+
+    func endAgentDockDrag() {
+        agentDockWindowManager.endDrag()
     }
 
     private func submitTextFollowUpForActiveAgent(_ submittedText: String) {
@@ -5896,14 +6719,26 @@ final class CompanionManager: ObservableObject {
         )
     }
 
-    private func submitAgentPrompt(_ prompt: String, to session: CodexAgentSession) {
+    private func submitAgentPrompt(_ prompt: String, to session: CodexAgentSession, includeScreenContext: Bool = true) {
         let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPrompt.isEmpty else { return }
 
         lastAgentContextSessionID = session.id
         activeCodexAgentSessionID = session.id
         Task {
-            let screenContext = await prepareAgentScreenContextForNextTurn()
+            let screenContext = includeScreenContext ? await prepareAgentScreenContextForNextTurn() : nil
+            if !includeScreenContext {
+                OpenClickyMessageLogStore.shared.append(
+                    lane: "agent",
+                    direction: "internal",
+                    event: "openclicky.agent_screen_context.skipped",
+                    fields: [
+                        "reason": "text_only_agent_turn",
+                        "sessionID": session.id.uuidString,
+                        "instructionLength": trimmedPrompt.count
+                    ]
+                )
+            }
             session.submitPromptFromUI(trimmedPrompt, screenContext: screenContext)
         }
     }
@@ -6097,10 +6932,13 @@ final class CompanionManager: ObservableObject {
         agentDockItems[itemIndex].caption = nil
     }
 
-    private func flyBuddyTowardAgentDock(acknowledgement: String) {
+    private func agentDockTargetScreen() -> NSScreen? {
         let mouseLocation = NSEvent.mouseLocation
-        let targetScreen = NSScreen.screens.first(where: { $0.frame.contains(mouseLocation) }) ?? NSScreen.main
-        guard let targetScreen else { return }
+        return NSScreen.screens.first(where: { $0.frame.contains(mouseLocation) }) ?? NSScreen.main
+    }
+
+    private func flyBuddyTowardAgentDock(acknowledgement: String, on targetScreen: NSScreen? = nil) {
+        guard let targetScreen = targetScreen ?? agentDockTargetScreen() else { return }
 
         let screenFrame = targetScreen.frame
         let visibleFrame = targetScreen.visibleFrame
@@ -6157,8 +6995,8 @@ final class CompanionManager: ObservableObject {
                     didMarkAudioStarted = true
                     var fields = extra
                     fields["executor"] = "tts"
-                    fields["executionMethod"] = "ElevenLabsTTSClient.speakText"
-                    fields["controller"] = "ElevenLabsTTSClient"
+                    fields["executionMethod"] = self.activeTTSExecutionMethodSpeakText
+                    fields["controller"] = self.activeTTSControllerName
                     fields["spokenTextLength"] = text.count
                     self.markRequestStageCompleted(
                         route: route,
@@ -6172,8 +7010,8 @@ final class CompanionManager: ObservableObject {
                 if let route {
                     var stageFields = extra
                     stageFields["executor"] = "tts"
-                    stageFields["executionMethod"] = "ElevenLabsTTSClient.speakText"
-                    stageFields["controller"] = "ElevenLabsTTSClient"
+                    stageFields["executionMethod"] = self.activeTTSExecutionMethodSpeakText
+                    stageFields["controller"] = self.activeTTSControllerName
                     stageFields["spokenTextLength"] = text.count
                     self.markRequestStageCompleted(
                         route: route,
@@ -6219,8 +7057,8 @@ final class CompanionManager: ObservableObject {
                 if let route {
                     var stageFields = extra
                     stageFields["executor"] = "tts"
-                    stageFields["executionMethod"] = "ElevenLabsTTSClient.speakText"
-                    stageFields["controller"] = "ElevenLabsTTSClient"
+                    stageFields["executionMethod"] = self.activeTTSExecutionMethodSpeakText
+                    stageFields["controller"] = self.activeTTSControllerName
                     stageFields["error"] = error.localizedDescription
                     self.markRequestStageCompleted(
                         route: route,
@@ -6243,6 +7081,7 @@ final class CompanionManager: ObservableObject {
             }
 
             if !Task.isCancelled {
+                self.lastVoiceInteractionCompletedAt = Date()
                 self.voiceState = .idle
                 scheduleTransientHideIfNeeded()
             }
@@ -6426,9 +7265,20 @@ final class CompanionManager: ObservableObject {
             }
 
             do {
-                // Capture all connected screens so the AI has full context.
+                // Only attach screenshots when the utterance actually needs
+                // visual context. Text-only turns should not pay the capture,
+                // base64, upload, and vision-processing latency tax.
                 let captureStartedAt = Date()
-                let screenCaptures = try await captureAllScreensForVoiceResponseIfAvailable()
+                let shouldAttachScreenContext = Self.shouldAttachScreenContext(to: transcript)
+                let screenCaptures: [CompanionScreenCapture]
+                if shouldAttachScreenContext {
+                    screenCaptures = try await captureAllScreensForVoiceResponseIfAvailable()
+                } else {
+                    prewarmedScreenshotTask?.cancel()
+                    prewarmedScreenshotTask = nil
+                    prewarmedScreenshotStartedAt = nil
+                    screenCaptures = []
+                }
                 self.markRequestStageCompleted(
                     route: "voice.response",
                     stage: "screen_capture",
@@ -6436,8 +7286,9 @@ final class CompanionManager: ObservableObject {
                     timing: timing,
                     extra: [
                         "executor": "screen_capture",
-                        "executionMethod": "captureAllScreensForVoiceResponseIfAvailable",
+                        "executionMethod": shouldAttachScreenContext ? "captureAllScreensForVoiceResponseIfAvailable" : "skipped_text_only_turn",
                         "controller": "ScreenCaptureKit",
+                        "screenContextNeeded": shouldAttachScreenContext,
                         "screenCount": screenCaptures.count,
                         "imageBytes": screenCaptures.reduce(0) { $0 + $1.imageData.count }
                     ]
@@ -6468,15 +7319,18 @@ final class CompanionManager: ObservableObject {
                     userPromptForClaude = transcript
                 }
 
-                // Pick a filler BEFORE building the system prompt so we
-                // can tell Haiku which opener was already spoken aloud.
-                // Without this binding, Haiku might repeat the filler
-                // ("let me check ... let me take a look ...") or
-                // contradict it (filler says "let me check", reply
-                // says "i can't see your screen"). Telling the model
-                // exactly what was spoken makes its reply a coherent
-                // continuation of the filler.
-                let chosenFiller = FillerPhraseLibrary.shared.randomFiller()
+                // Only use a pre-response filler when it is buying real
+                // latency cover. For text-only Haiku turns the logs show
+                // first audio is already ~1s away, and prepended phrases
+                // sound unnatural on short replies ("one moment. sounds
+                // good..."). Screen/visual turns still benefit from a
+                // neutral filler while capture + vision processing happens.
+                let shouldUseFiller = Self.shouldUsePreResponseFiller(
+                    transcript: transcript,
+                    screenContextNeeded: shouldAttachScreenContext,
+                    modelProvider: OpenClickyModelCatalog.voiceResponseModel(withID: selectedModel).provider
+                )
+                let chosenFiller = shouldUseFiller ? FillerPhraseLibrary.shared.randomFiller() : nil
                 let voiceSystemPrompt: String = {
                     let base = currentVoiceResponseSystemPrompt()
                     guard let chosenFiller else { return base }
@@ -6485,8 +7339,7 @@ final class CompanionManager: ObservableObject {
 
                     OPENER ALREADY SPOKEN:
                     The user has already heard you say: "\(chosenFiller.phrase)" — that audio plays the instant they release the push-to-talk key, before you have produced a single token. Your reply will be appended directly after it, so write a NATURAL CONTINUATION:
-                    - Do NOT repeat or paraphrase the opener (no "let me take a look", "okay let me see", "one second", "alright", "got it", "okay so", "let's see", "looking at this").
-                    - Do NOT contradict the posture the opener established. If the opener said you'd check or take a look, your reply must actually do that — describe what you see and answer based on it.
+                    - Do NOT repeat or paraphrase the opener (no "one moment", "give me a second", "working on it", "checking now", "okay", "alright", "got it", "let's see").
                     - Start with the substance, not a greeting. The first words you generate should be the next words the user hears after the opener.
                     """
                 }()
@@ -6513,8 +7366,10 @@ final class CompanionManager: ObservableObject {
                         timing: timing,
                         extra: [
                             "executor": "tts",
-                            "executionMethod": "ElevenLabsTTSClient.beginStreamingResponse",
-                            "controller": "ElevenLabsTTSClient"
+                            "executionMethod": self.activeTTSExecutionMethodBeginStreaming,
+                            "controller": self.activeTTSControllerName,
+                            "preResponseFillerUsed": chosenFiller != nil,
+                            "preResponseFillerPhrase": chosenFiller?.phrase ?? ""
                         ]
                     )
                 }
@@ -6547,9 +7402,9 @@ final class CompanionManager: ObservableObject {
                 // Build the assistant prefill so Haiku's reply continues
                 // from the spoken filler at the autoregressive level
                 // (Anthropic-only; OpenAI/Codex paths fall back to the
-                // system-prompt directive). Trailing space matters —
-                // without it the continuation often starts with no
-                // separator.
+                // system-prompt directive). We keep the prefill trimmed
+                // for Anthropic's assistant-prefix rules, then rejoin it
+                // with the continuation when building local display text.
                 //
                 // The streamed `accumulatedText` we get back from the
                 // Claude API path is ONLY the continuation; the prefill
@@ -6632,6 +7487,8 @@ final class CompanionManager: ObservableObject {
                         modelResponseFields["responseLength"] = fullResponseText.count
                         modelResponseFields["imageCount"] = labeledImages.count
                         modelResponseFields["assistantPrefillUsed"] = assistantPrefillText != nil
+                        modelResponseFields["preResponseFillerUsed"] = chosenFiller != nil
+                        modelResponseFields["preResponseFillerPhrase"] = chosenFiller?.phrase ?? ""
                         return modelResponseFields
                     }()
                 )
@@ -6807,7 +7664,7 @@ final class CompanionManager: ObservableObject {
                             extra: [
                                 "executor": "tts",
                                 "executionMethod": "StreamingTTSSession.finish",
-                                "controller": "ElevenLabsTTSClient",
+                                "controller": self.activeTTSControllerName,
                                 "spokenTextLength": spokenText.count
                             ]
                         )
@@ -6839,7 +7696,7 @@ final class CompanionManager: ObservableObject {
                             extra: [
                                 "executor": "tts",
                                 "executionMethod": "StreamingTTSSession.finish",
-                                "controller": "ElevenLabsTTSClient",
+                                "controller": self.activeTTSControllerName,
                                 "error": error.localizedDescription
                             ]
                         )
@@ -6885,6 +7742,7 @@ final class CompanionManager: ObservableObject {
             }
 
             if !Task.isCancelled {
+                self.lastVoiceInteractionCompletedAt = Date()
                 self.voiceState = .idle
                 scheduleTransientHideIfNeeded()
             }
@@ -6912,7 +7770,8 @@ final class CompanionManager: ObservableObject {
                       self.isTutorModeEnabled,
                       self.voiceState == .idle,
                       !self.voiceTTSClient.isPlaying,
-                      !self.isTutorObservationInFlight else { return }
+                      !self.isTutorObservationInFlight,
+                      Date().timeIntervalSince(self.lastVoiceInteractionCompletedAt) >= Self.tutorObservationVoiceCooldown else { return }
 
                 self.isTutorObservationInFlight = true
                 Task {
@@ -7067,59 +7926,57 @@ final class CompanionManager: ObservableObject {
         assistantPrefill: String? = nil,
         onTextChunk: @MainActor @Sendable @escaping (String) -> Void
     ) async throws -> String {
-        // Try the SDK bridge first for prompt-cache hits, EXCEPT when
-        // we have an assistant prefill — the bridge protocol doesn't
-        // support assistant-turn prefilling. Bypass it so the direct
-        // HTTP path can use the stronger constraint. The system prompt
-        // directive (added by the caller) still keeps the SDK path
-        // coherent if we ever hit it.
-        let preferDirectHTTP = (assistantPrefill?.isEmpty == false)
+        // Voice latency matters more than agentic session features here.
+        // Prefer direct Anthropic SSE when an API key is configured; keep
+        // the Claude Agent SDK bridge as local-account fallback.
+        print("🧠 analyzeClaudeResponse: model=\(model) sdkAvailable=\(claudeAgentSDKAPI != nil) httpKey=\(AppBundleConfiguration.anthropicAPIKey() != nil) prefill=\(assistantPrefill?.isEmpty == false)")
+        let modelOption = OpenClickyModelCatalog.voiceResponseModel(withID: model)
 
-        if !preferDirectHTTP, let claudeAgentSDKAPI {
+        if AppBundleConfiguration.anthropicAPIKey() != nil {
             do {
-                let modelOption = OpenClickyModelCatalog.voiceResponseModel(withID: model)
-                claudeAgentSDKAPI.model = modelOption.id
-                claudeAgentSDKAPI.maxOutputTokens = modelOption.maxOutputTokens
-                let (text, _) = try await claudeAgentSDKAPI.analyzeImageStreaming(
+                claudeAPI.model = modelOption.id
+                claudeAPI.maxOutputTokens = modelOption.maxOutputTokens
+                print("🧠 analyzeClaudeResponse: using direct HTTP streaming (ClaudeAPI)")
+                let (text, _) = try await claudeAPI.analyzeImageStreaming(
                     images: images,
                     systemPrompt: systemPrompt,
                     conversationHistory: conversationHistory,
                     userPrompt: userPrompt,
+                    assistantPrefill: assistantPrefill,
                     onTextChunk: onTextChunk
                 )
                 return text
             } catch {
-                guard AppBundleConfiguration.anthropicAPIKey() != nil else {
-                    throw error
-                }
+                guard claudeAgentSDKAPI != nil else { throw error }
                 OpenClickyMessageLogStore.shared.append(
                     lane: "voice",
                     direction: "error",
                     event: "voice.response_fallback",
                     fields: [
-                        "from": "claude_agent_sdk",
-                        "to": "anthropic_api_key",
+                        "from": "anthropic_api_key",
+                        "to": "claude_agent_sdk",
                         "error": error.localizedDescription
                     ]
                 )
+                print("🔁 analyzeClaudeResponse: HTTP failed, falling back to Agent SDK: \(error.localizedDescription)")
             }
         }
 
-        if AppBundleConfiguration.anthropicAPIKey() != nil {
-            let modelOption = OpenClickyModelCatalog.voiceResponseModel(withID: model)
-            claudeAPI.model = modelOption.id
-            claudeAPI.maxOutputTokens = modelOption.maxOutputTokens
-            let (text, _) = try await claudeAPI.analyzeImageStreaming(
+        if let claudeAgentSDKAPI {
+            claudeAgentSDKAPI.model = modelOption.id
+            claudeAgentSDKAPI.maxOutputTokens = modelOption.maxOutputTokens
+            print("🧠 analyzeClaudeResponse: using Agent SDK bridge")
+            let (text, _) = try await claudeAgentSDKAPI.analyzeImageStreaming(
                 images: images,
                 systemPrompt: systemPrompt,
                 conversationHistory: conversationHistory,
                 userPrompt: userPrompt,
-                assistantPrefill: assistantPrefill,
                 onTextChunk: onTextChunk
             )
             return text
         }
 
+        print("❌ analyzeClaudeResponse: no SDK and no HTTP key — Claude not configured")
         throw NSError(
             domain: "ClaudeAgentSDKAPI",
             code: -1,
@@ -7135,42 +7992,41 @@ final class CompanionManager: ObservableObject {
         userPrompt: String,
         onTextChunk: @MainActor @Sendable @escaping (String) -> Void
     ) async throws -> String {
-        do {
-            return try await analyzeCodexVoiceResponse(
-                images: images,
-                model: model,
-                systemPrompt: systemPrompt,
-                conversationHistory: conversationHistory,
-                userPrompt: userPrompt,
-                onTextChunk: onTextChunk
-            )
-        } catch {
-            guard AppBundleConfiguration.openAIAPIKey() != nil else {
-                throw error
+        if AppBundleConfiguration.openAIAPIKey() != nil {
+            do {
+                let modelOption = OpenClickyModelCatalog.voiceResponseModel(withID: model)
+                openAIAPI.model = modelOption.id
+                openAIAPI.maxOutputTokens = modelOption.maxOutputTokens
+                let (text, _) = try await openAIAPI.analyzeImageStreaming(
+                    images: images,
+                    systemPrompt: systemPrompt,
+                    conversationHistory: conversationHistory,
+                    userPrompt: userPrompt,
+                    onTextChunk: onTextChunk
+                )
+                return text
+            } catch {
+                OpenClickyMessageLogStore.shared.append(
+                    lane: "voice",
+                    direction: "error",
+                    event: "voice.response_fallback",
+                    fields: [
+                        "from": "openai_api_key",
+                        "to": "codex_voice_session",
+                        "error": error.localizedDescription
+                    ]
+                )
             }
-            OpenClickyMessageLogStore.shared.append(
-                lane: "voice",
-                direction: "error",
-                event: "voice.response_fallback",
-                fields: [
-                    "from": "codex_voice_session",
-                    "to": "openai_api_key",
-                    "error": error.localizedDescription
-                ]
-            )
         }
 
-        let modelOption = OpenClickyModelCatalog.voiceResponseModel(withID: model)
-        openAIAPI.model = modelOption.id
-        openAIAPI.maxOutputTokens = modelOption.maxOutputTokens
-        let (text, _) = try await openAIAPI.analyzeImageStreaming(
+        return try await analyzeCodexVoiceResponse(
             images: images,
+            model: model,
             systemPrompt: systemPrompt,
             conversationHistory: conversationHistory,
             userPrompt: userPrompt,
             onTextChunk: onTextChunk
         )
-        return text
     }
 
     private func analyzeCodexVoiceResponse(
@@ -7190,6 +8046,66 @@ final class CompanionManager: ObservableObject {
             onTextChunk: onTextChunk
         )
         return text
+    }
+
+    private static func shouldUsePreResponseFiller(
+        transcript: String,
+        screenContextNeeded: Bool,
+        modelProvider: OpenClickyModelProvider
+    ) -> Bool {
+        let commandText = normalizedSpokenCommandText(transcript)
+        let wordCount = commandText.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).count
+
+        // Never prepend filler to acknowledgements, corrections, or very
+        // short replies. These are exactly the cases where the filler
+        // sounds like Clicky is inventing work: "one moment. sounds good."
+        if wordCount <= 4 { return false }
+        let acknowledgementPhrases: Set<String> = [
+            "yes", "yeah", "yep", "no", "nope", "ok", "okay",
+            "alright", "all right", "sounds good", "thanks", "thank you",
+            "continue", "go on", "stop", "cancel", "nevermind", "never mind"
+        ]
+        if acknowledgementPhrases.contains(commandText) { return false }
+
+        // Disabled for now: the logs show the stitched pre-response
+        // phrases sound worse than the latency they hide, especially on
+        // short text-only turns and ambiguous prompts like "is this quick".
+        // Keep the decision point here so we can re-enable a better UX
+        // later (for example a non-spoken visual spinner or earcon).
+        _ = screenContextNeeded
+        _ = modelProvider
+        return false
+    }
+
+    private static func shouldAttachScreenContext(to transcript: String) -> Bool {
+        let normalized = transcript
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased()
+        let commandText = normalizedSpokenCommandText(transcript)
+
+        let explicitVisualPhrases = [
+            "my screen", "the screen", "on screen", "on the screen", "this screen",
+            "what am i looking", "what's on", "what is on", "what do you see",
+            "look at", "take a look", "can you see", "do you see",
+            "this window", "that window", "current window", "active window",
+            "this app", "that app", "this page", "that page", "this button", "that button",
+            "this field", "that field", "this menu", "that menu",
+            "where is", "where's", "point to", "show me where", "highlight",
+            "click", "press", "select", "open this", "open that"
+        ]
+        if explicitVisualPhrases.contains(where: { normalized.contains($0) || commandText.contains($0) }) {
+            return true
+        }
+
+        let visualTokens: Set<String> = [
+            "screen", "window", "button", "field", "menu", "dialog", "popup",
+            "page", "tab", "cursor", "visible", "shown", "displayed", "image",
+            "screenshot", "icon", "link", "sidebar", "toolbar", "dock"
+        ]
+        let tokens = commandText.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+        if tokens.contains(where: { visualTokens.contains($0) }) { return true }
+
+        return false
     }
 
     private func captureAllScreensForVoiceResponseIfAvailable() async throws -> [CompanionScreenCapture] {
@@ -7975,15 +8891,15 @@ final class ClickyTextModeWindowManager {
     private var panel: NSPanel?
     private let panelSize = NSSize(width: 340, height: 54)
 
-    func show(at cursorLocation: CGPoint, submitText: @escaping (String) -> Void) {
-        preparePanel(submitText: submitText)
+    func show(at cursorLocation: CGPoint, accentTheme: ClickyAccentTheme? = nil, submitText: @escaping (String) -> Void) {
+        preparePanel(accentTheme: accentTheme, submitText: submitText)
         positionPanel(near: cursorLocation)
         panel?.makeKeyAndOrderFront(nil)
         panel?.orderFrontRegardless()
     }
 
-    func show(origin: CGPoint, submitText: @escaping (String) -> Void) {
-        preparePanel(submitText: submitText)
+    func show(origin: CGPoint, accentTheme: ClickyAccentTheme? = nil, submitText: @escaping (String) -> Void) {
+        preparePanel(accentTheme: accentTheme, submitText: submitText)
         positionPanel(at: origin)
         panel?.makeKeyAndOrderFront(nil)
         panel?.orderFrontRegardless()
@@ -7993,7 +8909,7 @@ final class ClickyTextModeWindowManager {
         panel?.orderOut(nil)
     }
 
-    private func createPanel(submitText: @escaping (String) -> Void) {
+    private func createPanel(accentTheme: ClickyAccentTheme?, submitText: @escaping (String) -> Void) {
         let textModePanel = ClickyTextModePanel(
             contentRect: NSRect(origin: .zero, size: panelSize),
             styleMask: [.borderless],
@@ -8011,7 +8927,7 @@ final class ClickyTextModeWindowManager {
         textModePanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
         let hostingView = NSHostingView(
-            rootView: ClickyTextModeInputView(submitText: submitText) { [weak self] in
+            rootView: ClickyTextModeInputView(accentThemeOverride: accentTheme, submitText: submitText) { [weak self] in
                 self?.hide()
             }
         )
@@ -8022,11 +8938,11 @@ final class ClickyTextModeWindowManager {
         panel = textModePanel
     }
 
-    private func preparePanel(submitText: @escaping (String) -> Void) {
+    private func preparePanel(accentTheme: ClickyAccentTheme?, submitText: @escaping (String) -> Void) {
         if panel == nil {
-            createPanel(submitText: submitText)
+            createPanel(accentTheme: accentTheme, submitText: submitText)
         } else if let hostingView = panel?.contentView as? NSHostingView<ClickyTextModeInputView> {
-            hostingView.rootView = ClickyTextModeInputView(submitText: submitText) { [weak self] in
+            hostingView.rootView = ClickyTextModeInputView(accentThemeOverride: accentTheme, submitText: submitText) { [weak self] in
                 self?.hide()
             }
         }
@@ -8068,6 +8984,7 @@ private struct ClickyTextModeInputView: View {
     @FocusState private var isFocused: Bool
     @AppStorage(ClickyAccentTheme.userDefaultsKey) private var selectedAccentThemeID = ClickyAccentTheme.blue.rawValue
 
+    let accentThemeOverride: ClickyAccentTheme?
     let submitText: (String) -> Void
     let dismiss: () -> Void
 
@@ -8077,7 +8994,7 @@ private struct ClickyTextModeInputView: View {
                 .font(.system(size: 16, weight: .medium))
                 .foregroundColor(controlColor)
 
-            TextField("", text: $text, prompt: Text("Ask OpenClicky or say Hey OpenClicky Agent...")
+            TextField("", text: $text, prompt: Text(placeholderText)
                 .foregroundColor(placeholderColor)
             )
                 .textFieldStyle(.plain)
@@ -8131,7 +9048,11 @@ private struct ClickyTextModeInputView: View {
     }
 
     private var accentTheme: ClickyAccentTheme {
-        ClickyAccentTheme(rawValue: selectedAccentThemeID) ?? .blue
+        accentThemeOverride ?? ClickyAccentTheme(rawValue: selectedAccentThemeID) ?? .blue
+    }
+
+    private var placeholderText: String {
+        accentThemeOverride == nil ? "Ask OpenClicky or say Hey OpenClicky Agent..." : "Ask this agent a follow-up..."
     }
 
     private var backgroundColor: Color {

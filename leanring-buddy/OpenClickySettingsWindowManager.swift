@@ -95,6 +95,7 @@ struct OpenClickySettingsView: View {
     @AppStorage(AppBundleConfiguration.userElevenLabsVoiceIDDefaultsKey) private var userElevenLabsVoiceID = ""
     @AppStorage(AppBundleConfiguration.userCartesiaAPIKeyDefaultsKey) private var userCartesiaAPIKey = ""
     @AppStorage(AppBundleConfiguration.userCartesiaVoiceIDDefaultsKey) private var userCartesiaVoiceID = ""
+    @AppStorage(AppBundleConfiguration.userDeepgramTTSVoiceDefaultsKey) private var userDeepgramTTSVoice = "aura-2-thalia-en"
     @AppStorage(AppBundleConfiguration.userCodexAgentAPIKeyDefaultsKey) private var userCodexAgentAPIKey = ""
     @AppStorage(AppBundleConfiguration.userAssemblyAIAPIKeyDefaultsKey) private var userAssemblyAIAPIKey = ""
     @AppStorage(AppBundleConfiguration.userDeepgramAPIKeyDefaultsKey) private var userDeepgramAPIKey = ""
@@ -323,6 +324,18 @@ struct OpenClickySettingsView: View {
                 )
             }
 
+            settingsGroup("Speculative pre-fire") {
+                toggleRow(
+                    title: "Pre-fire on stable speech",
+                    subtitle: "Starts the AI response while you're still talking when a partial is stable, no screen reference, and looks like a question. Saves up to 1s of TTFT but costs ~1.5–2× input tokens per turn for cancelled fires. Off by default.",
+                    systemImageName: "bolt.horizontal",
+                    isOn: Binding(
+                        get: { companionManager.speculativePreFireEnabled },
+                        set: { companionManager.setSpeculativePreFireEnabled($0) }
+                    )
+                )
+            }
+
             settingsGroup("Playback") {
                 Picker("TTS provider", selection: Binding(
                     get: { companionManager.selectedTTSProvider },
@@ -335,7 +348,8 @@ struct OpenClickySettingsView: View {
                 .pickerStyle(.segmented)
                 .padding(.horizontal, 4)
 
-                if companionManager.selectedTTSProvider == .elevenLabs {
+                switch companionManager.selectedTTSProvider {
+                case .elevenLabs:
                     secureFieldRow(
                         title: "ElevenLabs API key",
                         subtitle: "Used for spoken OpenClicky replies.",
@@ -346,7 +360,6 @@ struct OpenClickySettingsView: View {
                             set: { userElevenLabsAPIKey = $0; companionManager.setElevenLabsAPIKey($0) }
                         )
                     )
-
                     textFieldRow(
                         title: "ElevenLabs voice ID",
                         subtitle: "Optional custom voice override.",
@@ -357,7 +370,7 @@ struct OpenClickySettingsView: View {
                             set: { userElevenLabsVoiceID = $0; companionManager.setElevenLabsVoiceID($0) }
                         )
                     )
-                } else {
+                case .cartesia:
                     secureFieldRow(
                         title: "Cartesia API key",
                         subtitle: "Used for spoken OpenClicky replies.",
@@ -368,7 +381,6 @@ struct OpenClickySettingsView: View {
                             set: { userCartesiaAPIKey = $0; companionManager.setCartesiaAPIKey($0) }
                         )
                     )
-
                     textFieldRow(
                         title: "Cartesia voice ID",
                         subtitle: "Optional custom voice override.",
@@ -377,6 +389,21 @@ struct OpenClickySettingsView: View {
                         text: Binding(
                             get: { userCartesiaVoiceID },
                             set: { userCartesiaVoiceID = $0; companionManager.setCartesiaVoiceID($0) }
+                        )
+                    )
+                case .deepgram:
+                    Text("Deepgram TTS reuses the Deepgram API key set under Transcription.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
+                    textFieldRow(
+                        title: "Deepgram TTS voice",
+                        subtitle: "Aura model identifier — e.g. aura-2-thalia-en, aura-2-orion-en, aura-2-luna-en.",
+                        systemImageName: "person.wave.2",
+                        placeholder: "aura-2-thalia-en",
+                        text: Binding(
+                            get: { userDeepgramTTSVoice },
+                            set: { userDeepgramTTSVoice = $0; companionManager.setDeepgramTTSVoice($0) }
                         )
                     )
                 }
@@ -459,22 +486,29 @@ struct OpenClickySettingsView: View {
                 )
             }
 
-            settingsGroup("Background Computer Use") {
-                valueRow(
-                    title: "Runtime status",
-                    subtitle: backgroundComputerUseController.status.summary,
-                    systemImageName: backgroundComputerUseController.status.isRuntimeReady ? "checkmark.circle" : "exclamationmark.triangle"
-                )
-                valueRow(
-                    title: "Manifest",
-                    subtitle: backgroundComputerUseController.status.manifestPath,
-                    systemImageName: "doc.text.magnifyingglass"
-                )
-                actionRow(title: "Start Background Computer Use", systemImageName: "play.circle") {
-                    companionManager.startBackgroundComputerUseRuntime()
-                }
-                actionRow(title: "Refresh Background status", systemImageName: "arrow.clockwise") {
-                    companionManager.refreshBackgroundComputerUseStatus()
+            if companionManager.isAdvancedModeEnabled {
+                settingsGroup("Experimental Background Computer Use") {
+                    valueRow(
+                        title: "Experimental runtime",
+                        subtitle: "Dev-only external runtime. Native CUA is the supported OpenClicky path.",
+                        systemImageName: "exclamationmark.triangle"
+                    )
+                    valueRow(
+                        title: "Runtime status",
+                        subtitle: backgroundComputerUseController.status.summary,
+                        systemImageName: backgroundComputerUseController.status.isRuntimeReady ? "checkmark.circle" : "exclamationmark.triangle"
+                    )
+                    valueRow(
+                        title: "Manifest",
+                        subtitle: backgroundComputerUseController.status.manifestPath,
+                        systemImageName: "doc.text.magnifyingglass"
+                    )
+                    actionRow(title: "Start Experimental Background Computer Use", systemImageName: "play.circle") {
+                        companionManager.startBackgroundComputerUseRuntime()
+                    }
+                    actionRow(title: "Refresh experimental status", systemImageName: "arrow.clockwise") {
+                        companionManager.refreshBackgroundComputerUseStatus()
+                    }
                 }
             }
 

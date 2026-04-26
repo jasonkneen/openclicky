@@ -186,6 +186,7 @@ struct BlueCursorView: View {
     let isFirstAppearance: Bool
     let companionManager: CompanionManager
     @ObservedObject var cursorState: CursorOverlayState
+    @AppStorage(ClickyAccentTheme.userDefaultsKey) private var selectedAccentThemeID = ClickyAccentTheme.blue.rawValue
 
     @State private var cursorPosition: CGPoint
     @State private var isCursorOnThisScreen: Bool
@@ -250,6 +251,9 @@ struct BlueCursorView: View {
     @State private var isReturningToCursor: Bool = false
 
     private let fullWelcomeMessage = "hey! i'm clicky"
+    private var overlayCursorColor: Color {
+        (ClickyAccentTheme(rawValue: selectedAccentThemeID) ?? .blue).cursorColor
+    }
 
     private let navigationPointerPhrases = [
         "right here!",
@@ -274,8 +278,8 @@ struct BlueCursorView: View {
                     .padding(.vertical, 4)
                     .background(
                         RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(DS.Colors.overlayCursorBlue)
-                            .shadow(color: DS.Colors.overlayCursorBlue.opacity(0.5), radius: 6, x: 0, y: 0)
+                            .fill(overlayCursorColor)
+                            .shadow(color: overlayCursorColor.opacity(0.5), radius: 6, x: 0, y: 0)
                     )
                     .fixedSize()
                     .overlay(
@@ -304,9 +308,9 @@ struct BlueCursorView: View {
                     .padding(.vertical, 4)
                     .background(
                         RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(DS.Colors.overlayCursorBlue)
+                            .fill(overlayCursorColor)
                             .shadow(
-                                color: DS.Colors.overlayCursorBlue.opacity(0.5 + (1.0 - navigationBubbleScale) * 1.0),
+                                color: overlayCursorColor.opacity(0.5 + (1.0 - navigationBubbleScale) * 1.0),
                                 radius: 6 + (1.0 - navigationBubbleScale) * 16,
                                 x: 0, y: 0
                             )
@@ -338,10 +342,10 @@ struct BlueCursorView: View {
             // During navigation: NO implicit animation — the frame-by-frame bezier
             // timer controls position directly at 60fps for a smooth arc flight.
             Triangle()
-                .fill(DS.Colors.overlayCursorBlue)
+                .fill(overlayCursorColor)
                 .frame(width: 16, height: 16)
                 .rotationEffect(.degrees(triangleRotationDegrees))
-                .shadow(color: DS.Colors.overlayCursorBlue, radius: 8 + (buddyFlightScale - 1.0) * 20, x: 0, y: 0)
+                .shadow(color: overlayCursorColor, radius: 8 + (buddyFlightScale - 1.0) * 20, x: 0, y: 0)
                 .scaleEffect(buddyFlightScale)
                 .opacity(buddyIsVisibleOnThisScreen && (cursorState.voiceState == .idle || cursorState.voiceState == .responding) ? cursorOpacity : 0)
                 .position(cursorPosition)
@@ -358,14 +362,21 @@ struct BlueCursorView: View {
                 )
 
             // Blue waveform — replaces the triangle while listening
-            BlueCursorWaveformView(audioPowerLevel: cursorState.currentAudioPowerLevel)
+            BlueCursorWaveformView(
+                audioPowerLevel: cursorState.currentAudioPowerLevel,
+                cursorColor: overlayCursorColor,
+                isActive: buddyIsVisibleOnThisScreen && cursorState.voiceState == .listening
+            )
                 .opacity(buddyIsVisibleOnThisScreen && cursorState.voiceState == .listening ? cursorOpacity : 0)
                 .position(cursorPosition)
                 .animation(.spring(response: 0.2, dampingFraction: 0.6, blendDuration: 0), value: cursorPosition)
                 .animation(.easeIn(duration: 0.15), value: cursorState.voiceState)
 
             // Blue spinner — shown while the AI is processing (transcription + Claude + waiting for TTS)
-            BlueCursorSpinnerView()
+            BlueCursorSpinnerView(
+                cursorColor: overlayCursorColor,
+                isActive: buddyIsVisibleOnThisScreen && cursorState.voiceState == .processing
+            )
                 .opacity(buddyIsVisibleOnThisScreen && cursorState.voiceState == .processing ? cursorOpacity : 0)
                 .position(cursorPosition)
                 .animation(.spring(response: 0.2, dampingFraction: 0.6, blendDuration: 0), value: cursorPosition)
@@ -398,8 +409,14 @@ struct BlueCursorView: View {
         }
         .onChange(of: cursorState.detectedElementScreenLocation) { _, newLocation in
             // When a UI element location is detected, navigate the buddy to
-            // that position so it points at the element.
+            // that position so it points at the element. When the manager
+            // clears the target (for example after the agent dock spawns),
+            // force the buddy back into cursor-following mode. Without this,
+            // the view could remain in pointing mode until its delayed bubble
+            // timers fired, leaving Clicky stuck in the top-right if the main
+            // actor was busy starting the agent.
             guard newLocation != nil else {
+                resetNavigationStateAndResumeFollowing()
                 return
             }
             startNavigatingToCurrentDetectedLocationIfNeeded()
@@ -722,6 +739,11 @@ struct BlueCursorView: View {
 
     /// Returns the buddy to normal cursor-following mode after navigation completes.
     private func finishNavigationAndResumeFollowing() {
+        resetNavigationStateAndResumeFollowing()
+        companionManager.clearDetectedElementLocation()
+    }
+
+    private func resetNavigationStateAndResumeFollowing() {
         navigationAnimationTimer?.invalidate()
         navigationAnimationTimer = nil
         buddyNavigationMode = .followingCursor
@@ -731,7 +753,7 @@ struct BlueCursorView: View {
         navigationBubbleText = ""
         navigationBubbleOpacity = 0.0
         navigationBubbleScale = 1.0
-        companionManager.clearDetectedElementLocation()
+        updateCursorTracking()
     }
 
     // MARK: - Welcome Animation
@@ -768,28 +790,39 @@ struct BlueCursorView: View {
 /// the user is holding the push-to-talk shortcut and speaking.
 private struct BlueCursorWaveformView: View {
     let audioPowerLevel: CGFloat
+    let cursorColor: Color
+    let isActive: Bool
 
     private let barCount = 5
     private let listeningBarProfile: [CGFloat] = [0.4, 0.7, 1.0, 0.7, 0.4]
 
+    @ViewBuilder
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 36.0)) { timelineContext in
-            HStack(alignment: .center, spacing: 2) {
-                ForEach(0..<barCount, id: \.self) { barIndex in
-                    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                        .fill(DS.Colors.overlayCursorBlue)
-                        .frame(
-                            width: 2,
-                            height: barHeight(
-                                for: barIndex,
-                                timelineDate: timelineContext.date
-                            )
-                        )
-                }
+        if isActive {
+            TimelineView(.animation(minimumInterval: 1.0 / 36.0)) { timelineContext in
+                bars(timelineDate: timelineContext.date)
             }
-            .shadow(color: DS.Colors.overlayCursorBlue.opacity(0.6), radius: 6, x: 0, y: 0)
-            .animation(.linear(duration: 0.08), value: audioPowerLevel)
+        } else {
+            bars(timelineDate: .distantPast)
         }
+    }
+
+    private func bars(timelineDate: Date) -> some View {
+        HStack(alignment: .center, spacing: 2) {
+            ForEach(0..<barCount, id: \.self) { barIndex in
+                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                    .fill(cursorColor)
+                    .frame(
+                        width: 2,
+                        height: barHeight(
+                            for: barIndex,
+                            timelineDate: timelineDate
+                        )
+                    )
+            }
+        }
+        .shadow(color: cursorColor.opacity(0.6), radius: 6, x: 0, y: 0)
+        .animation(.linear(duration: 0.08), value: audioPowerLevel)
     }
 
     private func barHeight(for barIndex: Int, timelineDate: Date) -> CGFloat {
@@ -807,6 +840,8 @@ private struct BlueCursorWaveformView: View {
 /// A small blue spinning indicator that replaces the triangle cursor
 /// while the AI is processing a voice input.
 private struct BlueCursorSpinnerView: View {
+    let cursorColor: Color
+    let isActive: Bool
     @State private var isSpinning = false
 
     var body: some View {
@@ -815,40 +850,56 @@ private struct BlueCursorSpinnerView: View {
             .stroke(
                 AngularGradient(
                     colors: [
-                        DS.Colors.overlayCursorBlue.opacity(0.0),
-                        DS.Colors.overlayCursorBlue
+                        cursorColor.opacity(0.0),
+                        cursorColor
                     ],
                     center: .center
                 ),
                 style: StrokeStyle(lineWidth: 2.5, lineCap: .round)
             )
             .frame(width: 14, height: 14)
-            .rotationEffect(.degrees(isSpinning ? 360 : 0))
-            .shadow(color: DS.Colors.overlayCursorBlue.opacity(0.6), radius: 6, x: 0, y: 0)
+            .rotationEffect(.degrees(isSpinning && isActive ? 360 : 0))
+            .shadow(color: cursorColor.opacity(0.6), radius: 6, x: 0, y: 0)
             .onAppear {
-                withAnimation(.linear(duration: 0.8).repeatForever(autoreverses: false)) {
-                    isSpinning = true
-                }
+                updateSpinning()
             }
+            .onChange(of: isActive) { _, _ in
+                updateSpinning()
+            }
+    }
+
+    private func updateSpinning() {
+        if isActive {
+            isSpinning = false
+            withAnimation(.linear(duration: 0.8).repeatForever(autoreverses: false)) {
+                isSpinning = true
+            }
+        } else {
+            withAnimation(nil) {
+                isSpinning = false
+            }
+        }
     }
 }
 
 private struct ClickyAgentDockStackView: View {
     @ObservedObject var companionManager: CompanionManager
     @State private var hoveredItemID: UUID?
+    @State private var didDragDock = false
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 6) {
+        VStack(alignment: .trailing, spacing: 14) {
             ForEach(companionManager.agentDockItems) { item in
-                HStack(spacing: 10) {
-                    if hoveredItemID == item.id {
+                HStack(alignment: .top, spacing: 22) {
+                    if shouldShowExpandedCard(for: item) {
                         ClickyAgentDockHoverCard(
                             item: item,
                             canOpenDashboard: companionManager.isAdvancedModeEnabled,
                             chat: { companionManager.openAgentDockItem(item.id) },
                             text: { companionManager.showTextFollowUpForAgentDockItem(item.id) },
                             voice: { companionManager.prepareVoiceFollowUpForAgentDockItem(item.id) },
-                            dismiss: { companionManager.dismissAgentDockItem(item.id) }
+                            close: { companionManager.closeAgentDockPanel() },
+                            stop: { companionManager.stopAgentDockItem(item.id) }
                         )
                         .transition(.opacity.combined(with: .move(edge: .trailing)))
                     } else if item.caption != nil {
@@ -860,6 +911,10 @@ private struct ClickyAgentDockStackView: View {
                     }
 
                     Button {
+                        if didDragDock {
+                            didDragDock = false
+                            return
+                        }
                         companionManager.openAgentDockItem(item.id)
                     } label: {
                         ClickyAgentDockItemView(item: item)
@@ -867,19 +922,47 @@ private struct ClickyAgentDockStackView: View {
                     .buttonStyle(.plain)
                     .contentShape(Rectangle())
                     .pointerCursor()
+                    .simultaneousGesture(
+                        DragGesture(minimumDistance: 2)
+                            .onChanged { value in
+                                if !didDragDock {
+                                    didDragDock = true
+                                    companionManager.beginAgentDockDrag()
+                                }
+                                companionManager.dragAgentDock(by: value.translation)
+                            }
+                            .onEnded { _ in
+                                companionManager.endAgentDockDrag()
+                                DispatchQueue.main.async {
+                                    didDragDock = false
+                                }
+                            }
+                    )
                 }
                 .contentShape(Rectangle())
+                .padding(.top, 28)
+                .padding(.trailing, 36)
                 .onHover { isHovering in
-                    withAnimation(.spring(response: 0.26, dampingFraction: 0.84)) {
+                    withAnimation(.easeOut(duration: 0.14)) {
                         hoveredItemID = isHovering ? item.id : nil
                     }
                 }
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-        .padding(.top, 10)
-        .padding(.trailing, 10)
-        .animation(.spring(response: 0.36, dampingFraction: 0.78), value: companionManager.agentDockItems)
+        .frame(width: 820, height: 430, alignment: .topTrailing)
+        .padding(.top, 18)
+        .padding(.trailing, 18)
+        .animation(.easeOut(duration: 0.16), value: companionManager.agentDockItems)
+    }
+
+    private func shouldShowExpandedCard(for item: ClickyAgentDockItem) -> Bool {
+        if hoveredItemID == item.id { return true }
+        switch item.status {
+        case .done, .failed:
+            return true
+        case .starting, .running:
+            return false
+        }
     }
 }
 
@@ -900,7 +983,7 @@ private struct ClickyAgentDockItemView: View {
                         endPoint: .bottomTrailing
                     )
                 )
-                .frame(width: 54, height: 54)
+                .frame(width: 68, height: 68)
                 .overlay(
                     Circle()
                         .stroke(
@@ -916,21 +999,21 @@ private struct ClickyAgentDockItemView: View {
                             lineWidth: 1.1
                         )
                 )
-                .shadow(color: item.accentTheme.cursorColor.opacity(0.30), radius: 24, x: 0, y: 12)
-                .shadow(color: item.accentTheme.cursorColor.opacity(0.62), radius: 15, x: 0, y: 0)
+                .shadow(color: item.accentTheme.cursorColor.opacity(0.34), radius: 30, x: 0, y: 14)
+                .shadow(color: item.accentTheme.cursorColor.opacity(0.70), radius: 20, x: 0, y: 0)
                 .shadow(color: Color.black.opacity(0.50), radius: 10, x: 0, y: 5)
 
             Triangle()
                 .fill(item.accentTheme.cursorColor)
-                .frame(width: 19, height: 19)
+                .frame(width: 23, height: 23)
                 .rotationEffect(.degrees(-35))
-                .shadow(color: item.accentTheme.cursorColor.opacity(0.82), radius: 8, x: 0, y: 0)
-                .frame(width: 54, height: 54)
+                .shadow(color: item.accentTheme.cursorColor.opacity(0.82), radius: 9, x: 0, y: 0)
+                .frame(width: 68, height: 68)
 
             statusIndicator
-                .offset(x: 2, y: -2)
+                .offset(x: -3, y: 3)
         }
-        .frame(width: 66, height: 66, alignment: .center)
+        .frame(width: 112, height: 112, alignment: .center)
         .help(item.title)
         .onAppear {
             isStatusAnimating = true
@@ -1099,15 +1182,15 @@ private struct ClickyAgentDockConversationPreview: View {
             )
 
             conversationBubble(
-                label: "OPENCLICKY",
+                label: "AGENT",
                 text: assistantText,
-                labelColor: DS.Colors.textSecondary,
-                backgroundColor: Color(hex: "#1A1D1C").opacity(0.96),
-                borderColor: Color.white.opacity(0.05)
+                labelColor: item.accentTheme.cursorColor.opacity(0.95),
+                backgroundColor: item.accentTheme.cursorColor.opacity(0.12),
+                borderColor: item.accentTheme.cursorColor.opacity(0.28)
             )
         }
-        .frame(width: 330, alignment: .leading)
-        .shadow(color: item.accentTheme.cursorColor.opacity(0.12), radius: 18, x: 0, y: 8)
+        .frame(width: 430, alignment: .leading)
+        .shadow(color: item.accentTheme.cursorColor.opacity(0.18), radius: 18, x: 0, y: 8)
         .shadow(color: Color.black.opacity(0.30), radius: 10, x: 0, y: 6)
     }
 
@@ -1156,13 +1239,13 @@ private struct ClickyAgentDockConversationPreview: View {
     private var progressText: String {
         switch item.status {
         case .starting:
-            return "Starting the agent task."
+            return "An agent is getting ready."
         case .running:
-            return "Working through the task."
+            return "An agent is working on this."
         case .done:
-            return canOpenDashboard ? "Done. Open the dashboard to review the result." : "Done. Use voice or text to follow up."
+            return "The agent has completed the task."
         case .failed:
-            return canOpenDashboard ? "Needs attention. Open the dashboard to see the error." : "Needs attention. Ask for agent status to hear the error."
+            return "The agent needs attention."
         }
     }
 }
@@ -1173,14 +1256,16 @@ private struct ClickyAgentDockHoverCard: View {
     let chat: () -> Void
     let text: () -> Void
     let voice: () -> Void
-    let dismiss: () -> Void
+    let close: () -> Void
+    let stop: () -> Void
+    @State private var isConfirmingStop = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .center, spacing: 8) {
                 Text(displayTitle)
                     .font(.system(size: 10, weight: .heavy, design: .rounded))
-                    .foregroundColor(DS.Colors.textSecondary.opacity(0.95))
+                    .foregroundColor(item.accentTheme.cursorColor.opacity(0.95))
                     .kerning(1.4)
                     .lineLimit(1)
 
@@ -1192,34 +1277,21 @@ private struct ClickyAgentDockHoverCard: View {
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(Capsule().fill(statusBackgroundColor))
-
-                Button(action: dismiss) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 12, weight: .bold))
-                }
-                .buttonStyle(
-                    DSIconButtonStyle(
-                        size: 28,
-                        isDestructiveOnHover: true,
-                        tooltipText: "Dismiss",
-                        tooltipAlignment: .trailing
-                    )
-                )
             }
 
-            Text(progressText)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(DS.Colors.textPrimary)
-                .lineLimit(3)
-                .minimumScaleFactor(0.82)
-                .fixedSize(horizontal: false, vertical: true)
+            agentProgressContent
+                .padding(.top, 4)
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text("Follow up")
                     .font(.system(size: 10, weight: .heavy))
                     .foregroundColor(DS.Colors.textTertiary)
 
-                FlowLayout(spacing: 8, rowSpacing: 8) {
+                HStack(spacing: 8) {
+                    stopControls
+
+                    Spacer(minLength: 10)
+
                     Button(action: voice) {
                         Label("Voice", systemImage: "mic")
                     }
@@ -1239,15 +1311,30 @@ private struct ClickyAgentDockHoverCard: View {
                 }
             }
         }
-        .padding(.horizontal, 26)
-        .padding(.vertical, 22)
-        .frame(width: 390, alignment: .leading)
+        .overlay(alignment: .topTrailing) {
+            Button(action: close) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 12, weight: .bold))
+            }
+            .buttonStyle(
+                DSIconButtonStyle(
+                    size: 28,
+                    isDestructiveOnHover: false,
+                    tooltipText: "Close panel",
+                    tooltipAlignment: .trailing
+                )
+            )
+            .offset(x: 8, y: -8)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+        .frame(width: 560, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(
                     LinearGradient(
                         colors: [
-                            Color(hex: "#151B2A").opacity(0.98),
+                            item.accentTheme.cursorColor.opacity(0.18),
                             Color(hex: "#111827").opacity(0.98)
                         ],
                         startPoint: .topLeading,
@@ -1261,6 +1348,86 @@ private struct ClickyAgentDockHoverCard: View {
         )
         .shadow(color: item.accentTheme.cursorColor.opacity(0.24), radius: 18, x: 0, y: 8)
         .shadow(color: Color.black.opacity(0.42), radius: 10, x: 0, y: 6)
+    }
+
+    @ViewBuilder
+    private var agentProgressContent: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(progressText)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(DS.Colors.textPrimary)
+                .lineLimit(5)
+                .minimumScaleFactor(0.82)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let linkTarget {
+                Button {
+                    NSWorkspace.shared.open(linkTarget)
+                } label: {
+                    Label(linkButtonTitle(for: linkTarget), systemImage: "arrow.up.right.square")
+                }
+                .buttonStyle(ClickyAgentDockPillButtonStyle())
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var stopControls: some View {
+        if isConfirmingStop {
+            Button {
+                isConfirmingStop = false
+                stop()
+            } label: {
+                Label("Confirm stop", systemImage: "stop.circle.fill")
+            }
+            .buttonStyle(ClickyAgentDockStopButtonStyle(isConfirming: true))
+
+            Button("Keep running") {
+                isConfirmingStop = false
+            }
+            .buttonStyle(ClickyAgentDockPillButtonStyle())
+        } else {
+            Button {
+                isConfirmingStop = true
+            } label: {
+                Label("Stop", systemImage: "stop.circle")
+            }
+            .buttonStyle(ClickyAgentDockStopButtonStyle(isConfirming: false))
+        }
+    }
+
+    private var linkTarget: URL? {
+        Self.firstOpenableURL(in: progressText)
+    }
+
+    private func linkButtonTitle(for url: URL) -> String {
+        url.isFileURL ? "Open \(url.lastPathComponent)" : "Open link"
+    }
+
+    private static func firstOpenableURL(in text: String) -> URL? {
+        let patterns = [
+            #"`((?:file://)?/[^`]+)`"#,
+            #"((?:file://)?/Users/[^\s`]+)"#,
+            #"(https?://[^\s`]+)"#
+        ]
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(text.startIndex..<text.endIndex, in: text)
+            guard let match = regex.firstMatch(in: text, range: range), match.numberOfRanges > 1,
+                  let matchRange = Range(match.range(at: 1), in: text) else { continue }
+            var raw = String(text[matchRange])
+                .trimmingCharacters(in: CharacterSet(charactersIn: "`'\".,)\n\t "))
+            if raw.hasPrefix("file://"), let url = URL(string: raw) {
+                return url
+            }
+            if raw.hasPrefix("http://") || raw.hasPrefix("https://") {
+                return URL(string: raw)
+            }
+            if raw.hasPrefix("/") {
+                return URL(fileURLWithPath: raw)
+            }
+        }
+        return nil
     }
 
     private var displayTitle: String {
@@ -1310,14 +1477,43 @@ private struct ClickyAgentDockHoverCard: View {
 
         switch item.status {
         case .starting:
-            return "Starting the agent task."
+            return "An agent is getting ready."
         case .running:
-            return "Working through the task."
+            return "An agent is working on this."
         case .done:
-            return canOpenDashboard ? "Done. Open the dashboard to review the result." : "Done. Use voice or text to follow up."
+            return "The agent has completed the task."
         case .failed:
-            return canOpenDashboard ? "Needs attention. Open the dashboard to see the error." : "Needs attention. Ask for agent status to hear the error."
+            return "The agent needs attention."
         }
+    }
+}
+
+private struct ClickyAgentDockStopButtonStyle: ButtonStyle {
+    let isConfirming: Bool
+    @State private var isHovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundColor(isConfirming ? Color.white : Color(hex: "#FFB4BA"))
+            .labelStyle(.titleAndIcon)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                Capsule()
+                    .fill(isConfirming ? Color(hex: "#B91C1C").opacity(configuration.isPressed ? 0.95 : 0.82) : Color(hex: "#7F1D1D").opacity(isHovered ? 0.38 : 0.22))
+            )
+            .overlay(
+                Capsule()
+                    .stroke(Color(hex: "#FF6369").opacity(isHovered || isConfirming ? 0.50 : 0.28), lineWidth: 1)
+            )
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(.easeOut(duration: DS.Animation.fast), value: configuration.isPressed)
+            .animation(.easeOut(duration: DS.Animation.fast), value: isHovered)
+            .pointerCursor()
+            .onHover { hovering in
+                isHovered = hovering
+            }
     }
 }
 
@@ -1357,11 +1553,13 @@ private final class ClickyAgentDockPanel: NSPanel {
 @MainActor
 final class ClickyAgentDockWindowManager {
     private var panel: NSPanel?
-    private let dockSize = NSSize(width: 520, height: 190)
-    private let hoverCardWidth: CGFloat = 390
-    private let dockIconWidth: CGFloat = 66
-    private let dockTrailingInset: CGFloat = 10
-    private let dockItemSpacing: CGFloat = 10
+    private var dragStartFrame: NSRect?
+    private var customFrame: NSRect?
+    private let dockSize = NSSize(width: 860, height: 480)
+    private let hoverCardWidth: CGFloat = 560
+    private let dockIconWidth: CGFloat = 112
+    private let dockTrailingInset: CGFloat = 54
+    private let dockItemSpacing: CGFloat = 22
 
     func show(
         companionManager: CompanionManager,
@@ -1372,12 +1570,37 @@ final class ClickyAgentDockWindowManager {
             createPanel(companionManager: companionManager)
         }
 
-        positionPanel(onScreen: screen, position: position)
+        if let customFrame {
+            panel?.setFrame(customFrame, display: true)
+        } else {
+            positionPanel(onScreen: screen, position: position)
+        }
         panel?.orderFrontRegardless()
     }
 
     func hide() {
         panel?.orderOut(nil)
+    }
+
+    func beginDrag() {
+        dragStartFrame = panel?.frame
+    }
+
+    func drag(by translation: CGSize) {
+        guard let panel, let dragStartFrame else { return }
+        let frame = NSRect(
+            x: dragStartFrame.origin.x + translation.width,
+            y: dragStartFrame.origin.y - translation.height,
+            width: dragStartFrame.width,
+            height: dragStartFrame.height
+        )
+        panel.setFrame(frame, display: true)
+        customFrame = frame
+    }
+
+    func endDrag() {
+        customFrame = panel?.frame ?? customFrame
+        dragStartFrame = nil
     }
 
     func textFollowUpOrigin() -> CGPoint? {
@@ -1408,10 +1631,24 @@ final class ClickyAgentDockWindowManager {
         dockPanel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
 
         let rootView = ClickyAgentDockStackView(companionManager: companionManager)
+            .frame(width: dockSize.width, height: dockSize.height, alignment: .topTrailing)
         let hostingView = NSHostingView(rootView: rootView)
-        hostingView.frame = NSRect(origin: .zero, size: dockSize)
+        if #available(macOS 13.0, *) {
+            // Critical: keep SwiftUI from driving the NSPanel's size from
+            // its ideal content size. Hover cards/caption changes animate
+            // the SwiftUI tree frequently; when the hosting view is the
+            // window contentView, AppKit can enter a recursive constraints
+            // pass and throw NSGenericException. A fixed AppKit container
+            // owns the panel size; SwiftUI only draws inside it.
+            hostingView.sizingOptions = []
+        }
+        let containerView = NSView(frame: NSRect(origin: .zero, size: dockSize))
+        containerView.wantsLayer = true
+        containerView.layer?.backgroundColor = NSColor.clear.cgColor
+        hostingView.frame = containerView.bounds
         hostingView.autoresizingMask = [.width, .height]
-        dockPanel.contentView = hostingView
+        containerView.addSubview(hostingView)
+        dockPanel.contentView = containerView
         panel = dockPanel
     }
 
@@ -1428,7 +1665,9 @@ final class ClickyAgentDockWindowManager {
             edgeInset = 16
         }
         let origin = position.originForWindow(size: dockSize, on: screen, edgeInset: edgeInset)
-        panel.setFrame(NSRect(origin: origin, size: dockSize), display: true)
+        let targetFrame = NSRect(origin: origin, size: dockSize)
+        guard panel.frame.integral != targetFrame.integral else { return }
+        panel.setFrame(targetFrame, display: true)
     }
 }
 

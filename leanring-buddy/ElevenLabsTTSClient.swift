@@ -259,6 +259,7 @@ final class ElevenLabsTTSClient {
                 },
                 playerNode: nil,
                 format: nil,
+                sampleRate: Self.streamSampleRate,
                 onPlaybackStarted: onPlaybackStarted
             )
         }
@@ -276,6 +277,7 @@ final class ElevenLabsTTSClient {
                 },
                 playerNode: nil,
                 format: nil,
+                sampleRate: Self.streamSampleRate,
                 onPlaybackStarted: onPlaybackStarted
             )
         }
@@ -290,6 +292,7 @@ final class ElevenLabsTTSClient {
             },
             playerNode: player,
             format: streamFormat,
+            sampleRate: Self.streamSampleRate,
             onPlaybackStarted: onPlaybackStarted
         )
         self.activeStreamingSession = session
@@ -307,15 +310,28 @@ final class ElevenLabsTTSClient {
             throw NSError(domain: "ElevenLabsTTS", code: -10,
                           userInfo: [NSLocalizedDescriptionKey: "API key not configured"])
         }
-        guard !voiceID.isEmpty, let url = Self.streamRequestURL(voiceID: voiceID) else {
+        guard !voiceID.isEmpty,
+              let fastURL = Self.streamRequestURL(voiceID: voiceID, optimizeStreamingLatency: "2"),
+              let safeURL = Self.streamRequestURL(voiceID: voiceID, optimizeStreamingLatency: "0") else {
             throw NSError(domain: "ElevenLabsTTS", code: -11,
                           userInfo: [NSLocalizedDescriptionKey: "Voice ID not configured"])
         }
 
         // Capture only Sendable values, then jump off the main actor.
-        let request = Self.makeSpeechRequest(url: url, apiKey: apiKey, text: text)
         let urlSession = self.session
-        return try await Self.decodePCMSamples(request: request, session: urlSession)
+        let fastRequest = Self.makeSpeechRequest(url: fastURL, apiKey: apiKey, text: text)
+        let fastSamples = try await Self.decodePCMSamples(request: fastRequest, session: urlSession)
+        guard Self.isSuspiciouslyShortAudio(samples: fastSamples, forText: text) else {
+            return fastSamples
+        }
+
+        // ElevenLabs can occasionally EOF cleanly with truncated PCM even
+        // on latency level 2. Retry once with the safest latency setting
+        // before giving the playback pipeline a clipped sentence.
+        print("⚠️ ElevenLabs sentence PCM suspiciously short; retrying with optimize_streaming_latency=0")
+        let safeRequest = Self.makeSpeechRequest(url: safeURL, apiKey: apiKey, text: text)
+        let safeSamples = try await Self.decodePCMSamples(request: safeRequest, session: urlSession)
+        return Self.isSuspiciouslyShortAudio(samples: safeSamples, forText: text) ? fastSamples : safeSamples
     }
 
     /// Off-actor PCM decode. Runs as a `nonisolated` static so the byte
@@ -351,6 +367,13 @@ final class ElevenLabsTTSClient {
         return samples
     }
 
+    nonisolated private static func isSuspiciouslyShortAudio(samples: [Int16], forText text: String) -> Bool {
+        let words = text.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).count
+        guard words >= 6 else { return false }
+        let durationSeconds = Double(samples.count) / Self.streamSampleRate
+        return durationSeconds < 0.4
+    }
+
     // MARK: - Public lifecycle
 
     var isPlaying: Bool {
@@ -383,11 +406,20 @@ final class ElevenLabsTTSClient {
         )
     }
 
-    fileprivate static func streamRequestURL(voiceID: String) -> URL? {
+    fileprivate static func streamRequestURL(
+        voiceID: String,
+        optimizeStreamingLatency: String = "2"
+    ) -> URL? {
         var components = URLComponents(string: "https://api.elevenlabs.io/v1/text-to-speech/\(voiceID)/stream")
         components?.queryItems = [
             URLQueryItem(name: "output_format", value: streamOutputFormatQueryValue),
-            URLQueryItem(name: "optimize_streaming_latency", value: "3")
+            // Level 2 ("moderate") instead of 3 ("high"). Level 3 has
+            // been observed to truncate mid-stream — the HTTP body
+            // closes cleanly partway through the synthesis, so the
+            // caller gets fewer samples than expected and no error.
+            // If level 2 still returns suspiciously short PCM, sentence
+            // fetches retry once at level 0 before playback.
+            URLQueryItem(name: "optimize_streaming_latency", value: optimizeStreamingLatency)
         ]
         return components?.url
     }
@@ -437,7 +469,13 @@ final class ElevenLabsTTSClient {
         // engine deallocates, `engine` returns nil. Calling `play()` on
         // an engineless node throws `_engine != nil` and crashes the
         // process — guard before scheduling and starting.
-        guard player.engine != nil else { return 0 }
+        guard let engine = player.engine else { return 0 }
+        // If the engine isn't running, drop this buffer rather than
+        // restart mid-stream — restarting AVAudioEngine while samples
+        // are queued causes audible skipping/jumping. The streaming
+        // session owner is responsible for keeping the engine running
+        // for the full response; if it stopped, the response is over.
+        guard engine.isRunning else { return 0 }
         player.scheduleBuffer(buffer, completionHandler: nil)
         if !player.isPlaying {
             player.play()
@@ -447,7 +485,8 @@ final class ElevenLabsTTSClient {
 
     fileprivate static func waitForPlaybackToDrain(
         _ player: AVAudioPlayerNode,
-        scheduledFrameCount: AVAudioFramePosition
+        scheduledFrameCount: AVAudioFramePosition,
+        sampleRate: Double = ElevenLabsTTSClient.streamSampleRate
     ) async {
         guard scheduledFrameCount > 0 else {
             player.stop()
@@ -455,27 +494,21 @@ final class ElevenLabsTTSClient {
         }
 
         // AVAudioPlayerNode can keep reporting `isPlaying` after queued
-        // buffers are exhausted. Poll rendered frames instead, and bound the
-        // wait so a stuck audio device cannot hold the request open forever.
-        let expectedDuration = Double(scheduledFrameCount) / Self.streamSampleRate
-        let deadline = Date().addingTimeInterval(max(expectedDuration + 2.0, 2.0))
-        var lastRenderedFrame: AVAudioFramePosition?
-        var unchangedPollCount = 0
+        // buffers are exhausted. Poll rendered frames, but do not stop
+        // merely because the rendered-frame value is temporarily nil or
+        // unchanged; that clipped Cartesia/Deepgram playback when their
+        // players were started before buffers were queued. The wall-clock
+        // deadline remains as a conservative stuck-device guard.
+        let expectedDuration = Double(scheduledFrameCount) / sampleRate
+        let deadline = Date().addingTimeInterval(max(expectedDuration + 3.0, 3.0))
 
         while !Task.isCancelled {
-            let renderedFrame = Self.renderedSampleTime(for: player)
-            if let renderedFrame, renderedFrame >= scheduledFrameCount {
+            if let renderedFrame = Self.renderedSampleTime(for: player),
+               renderedFrame >= scheduledFrameCount {
                 break
             }
 
-            if renderedFrame == lastRenderedFrame {
-                unchangedPollCount += 1
-            } else {
-                unchangedPollCount = 0
-                lastRenderedFrame = renderedFrame
-            }
-
-            if Date() >= deadline || unchangedPollCount >= 25 {
+            if Date() >= deadline {
                 break
             }
 
@@ -542,6 +575,7 @@ final class StreamingTTSSession {
     fileprivate let fetchSamples: @Sendable (String) async throws -> [Int16]
     fileprivate let playerNode: AVAudioPlayerNode?
     fileprivate let format: AVAudioFormat?
+    fileprivate let sampleRate: Double
     fileprivate let onPlaybackStarted: @MainActor () -> Void
 
     private var pendingText: String = ""
@@ -565,11 +599,13 @@ final class StreamingTTSSession {
         fetchSamples: @escaping @Sendable (String) async throws -> [Int16],
         playerNode: AVAudioPlayerNode?,
         format: AVAudioFormat?,
+        sampleRate: Double,
         onPlaybackStarted: @escaping @MainActor () -> Void
     ) {
         self.fetchSamples = fetchSamples
         self.playerNode = playerNode
         self.format = format
+        self.sampleRate = sampleRate
         self.onPlaybackStarted = onPlaybackStarted
     }
 
@@ -605,7 +641,8 @@ final class StreamingTTSSession {
         if let playerNode {
             await ElevenLabsTTSClient.waitForPlaybackToDrain(
                 playerNode,
-                scheduledFrameCount: scheduledFrameCount
+                scheduledFrameCount: scheduledFrameCount,
+                sampleRate: sampleRate
             )
         }
     }
@@ -621,15 +658,89 @@ final class StreamingTTSSession {
 
     // MARK: - Sentence detection
 
+    /// Soft cap on words per TTS request. Sentences longer than this
+    /// are clause-split on commas / semicolons / em-dashes, because:
+    /// - Each TTS provider's stream truncation risk grows with audio
+    ///   length — a 5-second synthesis is more likely to EOF early
+    ///   than a 1.5-second one.
+    /// - Smaller per-clause requests parallelize better; the chain
+    ///   keeps audio queued ahead of playback even on slower turns.
+    fileprivate static let maxWordsPerTTSChunk = 25
+
     private func flushCompleteSentences() {
         while let cutEnd = nextSentenceCut(in: pendingText) {
             let sentence = String(pendingText[..<cutEnd])
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             pendingText = String(pendingText[cutEnd...])
-            if sentence.count >= 2 {
+            guard sentence.count >= 2 else { continue }
+
+            // Long sentence — split on commas / semicolons / em-dashes
+            // so individual TTS requests stay short.
+            if Self.wordCount(sentence) > Self.maxWordsPerTTSChunk {
+                let clauses = Self.splitLongSentenceIntoClauses(sentence)
+                for clause in clauses where clause.count >= 2 {
+                    enqueueSentence(clause)
+                }
+            } else {
                 enqueueSentence(sentence)
             }
         }
+    }
+
+    fileprivate static func wordCount(_ text: String) -> Int {
+        text.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).count
+    }
+
+    /// Splits an over-long sentence into clauses on `,`, `;`, ` — `, ` -- `.
+    /// Each clause is ≤ `maxWordsPerTTSChunk` words; if a single
+    /// clause-free run exceeds the cap we hard-split on space at the
+    /// nearest word boundary so no single TTS request is ever multi-
+    /// paragraph long. Punctuation that ended the original sentence
+    /// (`.`, `!`, `?`) stays on the final clause.
+    fileprivate static func splitLongSentenceIntoClauses(_ sentence: String) -> [String] {
+        var clauses: [String] = []
+        var buffer = ""
+
+        func flush() {
+            let trimmed = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { clauses.append(trimmed) }
+            buffer = ""
+        }
+
+        var index = sentence.startIndex
+        while index < sentence.endIndex {
+            let ch = sentence[index]
+            buffer.append(ch)
+
+            // Clause break on comma / semicolon / em-dash sequence.
+            let isBreakChar = (ch == "," || ch == ";")
+            if isBreakChar && wordCount(buffer) >= 5 {
+                flush()
+            }
+            index = sentence.index(after: index)
+        }
+        flush()
+
+        // Defensive hard-split in case a clause is still too long
+        // (long stretch with no comma — common in spoken responses).
+        var safe: [String] = []
+        for clause in clauses {
+            if wordCount(clause) <= maxWordsPerTTSChunk {
+                safe.append(clause)
+            } else {
+                let words = clause.split(whereSeparator: { $0.isWhitespace || $0.isNewline })
+                var chunk: [Substring] = []
+                for w in words {
+                    chunk.append(w)
+                    if chunk.count >= maxWordsPerTTSChunk {
+                        safe.append(chunk.joined(separator: " "))
+                        chunk.removeAll()
+                    }
+                }
+                if !chunk.isEmpty { safe.append(chunk.joined(separator: " ")) }
+            }
+        }
+        return safe
     }
 
     /// Returns the index just past a complete sentence (punctuation +
@@ -790,6 +901,17 @@ final class StreamingTTSSession {
             try Task.checkCancellation()
             guard !samples.isEmpty else { return }
 
+            // Truncation detection: if the decoded PCM is suspiciously
+            // short for the text we sent, the stream EOF'd early.
+            // Heuristic: ≥6 words of input should produce ≥0.4s of
+            // audio (~8800 samples at 22.05 kHz). Below that, log so
+            // we can see truncation rate over time.
+            let words = Self.wordCount(text)
+            let durationSeconds = Double(samples.count) / self.sampleRate
+            if words >= 6 && durationSeconds < 0.4 {
+                print("⚠️ Sentence \(sentenceIndex) PCM suspiciously short: \(words) words, \(String(format: "%.2f", durationSeconds))s audio — likely upstream truncation")
+            }
+
             await MainActor.run {
                 // Re-check cancellation inside the main actor — the
                 // session may have been torn down while the fetch was
@@ -814,11 +936,10 @@ final class StreamingTTSSession {
 
 // MARK: - FillerPhraseLibrary
 
-/// Pre-renders short conversational fillers ("let me take a look.",
-/// "okay, so.") via ElevenLabs and caches the PCM on disk. When a voice
-/// response begins, the streaming session immediately schedules a
-/// random filler before the LLM has emitted a single token — buying
-/// ~1-2 seconds of perceived latency against model TTFT.
+/// Pre-renders short neutral fillers ("one moment.") via ElevenLabs
+/// and caches the PCM on disk. When a voice response genuinely needs
+/// latency cover, the streaming session can schedule one before the
+/// LLM has emitted a token.
 ///
 /// Cache keying uses (phrase + voiceID + sample-rate). Switching voices
 /// or sample rate naturally invalidates the old cache without a
@@ -827,20 +948,14 @@ final class StreamingTTSSession {
 final class FillerPhraseLibrary {
     static let shared = FillerPhraseLibrary()
 
-    /// Default fillers — short, ear-friendly, neutral enough to fit any
-    /// downstream response. Order doesn't matter; one is picked at
-    /// random per response.
+    /// Default fillers — intentionally bland and non-committal. Avoid
+    /// greetings, agreement words, and screen-specific claims because
+    /// they sound wrong when prepended to short text-only replies.
     static let defaultPhrases: [String] = [
-        "let me take a look.",
-        "okay, let me see.",
-        "alright, looking at this.",
-        "got it. let me check.",
-        "okay, so.",
-        "right, let me think.",
-        "let's see what we have here.",
-        "one second.",
-        "looking at this now.",
-        "okay, let me break this down."
+        "one moment.",
+        "give me a second.",
+        "working on it.",
+        "checking now."
     ]
 
     private var samplesByPhrase: [String: [Int16]] = [:]
@@ -1207,6 +1322,7 @@ final class CartesiaTTSClient {
                 },
                 playerNode: nil,
                 format: nil,
+                sampleRate: Self.streamSampleRate,
                 onPlaybackStarted: onPlaybackStarted
             )
         }
@@ -1221,10 +1337,10 @@ final class CartesiaTTSClient {
                 },
                 playerNode: nil,
                 format: nil,
+                sampleRate: Self.streamSampleRate,
                 onPlaybackStarted: onPlaybackStarted
             )
         }
-        player.play()
         self.audioEngine = engine
         self.playerNode = player
         let session = StreamingTTSSession(
@@ -1234,6 +1350,7 @@ final class CartesiaTTSClient {
             },
             playerNode: player,
             format: streamFormat,
+            sampleRate: Self.streamSampleRate,
             onPlaybackStarted: onPlaybackStarted
         )
         self.activeStreamingSession = session
@@ -1360,11 +1477,13 @@ extension OpenClickyTTSClient {
 nonisolated enum OpenClickyTTSProvider: String, CaseIterable, Identifiable {
     case elevenLabs = "elevenlabs"
     case cartesia = "cartesia"
+    case deepgram = "deepgram"
     var id: String { rawValue }
     var displayName: String {
         switch self {
         case .elevenLabs: return "ElevenLabs"
         case .cartesia: return "Cartesia"
+        case .deepgram: return "Deepgram Aura"
         }
     }
     static func resolve(_ raw: String?) -> OpenClickyTTSProvider {
@@ -1372,3 +1491,459 @@ nonisolated enum OpenClickyTTSProvider: String, CaseIterable, Identifiable {
         return parsed
     }
 }
+
+// MARK: - DeepgramTTSClient
+
+/// Deepgram Aura TTS client. Posts to `https://api.deepgram.com/v1/speak`
+/// with `encoding=linear16&sample_rate=22050&container=none` so the
+/// returned bytes are raw Int16 LE PCM and feed straight into the same
+/// `StreamingTTSSession` pipeline used by ElevenLabs/Cartesia.
+///
+/// Auth header `Authorization: Token <key>` matches the existing
+/// Deepgram STT path — the same API key works for both. Verified
+/// against https://developers.deepgram.com (2026-04-26).
+@MainActor
+final class DeepgramTTSClient {
+    private var apiKey: String?
+    /// `voiceID` carries the Deepgram model/voice identifier (e.g.
+    /// `aura-2-thalia-en`). Property name kept as `voiceID` to match
+    /// the protocol surface.
+    private(set) var voiceID: String
+    private let session: URLSession
+
+    private var audioEngine: AVAudioEngine?
+    private var playerNode: AVAudioPlayerNode?
+    private var streamingTask: Task<Void, Error>?
+    private weak var activeStreamingSession: StreamingTTSSession?
+
+    /// Deepgram's supported `sample_rate` values for `encoding=linear16`
+    /// are 8000, 16000, 24000, 32000, 44100, 48000 (verified empirically:
+    /// `Unsupported audio format: sample_rate must be 8000, 16000, 24000,
+    /// 32000, 44100, or 48000 when encoding=linear16`). 22050 — used by
+    /// the ElevenLabs path — is rejected. We pick 24000 for Deepgram.
+    nonisolated static let streamSampleRate: Double = 24_000
+    private static let chunkSampleCount = 2_048
+
+    fileprivate static func makeStreamFormat() -> AVAudioFormat? {
+        AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: streamSampleRate,
+            channels: 1,
+            interleaved: false
+        )
+    }
+
+    init(apiKey: String?, voiceID: String) {
+        self.apiKey = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.voiceID = voiceID.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = 30
+        configuration.timeoutIntervalForResource = 120
+        configuration.httpMaximumConnectionsPerHost = 6
+        self.session = URLSession(configuration: configuration)
+    }
+
+    func updateConfiguration(apiKey: String?, voiceID: String) {
+        self.apiKey = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.voiceID = voiceID.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func warmUpConnection() {
+        guard let url = URL(string: "https://api.deepgram.com") else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "HEAD"
+        request.timeoutInterval = 10
+        session.dataTask(with: request) { _, _, _ in }.resume()
+    }
+
+    var isPlaying: Bool { playerNode?.isPlaying ?? false }
+
+    func stopPlayback() {
+        activeStreamingSession?.cancel()
+        activeStreamingSession = nil
+        stopPlaybackInternal()
+    }
+
+    private func stopPlaybackInternal() {
+        streamingTask?.cancel()
+        streamingTask = nil
+        playerNode?.stop()
+        playerNode = nil
+        audioEngine?.stop()
+        audioEngine = nil
+    }
+
+    // MARK: One-shot streaming
+
+    func speakText(
+        _ text: String,
+        waitUntilFinished: Bool = true,
+        onPlaybackStarted: (() -> Void)? = nil
+    ) async throws {
+        guard let apiKey, !apiKey.isEmpty else {
+            throw Self.makeError(-100, "Deepgram API key is not configured")
+        }
+        guard !voiceID.isEmpty, let url = Self.streamRequestURL(model: voiceID) else {
+            throw Self.makeError(-101, "Deepgram TTS voice/model is not configured")
+        }
+
+        stopPlaybackInternal()
+        let engine = AVAudioEngine()
+        let player = AVAudioPlayerNode()
+        guard let streamFormat = Self.makeStreamFormat() else {
+            throw Self.makeError(-102, "Could not build PCM stream format")
+        }
+        engine.attach(player)
+        engine.connect(player, to: engine.mainMixerNode, format: streamFormat)
+        do { try engine.start() } catch {
+            throw Self.makeError(-103, "Audio engine failed to start: \(error.localizedDescription)")
+        }
+        self.audioEngine = engine
+        self.playerNode = player
+
+        let request = Self.makeRequest(url: url, apiKey: apiKey, text: text)
+        let (asyncBytes, response): (URLSession.AsyncBytes, URLResponse)
+        do {
+            (asyncBytes, response) = try await session.bytes(for: request)
+        } catch is CancellationError {
+            stopPlaybackInternal()
+            throw CancellationError()
+        } catch {
+            stopPlaybackInternal()
+            if Self.isExpectedCancellation(error) { throw CancellationError() }
+            throw Self.makeError(-104, "Deepgram request failed: \(error.localizedDescription)")
+        }
+        guard let http = response as? HTTPURLResponse else {
+            stopPlaybackInternal()
+            throw Self.makeError(-105, "Deepgram returned an invalid response")
+        }
+        guard (200...299).contains(http.statusCode) else {
+            var body = Data()
+            do {
+                for try await byte in asyncBytes {
+                    body.append(byte)
+                    if body.count > 4096 { break }
+                }
+            } catch {}
+            stopPlaybackInternal()
+            let bodyText = String(data: body, encoding: .utf8) ?? "Unknown error"
+            throw Self.makeError(http.statusCode, "Deepgram API error \(http.statusCode): \(bodyText.prefix(500))")
+        }
+
+        let playerRef = player
+        let engineRef = engine
+        let streamFormatRef = streamFormat
+        var didFireStartCallback = false
+        var pendingByte: UInt8?
+        var sampleAccumulator: [Int16] = []
+        var scheduledFrameCount: AVAudioFramePosition = 0
+        sampleAccumulator.reserveCapacity(Self.chunkSampleCount)
+
+        let task = Task { [weak self] in
+            do {
+                for try await byte in asyncBytes {
+                    try Task.checkCancellation()
+                    if let lo = pendingByte {
+                        let hi = byte
+                        sampleAccumulator.append(Int16(bitPattern: UInt16(lo) | (UInt16(hi) << 8)))
+                        pendingByte = nil
+                    } else {
+                        pendingByte = byte
+                    }
+                    if sampleAccumulator.count >= Self.chunkSampleCount {
+                        let chunk = sampleAccumulator
+                        sampleAccumulator.removeAll(keepingCapacity: true)
+                        let frames = await MainActor.run { () -> AVAudioFramePosition in
+                            let f = ElevenLabsTTSClient.scheduleSamples(chunk, on: playerRef, format: streamFormatRef)
+                            if f > 0 && !didFireStartCallback {
+                                didFireStartCallback = true
+                                onPlaybackStarted?()
+                            }
+                            return f
+                        }
+                        scheduledFrameCount += frames
+                    }
+                }
+                if !sampleAccumulator.isEmpty {
+                    let tail = sampleAccumulator
+                    let frames = await MainActor.run { () -> AVAudioFramePosition in
+                        let f = ElevenLabsTTSClient.scheduleSamples(tail, on: playerRef, format: streamFormatRef)
+                        if f > 0 && !didFireStartCallback {
+                            didFireStartCallback = true
+                            onPlaybackStarted?()
+                        }
+                        return f
+                    }
+                    scheduledFrameCount += frames
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                if Self.isExpectedCancellation(error) { throw CancellationError() }
+                throw error
+            }
+            await ElevenLabsTTSClient.waitForPlaybackToDrain(
+                playerRef,
+                scheduledFrameCount: scheduledFrameCount,
+                sampleRate: Self.streamSampleRate
+            )
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                if self.audioEngine === engineRef {
+                    self.audioEngine?.stop()
+                    self.audioEngine = nil
+                    self.playerNode = nil
+                }
+            }
+        }
+        self.streamingTask = task
+        if waitUntilFinished {
+            do { try await task.value }
+            catch is CancellationError { stopPlaybackInternal(); throw CancellationError() }
+            catch { stopPlaybackInternal(); throw error }
+        }
+    }
+
+    // MARK: Sentence-pipelined streaming
+
+    func beginStreamingResponse(onPlaybackStarted: @escaping @MainActor () -> Void) -> StreamingTTSSession {
+        stopPlaybackInternal()
+        let engine = AVAudioEngine()
+        let player = AVAudioPlayerNode()
+        guard let streamFormat = Self.makeStreamFormat() else {
+            return StreamingTTSSession(
+                fetchSamples: { [weak self] text in
+                    guard let self else { throw CancellationError() }
+                    return try await self.fetchSentenceSamples(text)
+                },
+                playerNode: nil,
+                format: nil,
+                sampleRate: Self.streamSampleRate,
+                onPlaybackStarted: onPlaybackStarted
+            )
+        }
+        engine.attach(player)
+        engine.connect(player, to: engine.mainMixerNode, format: streamFormat)
+        do { try engine.start() } catch {
+            print("⚠️ AVAudioEngine failed to start Deepgram streaming session: \(error)")
+            return StreamingTTSSession(
+                fetchSamples: { [weak self] text in
+                    guard let self else { throw CancellationError() }
+                    return try await self.fetchSentenceSamples(text)
+                },
+                playerNode: nil,
+                format: nil,
+                sampleRate: Self.streamSampleRate,
+                onPlaybackStarted: onPlaybackStarted
+            )
+        }
+        self.audioEngine = engine
+        self.playerNode = player
+        let session = StreamingTTSSession(
+            fetchSamples: { [weak self] text in
+                guard let self else { throw CancellationError() }
+                return try await self.fetchSentenceSamples(text)
+            },
+            playerNode: player,
+            format: streamFormat,
+            sampleRate: Self.streamSampleRate,
+            onPlaybackStarted: onPlaybackStarted
+        )
+        self.activeStreamingSession = session
+        return session
+    }
+
+    func fetchSentenceSamples(_ text: String) async throws -> [Int16] {
+        guard let apiKey, !apiKey.isEmpty else {
+            throw Self.makeError(-10, "Deepgram API key not configured")
+        }
+        guard !voiceID.isEmpty, let url = Self.streamRequestURL(model: voiceID) else {
+            throw Self.makeError(-11, "Deepgram TTS voice/model not configured")
+        }
+        let request = Self.makeRequest(url: url, apiKey: apiKey, text: text)
+        let urlSession = self.session
+        return try await Self.decodePCMSamples(request: request, session: urlSession)
+    }
+
+    nonisolated private static func decodePCMSamples(
+        request: URLRequest,
+        session: URLSession
+    ) async throws -> [Int16] {
+        let (asyncBytes, response) = try await session.bytes(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            // Drain a chunk of the body so the error surfaces with the
+            // server's actual message instead of a bare "HTTP error".
+            var body = Data()
+            do {
+                for try await byte in asyncBytes {
+                    body.append(byte)
+                    if body.count > 4096 { break }
+                }
+            } catch {}
+            let bodyText = String(data: body, encoding: .utf8) ?? ""
+            throw NSError(
+                domain: "DeepgramTTS",
+                code: (response as? HTTPURLResponse)?.statusCode ?? -12,
+                userInfo: [NSLocalizedDescriptionKey: "Deepgram HTTP error \((response as? HTTPURLResponse)?.statusCode ?? 0): \(bodyText.prefix(500))"]
+            )
+        }
+
+        // Deepgram returns a WAV file: 12-byte RIFF header, then chunks.
+        // The "fmt " chunk is 24 bytes total (8 header + 16 body for
+        // standard PCM). The "data" chunk header is 8 bytes ("data" +
+        // 4-byte size). After that, samples begin. We scan for the
+        // "data" tag rather than assuming a fixed 44-byte offset, because
+        // some TTS engines insert extra metadata chunks (e.g., "LIST",
+        // "fact") between the format and data chunks.
+        var samples: [Int16] = []
+        samples.reserveCapacity(8_192)
+
+        var headerBuffer: [UInt8] = []
+        headerBuffer.reserveCapacity(64)
+        var pastHeader = false
+        var pendingByte: UInt8?
+        // Once we know the WAV "data" chunk's declared size, we stop
+        // reading after that many bytes — anything beyond is padding
+        // or trailing metadata that's not PCM.
+        var dataBytesRemaining: Int = .max
+
+        for try await byte in asyncBytes {
+            try Task.checkCancellation()
+
+            if !pastHeader {
+                headerBuffer.append(byte)
+                // Need at least 12 bytes to validate RIFF+WAVE.
+                if headerBuffer.count == 12 {
+                    let isRIFF = headerBuffer[0] == 0x52 && headerBuffer[1] == 0x49
+                                && headerBuffer[2] == 0x46 && headerBuffer[3] == 0x46
+                    let isWAVE = headerBuffer[8] == 0x57 && headerBuffer[9] == 0x41
+                                && headerBuffer[10] == 0x56 && headerBuffer[11] == 0x45
+                    if !(isRIFF && isWAVE) {
+                        // Not a WAV — treat the whole buffer as raw PCM
+                        // and continue. Defensive in case Deepgram ever
+                        // returns headerless bytes.
+                        for b in headerBuffer {
+                            if let lo = pendingByte {
+                                samples.append(Int16(bitPattern: UInt16(lo) | (UInt16(b) << 8)))
+                                pendingByte = nil
+                            } else {
+                                pendingByte = b
+                            }
+                        }
+                        pastHeader = true
+                        headerBuffer.removeAll()
+                    }
+                }
+                // Walk forward looking for the "data" tag once we have
+                // enough bytes. The minimum offset is 12 (RIFF/WAVE).
+                if headerBuffer.count >= 16 && !pastHeader {
+                    var index = 12
+                    while index + 8 <= headerBuffer.count {
+                        let chunkID = String(bytes: headerBuffer[index..<index+4], encoding: .ascii) ?? ""
+                        let chunkSize = Int(headerBuffer[index+4])
+                            | (Int(headerBuffer[index+5]) << 8)
+                            | (Int(headerBuffer[index+6]) << 16)
+                            | (Int(headerBuffer[index+7]) << 24)
+                        if chunkID == "data" {
+                            // PCM samples start immediately after this
+                            // chunk's 8-byte header.
+                            let pcmStart = index + 8
+                            if headerBuffer.count > pcmStart {
+                                // Carry over any bytes already read past
+                                // the header.
+                                for b in headerBuffer[pcmStart...] {
+                                    if let lo = pendingByte {
+                                        samples.append(Int16(bitPattern: UInt16(lo) | (UInt16(b) << 8)))
+                                        pendingByte = nil
+                                    } else {
+                                        pendingByte = b
+                                    }
+                                }
+                                let consumedFromData = headerBuffer.count - pcmStart
+                                dataBytesRemaining = max(0, chunkSize - consumedFromData)
+                            } else {
+                                dataBytesRemaining = chunkSize
+                            }
+                            pastHeader = true
+                            headerBuffer.removeAll()
+                            break
+                        }
+                        // Not the data chunk — skip past it. If we
+                        // don't have all of the chunk yet, stop and
+                        // wait for more bytes.
+                        let nextIndex = index + 8 + chunkSize
+                        // RIFF chunks have a pad byte when their size
+                        // is odd. Account for that.
+                        let padded = chunkSize % 2 == 1 ? nextIndex + 1 : nextIndex
+                        if padded > headerBuffer.count { break }
+                        index = padded
+                    }
+                }
+                continue
+            }
+
+            if dataBytesRemaining == 0 { break }
+            if let lo = pendingByte {
+                samples.append(Int16(bitPattern: UInt16(lo) | (UInt16(byte) << 8)))
+                pendingByte = nil
+            } else {
+                pendingByte = byte
+            }
+            if dataBytesRemaining != .max { dataBytesRemaining -= 1 }
+        }
+        return samples
+    }
+
+    // MARK: Request building
+
+    nonisolated private static func streamRequestURL(model: String) -> URL? {
+        var components = URLComponents(string: "https://api.deepgram.com/v1/speak")
+        // Verified against https://developers.deepgram.com/docs/tts-media-output-settings
+        // (2026-04-26): for `encoding=linear16` the REST endpoint requires
+        // `container=wav` (or omits container, which defaults to wav).
+        // `container=none` is NOT a valid value for linear16 here. The
+        // body therefore starts with a 44-byte RIFF/WAVE header — the
+        // PCM decoder strips it before yielding samples.
+        components?.queryItems = [
+            URLQueryItem(name: "model", value: model),
+            URLQueryItem(name: "encoding", value: "linear16"),
+            URLQueryItem(name: "sample_rate", value: "\(Int(streamSampleRate))"),
+            URLQueryItem(name: "container", value: "wav")
+        ]
+        return components?.url
+    }
+
+    nonisolated private static func makeRequest(url: URL, apiKey: String, text: String) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        // Deepgram auth (verified against developers.deepgram.com,
+        // 2026-04-26): `Authorization: Token <key>` for both STT and TTS.
+        request.setValue("Token \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
+
+        let body: [String: Any] = ["text": text]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        return request
+    }
+
+    nonisolated private static func makeError(_ code: Int, _ message: String) -> NSError {
+        NSError(
+            domain: "DeepgramTTS",
+            code: code,
+            userInfo: [NSLocalizedDescriptionKey: message]
+        )
+    }
+
+    nonisolated private static func isExpectedCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        let ns = error as NSError
+        if ns.domain == NSURLErrorDomain && ns.code == NSURLErrorCancelled { return true }
+        if ns.domain == NSCocoaErrorDomain && ns.code == NSUserCancelledError { return true }
+        let desc = String(describing: error).lowercased()
+        return desc == "cancellationerror()" || desc.contains("cancelled") || desc.contains("canceled")
+    }
+}
+
+extension DeepgramTTSClient: OpenClickyTTSClient {}

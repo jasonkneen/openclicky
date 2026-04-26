@@ -265,11 +265,13 @@ final class BuddyDictationManager: NSObject, ObservableObject {
 
     private var transcriptionProvider: any BuddyTranscriptionProvider
     private let audioEngine = AVAudioEngine()
+    private var hasInstalledInputTap = false
     private var activeTranscriptionSession: (any BuddyStreamingTranscriptionSession)?
     private var activeStartSource: BuddyDictationStartSource?
     private var draftCallbacks: BuddyDictationDraftCallbacks?
     private var draftTextBeforeCurrentDictation = ""
     private var latestRecognizedText = ""
+    private var latestNonEmptyRecognizedText = ""
     private var shouldAutomaticallySubmitFinalDraft = false
     private var hasFinishedCurrentDictationSession = false
     private var finalizeFallbackWorkItem: DispatchWorkItem?
@@ -370,13 +372,11 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         finalizeFallbackWorkItem = nil
 
         if preserveDraftText {
-            let currentDraftText = composeDraftText(withTranscribedText: latestRecognizedText)
+            let currentDraftText = composeDraftText(withTranscribedText: bestRecognizedTextForFinalization)
             draftCallbacks?.updateDraftText(currentDraftText)
         }
 
-        audioEngine.stop()
-        audioEngine.inputNode.removeTap(onBus: 0)
-        activeTranscriptionSession?.cancel()
+        tearDownAudioCapture(cancelTranscriptionSession: true)
 
         resetSessionState()
     }
@@ -443,6 +443,9 @@ final class BuddyDictationManager: NSObject, ObservableObject {
             ]
         )
 
+        let startRequestIdentifier = UUID()
+        pendingStartRequestIdentifier = startRequestIdentifier
+
         if needsInitialPermissionPrompt {
             print("🎙️ BuddyDictationManager: requesting initial permissions")
             logDictationEvent(
@@ -460,9 +463,6 @@ final class BuddyDictationManager: NSObject, ObservableObject {
                 // we can safely continue into the permission request.
             }
         }
-
-        let startRequestIdentifier = UUID()
-        pendingStartRequestIdentifier = startRequestIdentifier
 
         lastErrorMessage = nil
         currentPermissionProblem = nil
@@ -540,6 +540,19 @@ final class BuddyDictationManager: NSObject, ObservableObject {
 
         do {
             try await startRecognitionSession()
+            guard pendingStartRequestIdentifier == startRequestIdentifier else {
+                print("🎙️ BuddyDictationManager: start request superseded during session start")
+                logDictationEvent(
+                    "voice.dictation.start_cancelled",
+                    fields: [
+                        "source": String(describing: startSource),
+                        "reason": "superseded_during_session_start"
+                    ]
+                )
+                tearDownAudioCapture(cancelTranscriptionSession: true)
+                resetSessionState()
+                return
+            }
             guard !Task.isCancelled else {
                 print("🎙️ BuddyDictationManager: start cancelled (shortcut released during session start)")
                 logDictationEvent(
@@ -549,9 +562,7 @@ final class BuddyDictationManager: NSObject, ObservableObject {
                         "reason": "shortcut_released_during_session_start"
                     ]
                 )
-                audioEngine.stop()
-                audioEngine.inputNode.removeTap(onBus: 0)
-                activeTranscriptionSession?.cancel()
+                tearDownAudioCapture(cancelTranscriptionSession: true)
                 resetSessionState()
                 return
             }
@@ -591,7 +602,18 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         pendingStartRequestIdentifier = UUID()
 
         guard activeStartSource == expectedStartSource else {
-            isPreparingToRecord = false
+            if isPreparingToRecord {
+                logDictationEvent(
+                    "voice.dictation.start_cancelled",
+                    fields: [
+                        "source": String(describing: expectedStartSource),
+                        "reason": "stop_requested_before_recording_started"
+                    ]
+                )
+                resetSessionState()
+            } else {
+                isPreparingToRecord = false
+            }
             return
         }
         guard !isFinalizingTranscript else { return }
@@ -602,7 +624,7 @@ final class BuddyDictationManager: NSObject, ObservableObject {
             fields: [
                 "source": String(describing: expectedStartSource),
                 "recordingDurationMs": Self.elapsedMilliseconds(since: activeDictationRecordingStartedAt),
-                "latestTranscriptLength": latestRecognizedText.trimmingCharacters(in: .whitespacesAndNewlines).count
+                "latestTranscriptLength": bestRecognizedTextForFinalization.trimmingCharacters(in: .whitespacesAndNewlines).count
             ]
         )
 
@@ -613,8 +635,7 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         let finalTranscriptFallbackDelaySeconds = activeTranscriptionSession?.finalTranscriptFallbackDelaySeconds
             ?? Self.defaultFinalTranscriptFallbackDelaySeconds
 
-        audioEngine.stop()
-        audioEngine.inputNode.removeTap(onBus: 0)
+        tearDownAudioCapture(cancelTranscriptionSession: false)
         activeTranscriptionSession?.requestFinalTranscript()
 
         finalizeFallbackWorkItem?.cancel()
@@ -625,7 +646,7 @@ final class BuddyDictationManager: NSObject, ObservableObject {
                     "voice.dictation.final_transcript_fallback",
                     fields: [
                         "fallbackDelaySeconds": finalTranscriptFallbackDelaySeconds,
-                        "latestTranscriptLength": self?.latestRecognizedText.trimmingCharacters(in: .whitespacesAndNewlines).count ?? 0
+                        "latestTranscriptLength": self?.bestRecognizedTextForFinalization.trimmingCharacters(in: .whitespacesAndNewlines).count ?? 0
                     ]
                 )
                 self?.finishCurrentDictationSessionIfNeeded(
@@ -641,9 +662,25 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         )
     }
 
+    private func tearDownAudioCapture(cancelTranscriptionSession: Bool) {
+        if audioEngine.isRunning {
+            audioEngine.stop()
+        }
+        removeInputTapIfNeeded()
+        if cancelTranscriptionSession {
+            activeTranscriptionSession?.cancel()
+            activeTranscriptionSession = nil
+        }
+    }
+
+    private func removeInputTapIfNeeded() {
+        guard hasInstalledInputTap else { return }
+        audioEngine.inputNode.removeTap(onBus: 0)
+        hasInstalledInputTap = false
+    }
+
     private func startRecognitionSession() async throws {
-        activeTranscriptionSession?.cancel()
-        activeTranscriptionSession = nil
+        tearDownAudioCapture(cancelTranscriptionSession: true)
 
         print("🎙️ BuddyDictationManager: opening transcription provider \(transcriptionProvider.displayName)")
         activeTranscriptionProviderOpenStartedAt = Date()
@@ -654,7 +691,7 @@ final class BuddyDictationManager: NSObject, ObservableObject {
             onTranscriptUpdate: { [weak self] transcriptText in
                 Task { @MainActor in
                     guard let self else { return }
-                    self.latestRecognizedText = transcriptText
+                    self.updateRecognizedText(transcriptText)
                     self.draftCallbacks?.updateDraftText(
                         self.composeDraftText(withTranscribedText: transcriptText)
                     )
@@ -663,11 +700,17 @@ final class BuddyDictationManager: NSObject, ObservableObject {
             onFinalTranscriptReady: { [weak self] transcriptText in
                 Task { @MainActor in
                     guard let self else { return }
-                    self.latestRecognizedText = transcriptText
+                    let finalTranscriptText = transcriptText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let fallbackTranscriptText = self.latestNonEmptyRecognizedText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let usedPartialFallback = finalTranscriptText.isEmpty && !fallbackTranscriptText.isEmpty
+                    let resolvedTranscriptText = usedPartialFallback ? self.latestNonEmptyRecognizedText : transcriptText
+                    self.updateRecognizedText(resolvedTranscriptText)
                     self.logDictationEvent(
                         "voice.dictation.final_transcript_ready",
                         fields: [
-                            "transcriptLength": transcriptText.trimmingCharacters(in: .whitespacesAndNewlines).count,
+                            "transcriptLength": resolvedTranscriptText.trimmingCharacters(in: .whitespacesAndNewlines).count,
+                            "rawTranscriptLength": finalTranscriptText.count,
+                            "usedPartialFallback": usedPartialFallback,
                             "finalizeLatencyMs": Self.elapsedMilliseconds(since: self.activeDictationRecordingStartedAt)
                         ]
                     )
@@ -675,7 +718,7 @@ final class BuddyDictationManager: NSObject, ObservableObject {
                     if self.isFinalizingTranscript {
                         self.finishCurrentDictationSessionIfNeeded(
                             shouldSubmitFinalDraft: self.shouldAutomaticallySubmitFinalDraft,
-                            completionReason: "provider_final"
+                            completionReason: usedPartialFallback ? "provider_final_with_partial_fallback" : "provider_final"
                         )
                     }
                 }
@@ -699,11 +742,12 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         let inputNode = audioEngine.inputNode
         let inputFormat = inputNode.outputFormat(forBus: 0)
 
-        inputNode.removeTap(onBus: 0)
+        removeInputTapIfNeeded()
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
             self?.activeTranscriptionSession?.appendAudioBuffer(buffer)
             self?.updateAudioPowerLevel(from: buffer)
         }
+        hasInstalledInputTap = true
 
         audioEngine.prepare()
         try audioEngine.start()
@@ -718,13 +762,16 @@ final class BuddyDictationManager: NSObject, ObservableObject {
             return
         }
 
-        if isNoSpeechDetectedError(error), latestRecognizedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if isNoSpeechDetectedError(error), bestRecognizedTextForFinalization.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             print("BuddyDictationManager: no speech detected; treating as cancelled interaction")
-            cancelCurrentDictation(preserveDraftText: false)
+            finishCurrentDictationSessionIfNeeded(
+                shouldSubmitFinalDraft: shouldAutomaticallySubmitFinalDraft,
+                completionReason: "no_speech_detected"
+            )
             return
         }
 
-        if isFinalizingTranscript && !latestRecognizedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if isFinalizingTranscript && !bestRecognizedTextForFinalization.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             finishCurrentDictationSessionIfNeeded(
                 shouldSubmitFinalDraft: shouldAutomaticallySubmitFinalDraft,
                 completionReason: "error_with_partial_transcript"
@@ -736,7 +783,7 @@ final class BuddyDictationManager: NSObject, ObservableObject {
                 fields: [
                     "error": error.localizedDescription,
                     "isFinalizing": isFinalizingTranscript,
-                    "latestTranscriptLength": latestRecognizedText.trimmingCharacters(in: .whitespacesAndNewlines).count
+                    "latestTranscriptLength": bestRecognizedTextForFinalization.trimmingCharacters(in: .whitespacesAndNewlines).count
                 ]
             )
             lastErrorMessage = userFacingErrorMessage(
@@ -757,8 +804,9 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         finalizeFallbackWorkItem?.cancel()
         finalizeFallbackWorkItem = nil
 
-        let finalDraftText = composeDraftText(withTranscribedText: latestRecognizedText)
-        let finalTranscriptText = latestRecognizedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalRecognizedText = bestRecognizedTextForFinalization
+        let finalDraftText = composeDraftText(withTranscribedText: finalRecognizedText)
+        let finalTranscriptText = finalRecognizedText.trimmingCharacters(in: .whitespacesAndNewlines)
         let currentDraftCallbacks = draftCallbacks
         let submittedFinalDraft = shouldSubmitFinalDraft && !finalTranscriptText.isEmpty
 
@@ -778,9 +826,7 @@ final class BuddyDictationManager: NSObject, ObservableObject {
             currentDraftCallbacks?.updateDraftText(finalDraftText)
         }
 
-        audioEngine.stop()
-        audioEngine.inputNode.removeTap(onBus: 0)
-        activeTranscriptionSession?.cancel()
+        tearDownAudioCapture(cancelTranscriptionSession: true)
 
         resetSessionState()
 
@@ -811,6 +857,23 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         return draftTextBeforeCurrentDictation + " " + trimmedTranscriptText
     }
 
+    private var bestRecognizedTextForFinalization: String {
+        let trimmedLatestText = latestRecognizedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedLatestText.isEmpty {
+            return latestRecognizedText
+        }
+
+        return latestNonEmptyRecognizedText
+    }
+
+    private func updateRecognizedText(_ transcriptText: String) {
+        latestRecognizedText = transcriptText
+
+        if !transcriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            latestNonEmptyRecognizedText = transcriptText
+        }
+    }
+
     private func resetSessionState() {
         pendingStartRequestIdentifier = UUID()
         activeTranscriptionSession = nil
@@ -818,6 +881,7 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         activeStartSource = nil
         draftTextBeforeCurrentDictation = ""
         latestRecognizedText = ""
+        latestNonEmptyRecognizedText = ""
         shouldAutomaticallySubmitFinalDraft = false
         hasFinishedCurrentDictationSession = false
         isPreparingToRecord = false

@@ -107,6 +107,7 @@ private final class DeepgramStreamingTranscriptionSession: BuddyStreamingTranscr
     private let audioPCM16Converter = BuddyPCM16AudioConverter(targetSampleRate: targetSampleRate)
 
     private var webSocketTask: URLSessionWebSocketTask?
+    private var audioFramesSent = 0
     private var hasDeliveredFinalTranscript = false
     private var isAwaitingExplicitFinalTranscript = false
     private var isCancelled = false
@@ -134,6 +135,7 @@ private final class DeepgramStreamingTranscriptionSession: BuddyStreamingTranscr
 
     func open() async throws {
         let websocketURL = try Self.makeWebsocketURL(modelName: modelName, keyterms: keyterms)
+        print("[Deepgram] opening WebSocket: \(websocketURL.absoluteString) (key=\(apiKey.prefix(4))…\(apiKey.suffix(4)), len=\(apiKey.count))")
         var websocketRequest = URLRequest(url: websocketURL)
         websocketRequest.setValue("Token \(apiKey)", forHTTPHeaderField: "Authorization")
 
@@ -151,8 +153,13 @@ private final class DeepgramStreamingTranscriptionSession: BuddyStreamingTranscr
 
         sendQueue.async { [weak self] in
             guard let self, let webSocketTask = self.webSocketTask else { return }
+            self.audioFramesSent += 1
+            if self.audioFramesSent == 1 {
+                print("[Deepgram] first audio frame sent (\(audioPCM16Data.count) bytes)")
+            }
             webSocketTask.send(.data(audioPCM16Data)) { [weak self] error in
                 if let error {
+                    print("[Deepgram] audio send error: \(error.localizedDescription)")
                     self?.failSession(with: error)
                 }
             }
@@ -199,6 +206,9 @@ private final class DeepgramStreamingTranscriptionSession: BuddyStreamingTranscr
 
                 self.receiveNextMessage()
             case .failure(let error):
+                let nsError = error as NSError
+                let closeCode = self.webSocketTask?.closeCode.rawValue ?? -1
+                print("[Deepgram] receive failure: domain=\(nsError.domain) code=\(nsError.code) closeCode=\(closeCode) — \(error.localizedDescription)")
                 self.failSession(with: error)
             }
         }
@@ -216,11 +226,19 @@ private final class DeepgramStreamingTranscriptionSession: BuddyStreamingTranscr
             case "error":
                 let errorMessage = try JSONDecoder().decode(ErrorMessage.self, from: messageData)
                 let messageText = errorMessage.description ?? errorMessage.message ?? "Deepgram returned an error."
+                print("[Deepgram] server error frame: \(messageText)")
                 failSession(with: DeepgramStreamingTranscriptionProviderError(message: messageText))
+            case "metadata":
+                print("[Deepgram] metadata frame received (session alive)")
+            case "speechstarted", "speech_started":
+                print("[Deepgram] speech started")
+            case "utteranceend", "utterance_end":
+                print("[Deepgram] utterance end")
             default:
-                break
+                print("[Deepgram] unknown frame type: \(envelope.type ?? "nil") — \(text.prefix(200))")
             }
         } catch {
+            print("[Deepgram] failed to decode frame: \(error.localizedDescription) — raw=\(text.prefix(200))")
             failSession(with: error)
         }
     }
@@ -301,7 +319,14 @@ private final class DeepgramStreamingTranscriptionSession: BuddyStreamingTranscr
     private func failSession(with error: Error) {
         let reportedError = Self.reportedError(for: error)
         stateQueue.async {
-            guard !self.isCancelled else { return }
+            // Log even when cancelled so silent-failure cases (server
+            // RST after stop, auth rejection right before close) are
+            // still visible. Don't deliver to onError if cancelled —
+            // dictation manager has already moved on.
+            if self.isCancelled {
+                print("[Deepgram] post-cancel failure (suppressed): \(reportedError.localizedDescription)")
+                return
+            }
 
             let latestTranscriptText = self.bestAvailableTranscriptText()
             if self.isAwaitingExplicitFinalTranscript

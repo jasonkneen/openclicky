@@ -96,11 +96,11 @@ final class CodexAgentSession: ObservableObject, Identifiable {
     var onOpenableFileFound: (@MainActor (URL) -> Void)?
 
     var spokenAgentName: String {
-        "the \(accentTheme.spokenAgentColorName.lowercased()) agent"
+        "the agent"
     }
 
     var spokenAgentSentenceName: String {
-        "The \(accentTheme.spokenAgentColorName) Agent"
+        "The agent"
     }
 
     var statusSummaryLine: String {
@@ -111,17 +111,17 @@ final class CodexAgentSession: ObservableObject, Identifiable {
         case .stopped:
             return "\(agentName) is offline."
         case .starting:
-            return "\(agentName) is starting."
+            return "An agent is starting."
         case .running:
             if let latestActivity {
-                return "\(agentName) is running. Latest: \(latestActivity)"
+                return "An agent is working. Latest: \(latestActivity)"
             }
-            return "\(agentName) is running."
+            return "An agent is working."
         case .ready:
             if let latestActivity {
-                return "\(agentName) is ready. Latest: \(latestActivity)"
+                return "The agent has completed the task. Latest: \(latestActivity)"
             }
-            return "\(agentName) is ready."
+            return "The agent is ready."
         case .failed:
             let errorText = lastErrorMessage?.trimmingCharacters(in: .whitespacesAndNewlines)
             if let errorText, !errorText.isEmpty {
@@ -142,9 +142,12 @@ final class CodexAgentSession: ObservableObject, Identifiable {
     private let homeManager: CodexHomeManager
     private let processManager: CodexProcessManager
     private var currentAssistantEntryID: String?
+    private var pendingAssistantDeltas: [String: String] = [:]
+    private var pendingAssistantDeltaFlushTask: Task<Void, Never>?
     private var hasInitializedProcess = false
     private var lastSubmittedPrompt: String?
     private static let codexRuntimeCompatibilityFallbackModel = "gpt-5.4-mini"
+    private static let assistantDeltaFlushDelayNanoseconds: UInt64 = 180_000_000
 
     init(
         id: UUID = UUID(),
@@ -214,6 +217,9 @@ final class CodexAgentSession: ObservableObject, Identifiable {
     }
 
     func stop() {
+        pendingAssistantDeltaFlushTask?.cancel()
+        pendingAssistantDeltaFlushTask = nil
+        pendingAssistantDeltas.removeAll()
         processManager.stop()
         hasInitializedProcess = false
         activeThreadID = nil
@@ -326,9 +332,14 @@ final class CodexAgentSession: ObservableObject, Identifiable {
         }
 
         status = .starting
-        let layout = try homeManager.prepare(bundle: .main)
-        let executable = try CodexRuntimeLocator.codexExecutableURL(bundle: .main)
-        try processManager.start(executableURL: executable, codexHome: layout.homeDirectory)
+        let homeManager = self.homeManager
+        let processManager = self.processManager
+        let layout = try await Task.detached(priority: .userInitiated) {
+            let preparedLayout = try homeManager.prepare(bundle: .main)
+            let executable = try CodexRuntimeLocator.codexExecutableURL(bundle: .main)
+            try processManager.start(executableURL: executable, codexHome: preparedLayout.homeDirectory)
+            return preparedLayout
+        }.value
 
         if !hasInitializedProcess {
             _ = try await processManager.initialize(clientName: "openclicky", title: "OpenClicky", version: "1.0.0")
@@ -462,8 +473,9 @@ final class CodexAgentSession: ObservableObject, Identifiable {
             let itemID = CodexJSON.string(params["itemId"])
                 ?? CodexJSON.string(params["callId"])
                 ?? "active-command-progress"
-            upsertEntry(id: itemID, role: .command, text: "Working through the task...")
+            upsertEntryIfChanged(id: itemID, role: .command, text: "Working through the task...")
         case "turn/completed":
+            flushPendingAssistantDeltas()
             currentAssistantEntryID = nil
             status = .ready
             playAgentDoneSoundIfAvailable()
@@ -587,6 +599,7 @@ final class CodexAgentSession: ObservableObject, Identifiable {
 
         switch type {
         case "agentMessage":
+            flushPendingAssistantDeltas(for: id)
             let text = CodexJSON.string(item["text"]) ?? ""
             if !text.isEmpty {
                 let parsed = Self.extractTaskTitleMetadata(from: text)
@@ -628,15 +641,52 @@ final class CodexAgentSession: ObservableObject, Identifiable {
         guard !delta.isEmpty else { return }
         let id = currentAssistantEntryID ?? itemID
         currentAssistantEntryID = id
-        if let index = entries.firstIndex(where: { $0.id == id }) {
-            entries[index].text += delta
+        pendingAssistantDeltas[id, default: ""] += delta
+        scheduleAssistantDeltaFlush()
+    }
+
+    private func scheduleAssistantDeltaFlush() {
+        guard pendingAssistantDeltaFlushTask == nil else { return }
+        pendingAssistantDeltaFlushTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: Self.assistantDeltaFlushDelayNanoseconds)
+            await MainActor.run {
+                guard let self else { return }
+                self.pendingAssistantDeltaFlushTask = nil
+                self.flushPendingAssistantDeltas()
+            }
+        }
+    }
+
+    private func flushPendingAssistantDeltas(for entryID: String? = nil) {
+        let targetIDs: [String]
+        if let entryID {
+            targetIDs = [entryID]
         } else {
-            entries.append(CodexTranscriptEntry(id: id, role: .assistant, text: delta))
+            targetIDs = Array(pendingAssistantDeltas.keys)
+        }
+
+        for id in targetIDs {
+            guard let delta = pendingAssistantDeltas.removeValue(forKey: id), !delta.isEmpty else { continue }
+            if let index = entries.firstIndex(where: { $0.id == id }) {
+                entries[index].text += delta
+            } else {
+                entries.append(CodexTranscriptEntry(id: id, role: .assistant, text: delta))
+            }
         }
     }
 
     private func upsertEntry(id: String, role: CodexTranscriptEntry.Role, text: String) {
         if let index = entries.firstIndex(where: { $0.id == id }) {
+            entries[index].role = role
+            entries[index].text = text
+        } else {
+            entries.append(CodexTranscriptEntry(id: id, role: role, text: text))
+        }
+    }
+
+    private func upsertEntryIfChanged(id: String, role: CodexTranscriptEntry.Role, text: String) {
+        if let index = entries.firstIndex(where: { $0.id == id }) {
+            guard entries[index].role != role || entries[index].text != text else { return }
             entries[index].role = role
             entries[index].text = text
         } else {

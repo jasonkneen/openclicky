@@ -13,7 +13,12 @@ nonisolated enum AppBundleConfiguration {
     static let userElevenLabsVoiceIDDefaultsKey = "openClickyElevenLabsVoiceID"
     static let userCartesiaAPIKeyDefaultsKey = "openClickyCartesiaAPIKey"
     static let userCartesiaVoiceIDDefaultsKey = "openClickyCartesiaVoiceID"
+    /// Deepgram TTS reuses the existing Deepgram STT API key
+    /// (`userDeepgramAPIKeyDefaultsKey`). Only the voice/model is
+    /// TTS-specific.
+    static let userDeepgramTTSVoiceDefaultsKey = "openClickyDeepgramTTSVoice"
     static let userTTSProviderDefaultsKey = "openClickyTTSProvider"
+    static let userSpeculativePreFireDefaultsKey = "openClickySpeculativePreFireEnabled"
     static let userCodexAgentAPIKeyDefaultsKey = "openClickyCodexAgentAPIKey"
     static let userAssemblyAIAPIKeyDefaultsKey = "openClickyAssemblyAIAPIKey"
     static let userDeepgramAPIKeyDefaultsKey = "openClickyDeepgramAPIKey"
@@ -26,13 +31,6 @@ nonisolated enum AppBundleConfiguration {
     static let userWidgetsIncludeMemorySnippetsDefaultsKey = "openClickyWidgetsIncludeMemorySnippets"
     static let userWidgetsIncludeFocusedAppContextDefaultsKey = "openClickyWidgetsIncludeFocusedAppContext"
     static let appGroupIdentifier = "group.com.jkneen.openclicky"
-
-    static func postHogAPIKey() -> String? {
-        stringValue(
-            forKey: "PostHogAPIKey",
-            environmentKeys: ["POSTHOG_API_KEY"]
-        ) ?? localDevelopmentEnvironmentValue(forKey: "POSTHOG_API_KEY")
-    }
 
     static func anthropicAPIKey() -> String? {
         let configuredAnthropicAPIKey = userDefaultsValue(forKey: userAnthropicAPIKeyDefaultsKey) ?? stringValue(
@@ -98,9 +96,22 @@ nonisolated enum AppBundleConfiguration {
         ?? "a0e99841-438c-4a64-b679-ae501e7d6091"
     }
 
-    /// Selected TTS provider — "elevenlabs" (default) or "cartesia".
+    /// Selected TTS provider — "elevenlabs" (default), "cartesia", or "deepgram".
     static func ttsProviderRaw() -> String {
         userDefaultsValue(forKey: userTTSProviderDefaultsKey) ?? "elevenlabs"
+    }
+
+    /// Deepgram TTS voice/model identifier. Defaults to Aura 2 Thalia
+    /// (en). Verified against https://developers.deepgram.com (2026-04-26):
+    /// auth uses the same `Authorization: Token <key>` as STT, model
+    /// goes in `?model=` query param, output is PCM linear16 when
+    /// requested via `encoding=linear16&sample_rate=22050&container=none`.
+    static func deepgramTTSVoice() -> String {
+        userDefaultsValue(forKey: userDeepgramTTSVoiceDefaultsKey) ?? stringValue(
+            forKey: "DeepgramTTSVoice",
+            environmentKeys: ["DEEPGRAM_TTS_VOICE"]
+        ) ?? localDevelopmentEnvironmentValue(forKey: "DEEPGRAM_TTS_VOICE")
+        ?? "aura-2-thalia-en"
     }
 
     private static func userDefaultsValue(forKey key: String) -> String? {

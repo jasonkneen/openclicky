@@ -120,11 +120,11 @@ nonisolated final class CodexProcessManager: @unchecked Sendable {
             lane: "agent",
             direction: "outgoing",
             event: "codex.rpc.request",
-            fields: [
-                "id": requestID,
-                "method": request.method,
-                "params": request.params ?? [:]
-            ]
+            fields: Self.summarizedRequestFieldsForLog(
+                id: requestID,
+                method: request.method,
+                params: request.params as? [String: Any]
+            )
         )
 
         return try await withCheckedThrowingContinuation { continuation in
@@ -221,7 +221,7 @@ nonisolated final class CodexProcessManager: @unchecked Sendable {
                 lane: "agent",
                 direction: "incoming",
                 event: "codex.rpc.message",
-                fields: message
+                fields: Self.summarizedMessageFieldsForLog(message)
             )
             if let id = CodexJSON.int(message["id"]) {
                 let continuation = pending.removeValue(forKey: id)
@@ -239,15 +239,111 @@ nonisolated final class CodexProcessManager: @unchecked Sendable {
                     continuation?.resume(returning: result)
                 }
             } else {
-                DispatchQueue.main.async { [weak self] in
-                    self?.onNotification?(message)
-                }
+                onNotification?(message)
             }
         } catch {
-            DispatchQueue.main.async { [weak self] in
-                self?.onStderrLine?("Could not parse Codex RPC line: \(line)")
+            onStderrLine?("Could not parse Codex RPC line: \(line)")
+        }
+    }
+
+    private static func summarizedRequestFieldsForLog(id: Int, method: String, params: [String: Any]?) -> [String: Any] {
+        var fields: [String: Any] = [
+            "id": id,
+            "method": method
+        ]
+
+        guard let params else { return fields }
+
+        switch method {
+        case "thread/start":
+            fields["model"] = params["model"] ?? ""
+            fields["cwd"] = params["cwd"] ?? ""
+            fields["approvalPolicy"] = params["approvalPolicy"] ?? ""
+            fields["sandbox"] = params["sandbox"] ?? ""
+            fields["baseInstructionsLength"] = (params["baseInstructions"] as? String)?.count ?? 0
+            fields["developerInstructionsLength"] = (params["developerInstructions"] as? String)?.count ?? 0
+        case "turn/start":
+            fields["threadId"] = params["threadId"] ?? ""
+            fields["model"] = params["model"] ?? ""
+            fields["cwd"] = params["cwd"] ?? ""
+            fields["effort"] = params["effort"] ?? ""
+            if let input = params["input"] as? [[String: Any]],
+               let first = input.first,
+               let text = first["text"] as? String {
+                fields["inputTextLength"] = text.count
+                fields["inputTextPreview"] = Self.shortLogSnippet(text, maxLength: 240)
+            }
+        default:
+            fields["params"] = params
+        }
+
+        return fields
+    }
+
+    private static func summarizedMessageFieldsForLog(_ message: [String: Any]) -> [String: Any] {
+        var fields: [String: Any] = [:]
+        if let id = CodexJSON.int(message["id"]) {
+            fields["id"] = id
+        }
+        if let method = CodexJSON.string(message["method"]) {
+            fields["method"] = method
+            let params = CodexJSON.dictionary(message["params"]) ?? [:]
+            fields["paramsSummary"] = summarizedNotificationParamsForLog(method: method, params: params)
+            return fields
+        }
+        if let error = CodexJSON.dictionary(message["error"]) {
+            fields["error"] = CodexRPCErrorMessage.readableMessage(from: error["message"]) ?? "Codex RPC error"
+        } else if let result = CodexJSON.dictionary(message["result"]) {
+            fields["resultKeys"] = Array(result.keys).sorted()
+        } else {
+            fields["kind"] = "unknown"
+        }
+        return fields
+    }
+
+    private static func summarizedNotificationParamsForLog(method: String, params: [String: Any]) -> [String: Any] {
+        var summary: [String: Any] = [:]
+        if let itemID = CodexJSON.string(params["itemId"]) {
+            summary["itemId"] = itemID
+        }
+        if let turnID = CodexJSON.string(params["turnId"]) {
+            summary["turnId"] = turnID
+        }
+        if let delta = CodexJSON.string(params["delta"]) {
+            summary["deltaLength"] = delta.count
+        }
+        if let text = CodexJSON.string(params["text"]) {
+            summary["textLength"] = text.count
+            summary["textPreview"] = Self.shortLogSnippet(text, maxLength: 180)
+        }
+        if let item = CodexJSON.dictionary(params["item"]) {
+            summary["itemType"] = CodexJSON.string(item["type"]) ?? ""
+            summary["itemId"] = CodexJSON.string(item["id"]) ?? summary["itemId"] ?? ""
+            if let text = CodexJSON.string(item["text"]) {
+                summary["itemTextLength"] = text.count
+                summary["itemTextPreview"] = Self.shortLogSnippet(text, maxLength: 180)
+            }
+            if let command = CodexJSON.string(item["command"]) {
+                summary["commandPreview"] = Self.shortLogSnippet(command, maxLength: 180)
+            }
+            if let output = CodexJSON.string(item["aggregatedOutput"]) {
+                summary["aggregatedOutputLength"] = output.count
             }
         }
+        if summary.isEmpty {
+            summary["keys"] = Array(params.keys).sorted()
+        }
+        return summary
+    }
+
+    private static func shortLogSnippet(_ text: String, maxLength: Int) -> String {
+        let flattened = text
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        guard flattened.count > maxLength else { return flattened }
+        let endIndex = flattened.index(flattened.startIndex, offsetBy: maxLength)
+        return "\(flattened[..<endIndex])..."
     }
 
     private static func readableErrorData(_ value: Any?) -> String? {

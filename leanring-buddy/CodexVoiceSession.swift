@@ -213,7 +213,9 @@ final class CodexVoiceSession {
                 "cwd": workingDirectory.path,
                 "approvalPolicy": "never",
                 "model": model,
-                "effort": homeManager.reasoningEffort
+                // Voice responses should prioritize first-token latency;
+                // Agent Mode keeps the user-selected reasoning effort.
+                "effort": "low"
             ])
 
             guard let turn = CodexJSON.dictionary(turnStart["turn"]),

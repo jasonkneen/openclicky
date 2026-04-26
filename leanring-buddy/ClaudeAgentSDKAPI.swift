@@ -7,6 +7,7 @@
 //  fresh Claude process for every response.
 //
 
+import Darwin
 import Foundation
 
 @MainActor
@@ -37,6 +38,8 @@ final class ClaudeAgentSDKAPI {
 
     private var bridgeProcess: Process?
     private var bridgeInput: FileHandle?
+    private var bridgeOutput: FileHandle?
+    private var bridgeError: FileHandle?
     private var stdoutBuffer = ""
     private var stderrBuffer = ""
     private var pendingRequests: [String: PendingRequest] = [:]
@@ -64,7 +67,11 @@ final class ClaudeAgentSDKAPI {
     }
 
     deinit {
-        bridgeProcess?.terminate()
+        bridgeProcess?.terminationHandler = nil
+        bridgeOutput?.readabilityHandler = nil
+        bridgeError?.readabilityHandler = nil
+        try? bridgeInput?.close()
+        terminateBridgeProcess(bridgeProcess)
     }
 
     static func findExecutable(fileManager: FileManager = .default) -> URL? {
@@ -172,13 +179,18 @@ final class ClaudeAgentSDKAPI {
     }
 
     func stop() {
-        bridgeProcess?.terminationHandler = nil
-        bridgeProcess?.terminate()
+        let process = bridgeProcess
+        bridgeProcess = nil
+        process?.terminationHandler = nil
+        bridgeOutput?.readabilityHandler = nil
+        bridgeError?.readabilityHandler = nil
         try? bridgeInput?.close()
         bridgeInput = nil
-        bridgeProcess = nil
+        bridgeOutput = nil
+        bridgeError = nil
         activeBridgeModel = nil
         activeBridgeSystemPromptHash = nil
+        terminateBridgeProcess(process)
         failPendingRequests(
             NSError(
                 domain: "ClaudeAgentSDKAPI",
@@ -238,6 +250,13 @@ final class ClaudeAgentSDKAPI {
             ]
         )
 
+        // No per-request timeout. The Agent SDK needs as long as it
+        // needs — cold-start (Node + claude CLI spin-up + model warm)
+        // can run 10-30s on a fresh bridge, and we don't want HTTP
+        // hijacking the response just because the SDK is slow. If the
+        // bridge process dies, `handleBridgeTermination` fails pending
+        // requests; if the user truly wants to abandon, they can press
+        // push-to-talk again to interrupt.
         return try await withCheckedThrowingContinuation { continuation in
             pendingRequests[requestID] = PendingRequest(
                 id: requestID,
@@ -255,6 +274,7 @@ final class ClaudeAgentSDKAPI {
             } catch {
                 pendingRequests.removeValue(forKey: requestID)
                 continuation.resume(throwing: error)
+                return
             }
         }
     }
@@ -336,6 +356,8 @@ final class ClaudeAgentSDKAPI {
 
         bridgeProcess = process
         bridgeInput = inputPipe.fileHandleForWriting
+        bridgeOutput = outputPipe.fileHandleForReading
+        bridgeError = errorPipe.fileHandleForReading
         activeBridgeModel = model
         activeBridgeSystemPromptHash = promptHash
 
@@ -567,8 +589,12 @@ final class ClaudeAgentSDKAPI {
     }
 
     private func handleBridgeTermination(status: Int32) {
+        bridgeOutput?.readabilityHandler = nil
+        bridgeError?.readabilityHandler = nil
         bridgeProcess = nil
         bridgeInput = nil
+        bridgeOutput = nil
+        bridgeError = nil
         activeBridgeModel = nil
         activeBridgeSystemPromptHash = nil
 
@@ -590,12 +616,44 @@ final class ClaudeAgentSDKAPI {
         )
     }
 
+    private func failRequestIfPending(requestID: String, error: Error) {
+        guard let pending = pendingRequests.removeValue(forKey: requestID) else { return }
+        if requestID == warmupRequestID { warmupRequestID = nil }
+        OpenClickyMessageLogStore.shared.append(
+            lane: "voice",
+            direction: "error",
+            event: "claude_agent_sdk.query.timeout",
+            fields: [
+                "executor": "voice_response",
+                "executionMethod": "ClaudeAgentSDKAPI.query",
+                "transport": "agent_sdk_query",
+                "streamingMethod": "claude_agent_sdk_query",
+                "requestID": requestID,
+                "error": error.localizedDescription
+            ]
+        )
+        print("⚠️ ClaudeAgentSDKAPI: request \(requestID) timed out — \(error.localizedDescription)")
+        pending.continuation.resume(throwing: error)
+        // Bridge is hung — tear it down so the next call rebuilds it fresh.
+        stop()
+    }
+
     private func failPendingRequests(_ error: Error) {
         let requests = pendingRequests.values
         pendingRequests.removeAll()
         warmupRequestID = nil
         for request in requests {
             request.continuation.resume(throwing: error)
+        }
+    }
+
+    nonisolated private func terminateBridgeProcess(_ process: Process?) {
+        guard let process, process.isRunning else { return }
+        let pid = process.processIdentifier
+        process.terminate()
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1.0) {
+            guard process.isRunning else { return }
+            kill(pid, SIGKILL)
         }
     }
 
