@@ -33,6 +33,19 @@ enum ClickyAccentTheme: String, CaseIterable, Identifiable {
         }
     }
 
+    var spokenAgentColorName: String {
+        switch self {
+        case .blue:
+            return "Blue"
+        case .mint:
+            return "Green"
+        case .amber:
+            return "Amber"
+        case .rose:
+            return "Red"
+        }
+    }
+
     var accent: Color {
         switch self {
         case .blue:

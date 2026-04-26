@@ -38,11 +38,19 @@ final class ElevenLabsTTSClient {
 
     /// Sends `text` directly to ElevenLabs and plays the resulting audio.
     /// Throws on network or decoding errors. Cancellation-safe.
-    func speakText(_ text: String, onPlaybackStarted: (() -> Void)? = nil) async throws {
+    ///
+    /// When `waitUntilFinished` is false, this returns as soon as audible playback
+    /// starts so OpenClicky can become responsive while the audio continues.
+    func speakText(
+        _ text: String,
+        waitUntilFinished: Bool = true,
+        onPlaybackStarted: (() -> Void)? = nil
+    ) async throws {
         guard let apiKey, !apiKey.isEmpty else {
             try await speakWithSystemSpeech(
                 text,
                 reason: "ElevenLabs API key is not configured",
+                waitUntilFinished: waitUntilFinished,
                 onPlaybackStarted: onPlaybackStarted
             )
             return
@@ -53,6 +61,7 @@ final class ElevenLabsTTSClient {
             try await speakWithSystemSpeech(
                 text,
                 reason: "ElevenLabs voice ID is not configured",
+                waitUntilFinished: waitUntilFinished,
                 onPlaybackStarted: onPlaybackStarted
             )
             return
@@ -89,6 +98,7 @@ final class ElevenLabsTTSClient {
             try await speakWithSystemSpeech(
                 text,
                 reason: "TTS request failed: \(error.localizedDescription)",
+                waitUntilFinished: waitUntilFinished,
                 onPlaybackStarted: onPlaybackStarted
             )
             return
@@ -98,6 +108,7 @@ final class ElevenLabsTTSClient {
             try await speakWithSystemSpeech(
                 text,
                 reason: "TTS returned an invalid response",
+                waitUntilFinished: waitUntilFinished,
                 onPlaybackStarted: onPlaybackStarted
             )
             return
@@ -109,6 +120,7 @@ final class ElevenLabsTTSClient {
             try await speakWithSystemSpeech(
                 text,
                 reason: "TTS API error \(httpResponse.statusCode): \(truncatedErrorBody)",
+                waitUntilFinished: waitUntilFinished,
                 onPlaybackStarted: onPlaybackStarted
             )
             return
@@ -148,16 +160,10 @@ final class ElevenLabsTTSClient {
         onPlaybackStarted?()
         print("ElevenLabs TTS: playing \(data.count / 1024)KB audio")
 
-        while player.isPlaying {
-            try await Task.sleep(nanoseconds: 100_000_000)
-            try Task.checkCancellation()
-            guard audioPlayer === player else {
-                throw CancellationError()
-            }
-        }
-
-        if audioPlayer === player {
-            audioPlayer = nil
+        if waitUntilFinished {
+            try await waitForAudioPlayerToFinish(player)
+        } else {
+            scheduleAudioPlayerCleanup(player)
         }
     }
 
@@ -177,6 +183,7 @@ final class ElevenLabsTTSClient {
     private func speakWithSystemSpeech(
         _ text: String,
         reason: String,
+        waitUntilFinished: Bool,
         onPlaybackStarted: (() -> Void)?
     ) async throws {
         print("System speech fallback: \(reason)")
@@ -189,6 +196,41 @@ final class ElevenLabsTTSClient {
         synthesizer.speak(utterance)
         onPlaybackStarted?()
 
+        if waitUntilFinished {
+            try await waitForSpeechSynthesizerToFinish(synthesizer)
+        } else {
+            scheduleSpeechSynthesizerCleanup(synthesizer)
+        }
+    }
+
+    private func waitForAudioPlayerToFinish(_ player: AVAudioPlayer) async throws {
+        while player.isPlaying {
+            try await Task.sleep(nanoseconds: 100_000_000)
+            try Task.checkCancellation()
+            guard audioPlayer === player else {
+                throw CancellationError()
+            }
+        }
+
+        if audioPlayer === player {
+            audioPlayer = nil
+        }
+    }
+
+    private func scheduleAudioPlayerCleanup(_ player: AVAudioPlayer) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            while player.isPlaying {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                guard self.audioPlayer === player else { return }
+            }
+            if self.audioPlayer === player {
+                self.audioPlayer = nil
+            }
+        }
+    }
+
+    private func waitForSpeechSynthesizerToFinish(_ synthesizer: AVSpeechSynthesizer) async throws {
         while synthesizer.isSpeaking {
             try await Task.sleep(nanoseconds: 100_000_000)
             try Task.checkCancellation()
@@ -199,6 +241,19 @@ final class ElevenLabsTTSClient {
 
         if speechSynthesizer === synthesizer {
             speechSynthesizer = nil
+        }
+    }
+
+    private func scheduleSpeechSynthesizerCleanup(_ synthesizer: AVSpeechSynthesizer) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            while synthesizer.isSpeaking {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                guard self.speechSynthesizer === synthesizer else { return }
+            }
+            if self.speechSynthesizer === synthesizer {
+                self.speechSynthesizer = nil
+            }
         }
     }
 

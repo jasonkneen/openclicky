@@ -95,31 +95,39 @@ final class CodexAgentSession: ObservableObject, Identifiable {
         ?? FileManager.default.homeDirectoryForCurrentUser.path
     var onOpenableFileFound: (@MainActor (URL) -> Void)?
 
+    var spokenAgentName: String {
+        "the \(accentTheme.spokenAgentColorName.lowercased()) agent"
+    }
+
+    var spokenAgentSentenceName: String {
+        "The \(accentTheme.spokenAgentColorName) Agent"
+    }
+
     var statusSummaryLine: String {
-        let taskTitle = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "untitled task" : title
+        let agentName = spokenAgentSentenceName
         let latestActivity = latestActivitySummary
 
         switch status {
         case .stopped:
-            return "\(taskTitle) is offline."
+            return "\(agentName) is offline."
         case .starting:
-            return "\(taskTitle) is starting."
+            return "\(agentName) is starting."
         case .running:
             if let latestActivity {
-                return "\(taskTitle) is running. Latest: \(latestActivity)"
+                return "\(agentName) is running. Latest: \(latestActivity)"
             }
-            return "\(taskTitle) is running."
+            return "\(agentName) is running."
         case .ready:
             if let latestActivity {
-                return "\(taskTitle) is ready. Latest: \(latestActivity)"
+                return "\(agentName) is ready. Latest: \(latestActivity)"
             }
-            return "\(taskTitle) is ready."
+            return "\(agentName) is ready."
         case .failed:
             let errorText = lastErrorMessage?.trimmingCharacters(in: .whitespacesAndNewlines)
             if let errorText, !errorText.isEmpty {
-                return "\(taskTitle) needs attention: \(Self.spokenSnippet(from: errorText, maxLength: 110))"
+                return "\(agentName) needs attention: \(Self.spokenSnippet(from: errorText, maxLength: 110))"
             }
-            return "\(taskTitle) needs attention."
+            return "\(agentName) needs attention."
         }
     }
 
@@ -239,6 +247,11 @@ final class CodexAgentSession: ObservableObject, Identifiable {
             ])
         } catch {
             let text = Self.userFacingErrorMessage(from: error.localizedDescription)
+            if text == "Codex app-server stopped.",
+               lastErrorMessage?.contains("terminal xcodebuild") == true {
+                return
+            }
+
             if !didRetryCompatibilityFallback,
                Self.shouldRetryWithCompatibilityFallback(text),
                model != Self.codexRuntimeCompatibilityFallbackModel {
@@ -288,10 +301,12 @@ final class CodexAgentSession: ObservableObject, Identifiable {
         - Do not say you cannot remember outside the current conversation. Use the persistent memory file.
         - Update persistent memory only for stable preferences, useful project facts, task outcomes, or workflow context that will clearly help future sessions.
         - Use or update learned skills only when the user asks to inspect, optimize, or learn from skills/logs, or when a repeated workflow would materially speed up future work. Do not mention skill creation in progress or final answers unless the user asked about skills.
+        - When working on the OpenClicky app repo, do not run terminal `xcodebuild`. Use Xcode for app builds and permission testing, and use `swiftc -parse <relevant Swift source files>` for lightweight Swift syntax checks.
         - Proceed autonomously. Choose sensible defaults and keep working without asking the user unless critical information is truly missing or the action would be destructive, credential-related, or permission-sensitive.
         - Voice is the primary interaction path. Keep user-facing progress and final answers concise enough to be spoken aloud, and put detailed logs or code context in the transcript when needed.
         - When you find a local document, image, or other user file, include its exact local path in your final answer so OpenClicky can show it.
         - If blocked, report the exact blocker and the smallest user action needed. If not blocked, finish the task and summarize what changed or what you found.
+        - At the end of your final response, include one metadata line exactly like `TASK_TITLE: Short task title` using 2-5 words. OpenClicky strips this line and uses it to rename the agent task.
         """
 
         guard let context = screenContext, !context.isEmpty else {
@@ -327,6 +342,8 @@ final class CodexAgentSession: ObservableObject, Identifiable {
         let developerInstructions = """
         You are running inside OpenClicky Agent Mode on macOS. Be direct, helpful, and careful. Prefer concrete actions over vague advice.
 
+        When working on the OpenClicky app repo, do not run terminal `xcodebuild`. Use Xcode for app builds and permission testing, and use `swiftc -parse <relevant Swift source files>` for lightweight Swift syntax checks.
+
         OpenClicky's runtime map is at \(layout.runtimeMapFile.path). Read it when the user asks about logs, storage locations, memory, skills, widgets, settings, sessions, or where OpenClicky keeps anything. You may view or edit those local files when asked, subject to normal safety rules for destructive changes, credentials, and permissions.
 
         OpenClicky's persona is at \(layout.soulFile.path). Read it before task work. Treat it as the operating identity for voice-first behavior, autonomy, memory, archive-first changes, and plain-English progress.
@@ -343,7 +360,7 @@ final class CodexAgentSession: ObservableObject, Identifiable {
 
         Widget state is available at \(OpenClickyWidgetStateStore.snapshotURL.path). When the user asks about widgets or desktop task/status display, read that snapshot before changing widget behavior.
 
-        You are allowed to help with computer-use tasks. When the user asks you to open an app, switch apps, click, type, scroll, inspect the screen, or otherwise operate the Mac, prefer OpenClicky's native CUA path and the `cuaDriver` MCP server when available. In progress and final text, describe this as OpenClicky's native CUA computer-use path. Do not choose or advertise Clawd or clawdcursor mouse/keyboard tools as the default for typing or focused-window control; use them only as an explicit fallback when CUA is unavailable and say that it is a fallback. Simple focused-window typing is normally intercepted by OpenClicky before Agent Mode and handled through native CUA Swift.
+        You are allowed to help with computer-use tasks. OpenClicky may be configured to use native CUA Swift or Background Computer Use for direct control before Agent Mode. When you operate the Mac from Agent Mode, prefer OpenClicky's available direct computer-use path and the `cuaDriver` MCP server when available; describe it as OpenClicky's computer-use path rather than assuming CUA is always selected. Do not choose or advertise Clawd or clawdcursor mouse/keyboard tools as the default for typing or focused-window control; use them only as an explicit fallback when OpenClicky's direct computer-use path is unavailable and say that it is a fallback. Simple focused-window typing is normally intercepted by OpenClicky before Agent Mode and handled through the selected direct computer-use backend.
 
         You are allowed to perform web research when the user asks for current information, web search, browsing, or research. Use the available network, browser, or search capabilities in the runtime; cite the pages or URLs you relied on in your final response. Do not tell the user voice mode lacks live web access once a task is running in Agent Mode.
 
@@ -431,6 +448,10 @@ final class CodexAgentSession: ObservableObject, Identifiable {
             let itemID = CodexJSON.string(params["itemId"]) ?? UUID().uuidString
             let delta = CodexJSON.string(params["delta"]) ?? ""
             appendAssistantDelta(itemID: itemID, delta: delta)
+        case "item/started":
+            if blockForbiddenCommandIfNeeded(params["item"]) {
+                return
+            }
         case "item/completed":
             handleCompletedItem(params["item"])
         case "turn/plan/updated":
@@ -484,6 +505,70 @@ final class CodexAgentSession: ObservableObject, Identifiable {
         return message
     }
 
+    private func blockForbiddenCommandIfNeeded(_ itemValue: Any?) -> Bool {
+        guard let item = CodexJSON.dictionary(itemValue),
+              let command = Self.forbiddenTerminalCommand(from: item) else {
+            return false
+        }
+
+        let message = "OpenClicky stopped this Agent Mode run because it attempted to run terminal xcodebuild. Use Xcode for app builds and permission testing, and use `swiftc -parse <relevant Swift source files>` for lightweight Swift syntax checks."
+        let id = CodexJSON.string(item["id"]) ?? UUID().uuidString
+        upsertEntry(id: id, role: .system, text: message)
+        latestResponseCard = ClickyResponseCard(
+            source: .agent,
+            rawText: message,
+            contextTitle: lastSubmittedPrompt
+        )
+        lastErrorMessage = message
+        currentAssistantEntryID = nil
+        activeThreadID = nil
+        hasInitializedProcess = false
+        status = .failed(message)
+        OpenClickyMessageLogStore.shared.append(
+            lane: "agent",
+            direction: "blocked",
+            event: "openclicky.agent_task.blocked_forbidden_command",
+            fields: [
+                "command": command,
+                "reason": "terminal_xcodebuild_forbidden"
+            ]
+        )
+        processManager.stop()
+        return true
+    }
+
+    private static func forbiddenTerminalCommand(from item: [String: Any]) -> String? {
+        var commands: [String] = []
+        if let command = CodexJSON.string(item["command"]) {
+            commands.append(command)
+        }
+        if let commandActions = CodexJSON.array(item["commandActions"]) {
+            for actionValue in commandActions {
+                guard let action = CodexJSON.dictionary(actionValue),
+                      let command = CodexJSON.string(action["command"]) else {
+                    continue
+                }
+                commands.append(command)
+            }
+        }
+
+        return commands.first { commandInvokesTerminalXcodebuild($0) }
+    }
+
+    private static func commandInvokesTerminalXcodebuild(_ command: String) -> Bool {
+        let normalized = command
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased()
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\t", with: " ")
+        if normalized == "xcodebuild" || normalized.hasPrefix("xcodebuild ") {
+            return true
+        }
+
+        let invocationPattern = #"(^|[;&|(`"'])\s*(?:sudo\s+|env\s+)?(?:/[^\s"';|&`]+/)?xcodebuild(\s|$)"#
+        return normalized.range(of: invocationPattern, options: .regularExpression) != nil
+    }
+
     nonisolated static func userFacingErrorMessage(from rawMessage: String) -> String {
         CodexRPCErrorMessage.readableMessage(from: rawMessage) ?? rawMessage
     }
@@ -504,16 +589,21 @@ final class CodexAgentSession: ObservableObject, Identifiable {
         case "agentMessage":
             let text = CodexJSON.string(item["text"]) ?? ""
             if !text.isEmpty {
-                upsertEntry(id: id, role: .assistant, text: text)
+                let parsed = Self.extractTaskTitleMetadata(from: text)
+                if let taskTitle = parsed.taskTitle {
+                    title = taskTitle
+                }
+                let visibleText = parsed.visibleText
+                upsertEntry(id: id, role: .assistant, text: visibleText)
                 latestResponseCard = ClickyResponseCard(
                     source: .agent,
-                    rawText: Self.userFacingAgentMessage(from: text),
+                    rawText: Self.userFacingAgentMessage(from: visibleText),
                     contextTitle: lastSubmittedPrompt
                 )
-                if let fileURL = Self.firstOpenableFileURL(in: text) {
+                if let fileURL = Self.firstOpenableFileURL(in: visibleText) {
                     onOpenableFileFound?(fileURL)
                 }
-                persistCompletedTurnMemory(agentResponse: text)
+                persistCompletedTurnMemory(agentResponse: visibleText)
             }
             currentAssistantEntryID = nil
         case "plan":
@@ -785,6 +875,60 @@ final class CodexAgentSession: ObservableObject, Identifiable {
 
         let endIndex = flattenedPrompt.index(flattenedPrompt.startIndex, offsetBy: 28)
         let prefix = String(flattenedPrompt[..<endIndex])
+        if let lastSpace = prefix.lastIndex(of: " ") {
+            return String(prefix[..<lastSpace])
+        }
+        return prefix
+    }
+
+    private static func extractTaskTitleMetadata(from text: String) -> (visibleText: String, taskTitle: String?) {
+        let lines = text.components(separatedBy: .newlines)
+        var extractedTitle: String?
+        var visibleLines: [String] = []
+
+        for line in lines {
+            if let parsedTitle = taskTitleMetadataValue(from: line) {
+                extractedTitle = sanitizedReturnedTaskTitle(parsedTitle)
+                continue
+            }
+            visibleLines.append(line)
+        }
+
+        let visibleText = visibleLines
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (visibleText.isEmpty ? text : visibleText, extractedTitle)
+    }
+
+    private static func taskTitleMetadataValue(from line: String) -> String? {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let patterns = [
+            #"(?i)^\[?\s*TASK[_\s-]*TITLE\s*:\s*(.+?)\s*\]?$"#,
+            #"(?i)^\[?\s*TITLE\s*:\s*(.+?)\s*\]?$"#
+        ]
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(trimmed.startIndex..<trimmed.endIndex, in: trimmed)
+            guard let match = regex.firstMatch(in: trimmed, range: range),
+                  let valueRange = Range(match.range(at: 1), in: trimmed) else { continue }
+            return String(trimmed[valueRange])
+        }
+        return nil
+    }
+
+    private static func sanitizedReturnedTaskTitle(_ value: String) -> String? {
+        let cleaned = value
+            .trimmingCharacters(in: CharacterSet(charactersIn: " `\"'.,:;!?-–—[](){}<>"))
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .prefix(6)
+            .joined(separator: " ")
+        guard !cleaned.isEmpty else { return nil }
+        guard cleaned.count > 44 else { return cleaned }
+        let endIndex = cleaned.index(cleaned.startIndex, offsetBy: 44)
+        let prefix = String(cleaned[..<endIndex])
         if let lastSpace = prefix.lastIndex(of: " ") {
             return String(prefix[..<lastSpace])
         }

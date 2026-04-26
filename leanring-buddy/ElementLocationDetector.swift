@@ -23,6 +23,7 @@ class ElementLocationDetector {
     private let apiKey: String
     private let apiURL: URL
     private let model: String
+    private let maxOutputTokens: Int
     private let session: URLSession
 
     /// Anthropic-recommended resolutions for Computer Use, paired with their aspect ratios.
@@ -36,9 +37,11 @@ class ElementLocationDetector {
     ]
 
     init(apiKey: String, model: String = "claude-sonnet-4-6") {
+        let modelOption = OpenClickyModelCatalog.computerUseModel(withID: model)
         self.apiKey = apiKey
         self.apiURL = URL(string: "https://api.anthropic.com/v1/messages")!
-        self.model = model
+        self.model = modelOption.id
+        self.maxOutputTokens = modelOption.maxOutputTokens
 
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 15
@@ -176,7 +179,7 @@ class ElementLocationDetector {
 
         let body: [String: Any] = [
             "model": model,
-            "max_tokens": 256,
+            "max_tokens": maxOutputTokens,
             "tools": [
                 [
                     "type": "computer_20251124",

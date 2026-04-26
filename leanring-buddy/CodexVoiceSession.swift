@@ -258,6 +258,8 @@ final class CodexVoiceSession {
 
         This voice-response session is not Agent Mode. Do not spawn agents, assign background tasks, or ask for agent confirmation. Simple computer-control requests are handled by OpenClicky's native CUA router before they reach you; when you do receive a voice-response turn, answer briefly and include OpenClicky's [POINT:x,y:label] tag only when pointing would help.
 
+        Do not run shell commands, Python, find, ls, or other terminal tools from this voice-response session to inspect local files or folders. If the user asks to view, find, inspect, clean up, or open a local file or folder and the request was not handled by direct computer use, explain that file inspection belongs in explicit Agent Mode and give the exact phrase to say.
+
         Keep the Codex app-server process warm. Treat API keys as fallback; prefer this local Codex session when it is available.
         """
 

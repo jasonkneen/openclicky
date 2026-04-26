@@ -10,12 +10,14 @@ class OpenAIAPI {
     private var apiKey: String?
     private let apiURL: URL
     var model: String
+    var maxOutputTokens: Int
     private let session: URLSession
 
-    init(apiKey: String?, model: String = "gpt-5.4") {
+    init(apiKey: String?, model: String = "gpt-5.4", maxOutputTokens: Int = 128_000) {
         self.apiKey = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.apiURL = URL(string: "https://api.openai.com/v1/responses")!
         self.model = model
+        self.maxOutputTokens = maxOutputTokens
 
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 120
@@ -98,7 +100,7 @@ class OpenAIAPI {
         let body: [String: Any] = [
             "model": model,
             "instructions": systemPrompt,
-            "max_output_tokens": 1024,
+            "max_output_tokens": maxOutputTokens,
             "input": input + [[
                 "role": "user",
                 "content": contentBlocks
@@ -383,7 +385,7 @@ class OpenAIAPI {
         return [
             "model": model,
             "instructions": systemPrompt,
-            "max_output_tokens": 1024,
+            "max_output_tokens": maxOutputTokens,
             "stream": stream,
             "input": input + [[
                 "role": "user",

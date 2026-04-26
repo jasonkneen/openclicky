@@ -28,6 +28,11 @@ async function loadAgentSDK() {
   return { sdk, sdkPath };
 }
 
+function integerFromEnv(name, fallback) {
+  const value = Number.parseInt(process.env[name] || "", 10);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
 const pendingCommands = [];
 const commandWaiters = [];
 let closed = false;
@@ -207,6 +212,7 @@ try {
 
   const options = {
     model: process.env.OPENCLICKY_CLAUDE_MODEL || "claude-sonnet-4-6",
+    maxTokens: integerFromEnv("OPENCLICKY_CLAUDE_MAX_OUTPUT_TOKENS", 64000),
     cwd: process.env.OPENCLICKY_CLAUDE_CWD || process.cwd(),
     systemPrompt: process.env.OPENCLICKY_CLAUDE_SYSTEM_PROMPT || "You are OpenClicky.",
     pathToClaudeCodeExecutable: process.env.OPENCLICKY_CLAUDE_EXECUTABLE,

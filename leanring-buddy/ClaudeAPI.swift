@@ -13,12 +13,14 @@ class ClaudeAPI {
     private var apiKey: String?
     private let apiURL: URL
     var model: String
+    var maxOutputTokens: Int
     private let session: URLSession
 
-    init(apiKey: String?, model: String = "claude-sonnet-4-6") {
+    init(apiKey: String?, model: String = "claude-sonnet-4-6", maxOutputTokens: Int = 64_000) {
         self.apiKey = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.apiURL = URL(string: "https://api.anthropic.com/v1/messages")!
         self.model = model
+        self.maxOutputTokens = maxOutputTokens
 
         // Use .default instead of .ephemeral so TLS session tickets are cached.
         // Ephemeral sessions do a full TLS handshake on every request, which causes
@@ -159,7 +161,7 @@ class ClaudeAPI {
 
         let body: [String: Any] = [
             "model": model,
-            "max_tokens": 1024,
+            "max_tokens": maxOutputTokens,
             "stream": true,
             "system": systemPrompt,
             "messages": messages
@@ -177,6 +179,7 @@ class ClaudeAPI {
                 "model": model,
                 "url": apiURL.absoluteString,
                 "payloadBytes": bodyData.count,
+                "maxTokens": maxOutputTokens,
                 "systemPrompt": systemPrompt,
                 "conversationHistory": conversationHistory.map {
                     [
@@ -363,7 +366,7 @@ class ClaudeAPI {
 
         let body: [String: Any] = [
             "model": model,
-            "max_tokens": 256,
+            "max_tokens": maxOutputTokens,
             "system": systemPrompt,
             "messages": messages
         ]
@@ -380,6 +383,7 @@ class ClaudeAPI {
                 "model": model,
                 "url": apiURL.absoluteString,
                 "payloadBytes": bodyData.count,
+                "maxTokens": maxOutputTokens,
                 "systemPrompt": systemPrompt,
                 "conversationHistory": conversationHistory.map {
                     [

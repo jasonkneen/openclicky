@@ -38,4 +38,31 @@ struct leanring_buddyTests {
         #expect(shouldTreatPermissionAsGranted)
     }
 
+    @Test func agentRoutingHandlesNoisyAndTruncatedDelegationTranscripts() async throws {
+        #expect(
+            CompanionManager.agentTaskCreationInstruction(
+                from: "Makesomething, ask an agent to review the OpenClicky code changes."
+            ) == "review the OpenClicky code changes"
+        )
+        #expect(
+            CompanionManager.agentTaskCreationInstruction(
+                from: "—an agent to look at today's conversation logs, summarize findings, and look for areas of improvement."
+            ) == "look at today's conversation logs, summarize findings, and look for areas of improvement"
+        )
+        #expect(
+            CompanionManager.agentTaskCreationInstruction(
+                from: "Question: Can you take a look at my desktop and see if there's any files that could be cleaned up?"
+            ) == "take a look at my desktop and see if there's any files that could be cleaned up"
+        )
+        #expect(
+            CompanionManager.agentTaskCreationInstruction(
+                from: "That's great, but when I asked for the agent to be launched, it didn't zoom off to the corner of the screen. Why was that?"
+            ) == nil
+        )
+        #expect(
+            CompanionManager.agentTaskCreationInstruction(
+                from: "How do I ask an agent to review logs?"
+            ) == nil
+        )
+    }
 }

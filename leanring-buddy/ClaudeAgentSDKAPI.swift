@@ -28,6 +28,7 @@ final class ClaudeAgentSDKAPI {
     private let fileManager: FileManager
     private let workingDirectory: URL
     var model: String
+    var maxOutputTokens: Int
 
     private static let persistentBridgeSystemPrompt = """
     You are OpenClicky's persistent local Claude Agent SDK voice response session.
@@ -45,6 +46,7 @@ final class ClaudeAgentSDKAPI {
 
     init?(
         model: String = OpenClickyModelCatalog.defaultVoiceResponseModelID,
+        maxOutputTokens: Int = 64_000,
         fileManager: FileManager = .default,
         workingDirectory: URL? = nil
     ) {
@@ -58,6 +60,7 @@ final class ClaudeAgentSDKAPI {
         self.fileManager = fileManager
         self.workingDirectory = workingDirectory ?? fileManager.homeDirectoryForCurrentUser
         self.model = model
+        self.maxOutputTokens = maxOutputTokens
     }
 
     deinit {
@@ -228,6 +231,7 @@ final class ClaudeAgentSDKAPI {
                 "transport": "agent_sdk_query",
                 "streamingMethod": "claude_agent_sdk_query",
                 "model": model,
+                "maxTokens": maxOutputTokens,
                 "requestID": requestID,
                 "imageCount": images.count,
                 "promptLength": userPrompt.count
@@ -345,6 +349,7 @@ final class ClaudeAgentSDKAPI {
                 "transport": "agent_sdk_query",
                 "streamingMethod": "claude_agent_sdk_query",
                 "model": model,
+                "maxTokens": maxOutputTokens,
                 "node": nodeExecutableURL.path,
                 "bridge": bridgeScriptURL.path,
                 "claudeExecutable": executableURL.path
@@ -366,6 +371,8 @@ final class ClaudeAgentSDKAPI {
             .joined(separator: ":")
         environment["OPENCLICKY_CLAUDE_EXECUTABLE"] = executableURL.path
         environment["OPENCLICKY_CLAUDE_MODEL"] = model
+        environment["OPENCLICKY_CLAUDE_MAX_OUTPUT_TOKENS"] = String(maxOutputTokens)
+        environment["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = String(maxOutputTokens)
         environment["OPENCLICKY_CLAUDE_CWD"] = workingDirectory.path
         environment["OPENCLICKY_CLAUDE_SYSTEM_PROMPT"] = systemPrompt
         environment["OPENCLICKY_CLAUDE_AGENT_SDK_PATHS"] = Self.nodeModuleSearchPaths(
