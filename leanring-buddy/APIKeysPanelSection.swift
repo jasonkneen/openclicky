@@ -177,6 +177,7 @@ private struct APIKeyField: View {
     @State private var inputValue: String = ""
     @State private var hasLoadedInitialValue: Bool = false
     @State private var isRevealed: Bool = false
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -240,6 +241,7 @@ private struct APIKeyField: View {
                 TextField(placeholder, text: $inputValue, onCommit: commitChange)
             }
         }
+        .focused($isFocused)
         .textFieldStyle(.plain)
         .font(.system(size: 12, design: .monospaced))
         .foregroundColor(DS.Colors.textPrimary)
@@ -253,11 +255,12 @@ private struct APIKeyField: View {
             RoundedRectangle(cornerRadius: DS.CornerRadius.small, style: .continuous)
                 .stroke(DS.Colors.borderSubtle, lineWidth: 0.5)
         )
-        // Commit on every change so users don't have to press Return —
-        // pasting a key and tabbing away still persists it to the Keychain
-        // and re-arms the live API client.
-        .onChange(of: inputValue) { _, newInputValue in
-            onSet(newInputValue)
+        // Persist on focus loss so paste-and-tab still saves without
+        // writing to the Keychain on every keystroke.
+        .onChange(of: isFocused) { wasFocused, nowFocused in
+            if wasFocused && !nowFocused {
+                commitChange()
+            }
         }
     }
 

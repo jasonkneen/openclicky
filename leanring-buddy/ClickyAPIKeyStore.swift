@@ -244,6 +244,7 @@ final class ClickyAPIKeyStore: ObservableObject {
             return
         }
 
+        var allMigrated = true
         for identifier in ClickyAPIKeyIdentifier.allCases {
             let legacyValue = userDefaults.string(forKey: identifier.legacyUserDefaultsKey)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -256,10 +257,19 @@ final class ClickyAPIKeyStore: ObservableObject {
                 writeToKeychain(legacyValue, for: identifier)
             }
 
-            userDefaults.removeObject(forKey: identifier.legacyUserDefaultsKey)
+            // Confirm the value is actually retrievable before deleting the
+            // plaintext copy — a silent Keychain failure here would otherwise
+            // lose the key entirely.
+            if readFromKeychain(identifier) != nil {
+                userDefaults.removeObject(forKey: identifier.legacyUserDefaultsKey)
+            } else {
+                allMigrated = false
+            }
         }
 
-        userDefaults.set(true, forKey: userDefaultsMigrationCompletedKey)
+        if allMigrated {
+            userDefaults.set(true, forKey: userDefaultsMigrationCompletedKey)
+        }
     }
 
     // MARK: - Keychain
@@ -292,8 +302,9 @@ final class ClickyAPIKeyStore: ObservableObject {
         return storedValue
     }
 
-    private nonisolated static func writeToKeychain(_ value: String, for identifier: ClickyAPIKeyIdentifier) {
-        guard let valueData = value.data(using: .utf8) else { return }
+    @discardableResult
+    private nonisolated static func writeToKeychain(_ value: String, for identifier: ClickyAPIKeyIdentifier) -> Bool {
+        guard let valueData = value.data(using: .utf8) else { return false }
 
         // Try update first; if no existing entry, fall through to add.
         let updateQuery = baseKeychainQuery(for: identifier)
@@ -303,7 +314,7 @@ final class ClickyAPIKeyStore: ObservableObject {
         let updateStatus = SecItemUpdate(updateQuery as CFDictionary, updateAttributes as CFDictionary)
 
         if updateStatus == errSecSuccess {
-            return
+            return true
         }
 
         // No existing entry — create one. kSecAttrAccessibleAfterFirstUnlock
@@ -312,7 +323,7 @@ final class ClickyAPIKeyStore: ObservableObject {
         var addQuery = baseKeychainQuery(for: identifier)
         addQuery[kSecValueData as String] = valueData
         addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        _ = SecItemAdd(addQuery as CFDictionary, nil)
+        return SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
     }
 
     private nonisolated static func deleteFromKeychain(_ identifier: ClickyAPIKeyIdentifier) {
