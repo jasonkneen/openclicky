@@ -90,15 +90,11 @@ struct OpenClickySettingsView: View {
     @ObservedObject private var nativeComputerUseController: OpenClickyNativeComputerUseController
     @ObservedObject private var backgroundComputerUseController: OpenClickyBackgroundComputerUseController
     @AppStorage(ClickyAccentTheme.userDefaultsKey) private var selectedAccentThemeID = ClickyAccentTheme.blue.rawValue
-    @AppStorage(AppBundleConfiguration.userAnthropicAPIKeyDefaultsKey) private var userAnthropicAPIKey = ""
-    @AppStorage(AppBundleConfiguration.userElevenLabsAPIKeyDefaultsKey) private var userElevenLabsAPIKey = ""
-    @AppStorage(AppBundleConfiguration.userElevenLabsVoiceIDDefaultsKey) private var userElevenLabsVoiceID = ""
-    @AppStorage(AppBundleConfiguration.userCartesiaAPIKeyDefaultsKey) private var userCartesiaAPIKey = ""
-    @AppStorage(AppBundleConfiguration.userCartesiaVoiceIDDefaultsKey) private var userCartesiaVoiceID = ""
+    // API keys live in the Keychain via `ClickyAPIKeyStore`. The store
+    // publishes its values so SecureField bindings re-render whenever a
+    // setter on `companionManager` writes a new value.
+    @ObservedObject private var apiKeyStore: ClickyAPIKeyStore = .shared
     @AppStorage(AppBundleConfiguration.userDeepgramTTSVoiceDefaultsKey) private var userDeepgramTTSVoice = "aura-2-thalia-en"
-    @AppStorage(AppBundleConfiguration.userCodexAgentAPIKeyDefaultsKey) private var userCodexAgentAPIKey = ""
-    @AppStorage(AppBundleConfiguration.userAssemblyAIAPIKeyDefaultsKey) private var userAssemblyAIAPIKey = ""
-    @AppStorage(AppBundleConfiguration.userDeepgramAPIKeyDefaultsKey) private var userDeepgramAPIKey = ""
     @AppStorage(AppBundleConfiguration.userWidgetsEnabledDefaultsKey) private var widgetsEnabled = false
     @AppStorage(AppBundleConfiguration.userWidgetsIncludeAgentTaskNamesDefaultsKey) private var widgetsIncludeAgentTaskNames = false
     @AppStorage(AppBundleConfiguration.userWidgetsIncludeMemorySnippetsDefaultsKey) private var widgetsIncludeMemorySnippets = false
@@ -307,8 +303,8 @@ struct OpenClickySettingsView: View {
                     systemImageName: "key",
                     placeholder: "AssemblyAI key",
                     text: Binding(
-                        get: { userAssemblyAIAPIKey },
-                        set: { userAssemblyAIAPIKey = $0; companionManager.setAssemblyAIAPIKey($0) }
+                        get: { apiKeyStore.assemblyAIAPIKey },
+                        set: { companionManager.setAssemblyAIAPIKey($0) }
                     )
                 )
 
@@ -318,8 +314,8 @@ struct OpenClickySettingsView: View {
                     systemImageName: "key",
                     placeholder: "Deepgram key",
                     text: Binding(
-                        get: { userDeepgramAPIKey },
-                        set: { userDeepgramAPIKey = $0; companionManager.setDeepgramAPIKey($0) }
+                        get: { apiKeyStore.deepgramAPIKey },
+                        set: { companionManager.setDeepgramAPIKey($0) }
                     )
                 )
             }
@@ -356,8 +352,8 @@ struct OpenClickySettingsView: View {
                         systemImageName: "speaker.wave.2",
                         placeholder: "ElevenLabs key",
                         text: Binding(
-                            get: { userElevenLabsAPIKey },
-                            set: { userElevenLabsAPIKey = $0; companionManager.setElevenLabsAPIKey($0) }
+                            get: { apiKeyStore.elevenLabsAPIKey },
+                            set: { companionManager.setElevenLabsAPIKey($0) }
                         )
                     )
                     textFieldRow(
@@ -366,8 +362,8 @@ struct OpenClickySettingsView: View {
                         systemImageName: "person.wave.2",
                         placeholder: "Voice ID",
                         text: Binding(
-                            get: { userElevenLabsVoiceID },
-                            set: { userElevenLabsVoiceID = $0; companionManager.setElevenLabsVoiceID($0) }
+                            get: { apiKeyStore.elevenLabsVoiceID },
+                            set: { companionManager.setElevenLabsVoiceID($0) }
                         )
                     )
                 case .cartesia:
@@ -377,8 +373,8 @@ struct OpenClickySettingsView: View {
                         systemImageName: "speaker.wave.2",
                         placeholder: "Cartesia key",
                         text: Binding(
-                            get: { userCartesiaAPIKey },
-                            set: { userCartesiaAPIKey = $0; companionManager.setCartesiaAPIKey($0) }
+                            get: { apiKeyStore.cartesiaAPIKey },
+                            set: { companionManager.setCartesiaAPIKey($0) }
                         )
                     )
                     textFieldRow(
@@ -387,8 +383,8 @@ struct OpenClickySettingsView: View {
                         systemImageName: "person.wave.2",
                         placeholder: "Voice ID",
                         text: Binding(
-                            get: { userCartesiaVoiceID },
-                            set: { userCartesiaVoiceID = $0; companionManager.setCartesiaVoiceID($0) }
+                            get: { apiKeyStore.cartesiaVoiceID },
+                            set: { companionManager.setCartesiaVoiceID($0) }
                         )
                     )
                 case .deepgram:
@@ -628,8 +624,8 @@ struct OpenClickySettingsView: View {
                     systemImageName: "terminal",
                     placeholder: "OpenAI key",
                     text: Binding(
-                        get: { userCodexAgentAPIKey },
-                        set: { userCodexAgentAPIKey = $0; companionManager.setCodexAgentAPIKey($0) }
+                        get: { apiKeyStore.openAIAPIKey },
+                        set: { companionManager.setCodexAgentAPIKey($0) }
                     )
                 )
 
@@ -639,8 +635,8 @@ struct OpenClickySettingsView: View {
                     systemImageName: "key",
                     placeholder: "Anthropic key",
                     text: Binding(
-                        get: { userAnthropicAPIKey },
-                        set: { userAnthropicAPIKey = $0; companionManager.setAnthropicAPIKey($0) }
+                        get: { apiKeyStore.anthropicAPIKey },
+                        set: { companionManager.setAnthropicAPIKey($0) }
                     )
                 )
             }

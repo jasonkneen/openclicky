@@ -375,7 +375,7 @@ final class CompanionManager: ObservableObject {
     }
 
     func setCartesiaAPIKey(_ apiKey: String) {
-        persistOptionalSecret(apiKey, defaultsKey: AppBundleConfiguration.userCartesiaAPIKeyDefaultsKey)
+        ClickyAPIKeyStore.shared.setValue(apiKey, for: .cartesiaAPIKey)
         cartesiaTTSClient.updateConfiguration(
             apiKey: AppBundleConfiguration.cartesiaAPIKey(),
             voiceID: AppBundleConfiguration.cartesiaVoiceID()
@@ -386,12 +386,7 @@ final class CompanionManager: ObservableObject {
     }
 
     func setCartesiaVoiceID(_ voiceID: String) {
-        let trimmed = voiceID.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            UserDefaults.standard.removeObject(forKey: AppBundleConfiguration.userCartesiaVoiceIDDefaultsKey)
-        } else {
-            UserDefaults.standard.set(trimmed, forKey: AppBundleConfiguration.userCartesiaVoiceIDDefaultsKey)
-        }
+        ClickyAPIKeyStore.shared.setValue(voiceID, for: .cartesiaVoiceID)
         cartesiaTTSClient.updateConfiguration(
             apiKey: AppBundleConfiguration.cartesiaAPIKey(),
             voiceID: AppBundleConfiguration.cartesiaVoiceID()
@@ -828,12 +823,12 @@ final class CompanionManager: ObservableObject {
     }
 
     func setAnthropicAPIKey(_ apiKey: String) {
-        persistOptionalSecret(apiKey, defaultsKey: AppBundleConfiguration.userAnthropicAPIKeyDefaultsKey)
+        ClickyAPIKeyStore.shared.setValue(apiKey, for: .anthropicAPIKey)
         claudeAPI.setAPIKey(AppBundleConfiguration.anthropicAPIKey())
     }
 
     func setElevenLabsAPIKey(_ apiKey: String) {
-        persistOptionalSecret(apiKey, defaultsKey: AppBundleConfiguration.userElevenLabsAPIKeyDefaultsKey)
+        ClickyAPIKeyStore.shared.setValue(apiKey, for: .elevenLabsAPIKey)
         elevenLabsTTSClient.updateConfiguration(
             apiKey: AppBundleConfiguration.elevenLabsAPIKey(),
             voiceID: AppBundleConfiguration.elevenLabsVoiceID()
@@ -841,7 +836,7 @@ final class CompanionManager: ObservableObject {
     }
 
     func setElevenLabsVoiceID(_ voiceID: String) {
-        persistOptionalSecret(voiceID, defaultsKey: AppBundleConfiguration.userElevenLabsVoiceIDDefaultsKey)
+        ClickyAPIKeyStore.shared.setValue(voiceID, for: .elevenLabsVoiceID)
         elevenLabsTTSClient.updateConfiguration(
             apiKey: AppBundleConfiguration.elevenLabsAPIKey(),
             voiceID: AppBundleConfiguration.elevenLabsVoiceID()
@@ -849,12 +844,12 @@ final class CompanionManager: ObservableObject {
     }
 
     func setAssemblyAIAPIKey(_ apiKey: String) {
-        persistOptionalSecret(apiKey, defaultsKey: AppBundleConfiguration.userAssemblyAIAPIKeyDefaultsKey)
+        ClickyAPIKeyStore.shared.setValue(apiKey, for: .assemblyAIAPIKey)
         buddyDictationManager.setTranscriptionProvider(buddyDictationManager.transcriptionProviderID)
     }
 
     func setDeepgramAPIKey(_ apiKey: String) {
-        persistOptionalSecret(apiKey, defaultsKey: AppBundleConfiguration.userDeepgramAPIKeyDefaultsKey)
+        ClickyAPIKeyStore.shared.setValue(apiKey, for: .deepgramAPIKey)
         buddyDictationManager.setTranscriptionProvider(buddyDictationManager.transcriptionProviderID)
     }
 
@@ -863,18 +858,9 @@ final class CompanionManager: ObservableObject {
     }
 
     func setCodexAgentAPIKey(_ apiKey: String) {
-        persistOptionalSecret(apiKey, defaultsKey: AppBundleConfiguration.userCodexAgentAPIKeyDefaultsKey)
+        ClickyAPIKeyStore.shared.setValue(apiKey, for: .openAIAPIKey)
         openAIAPI.setAPIKey(AppBundleConfiguration.openAIAPIKey())
         codexAgentSessions.forEach { $0.stop() }
-    }
-
-    private func persistOptionalSecret(_ value: String, defaultsKey: String) {
-        let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmedValue.isEmpty {
-            UserDefaults.standard.removeObject(forKey: defaultsKey)
-        } else {
-            UserDefaults.standard.set(trimmedValue, forKey: defaultsKey)
-        }
     }
 
     /// User preference for whether the OpenClicky cursor should be shown.

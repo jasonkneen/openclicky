@@ -246,12 +246,10 @@ struct CodexAgentModePanelSection: View {
 struct CodexAgentModeSettingsSheet: View {
     @ObservedObject var session: CodexAgentSession
     @AppStorage(ClickyAccentTheme.userDefaultsKey) private var selectedAccentThemeID = ClickyAccentTheme.blue.rawValue
-    @AppStorage(AppBundleConfiguration.userAnthropicAPIKeyDefaultsKey) private var userAnthropicAPIKey = ""
-    @AppStorage(AppBundleConfiguration.userElevenLabsAPIKeyDefaultsKey) private var userElevenLabsAPIKey = ""
-    @AppStorage(AppBundleConfiguration.userElevenLabsVoiceIDDefaultsKey) private var userElevenLabsVoiceID = ""
-    @AppStorage(AppBundleConfiguration.userCodexAgentAPIKeyDefaultsKey) private var userCodexAgentAPIKey = ""
-    @AppStorage(AppBundleConfiguration.userAssemblyAIAPIKeyDefaultsKey) private var userAssemblyAIAPIKey = ""
-    @AppStorage(AppBundleConfiguration.userDeepgramAPIKeyDefaultsKey) private var userDeepgramAPIKey = ""
+    // API keys live in the Keychain via `ClickyAPIKeyStore`. Bindings read
+    // from the published store so SecureField mirrors live updates from
+    // anywhere else in the app that writes a key.
+    @ObservedObject private var apiKeyStore: ClickyAPIKeyStore = .shared
     var knowledgeIndex: WikiManager.Index
     var responseCard: ClickyResponseCard?
     var transcriptionProviderDisplayName: String
@@ -354,11 +352,8 @@ struct CodexAgentModeSettingsSheet: View {
                                     placeholder: "Voice responses",
                                     systemImage: "waveform",
                                     value: Binding(
-                                        get: { userAnthropicAPIKey },
-                                        set: { newValue in
-                                            userAnthropicAPIKey = newValue
-                                            setAnthropicAPIKey(newValue)
-                                        }
+                                        get: { apiKeyStore.anthropicAPIKey },
+                                        set: { setAnthropicAPIKey($0) }
                                     )
                                 )
 
@@ -367,11 +362,8 @@ struct CodexAgentModeSettingsSheet: View {
                                     placeholder: "Voice playback",
                                     systemImage: "speaker.wave.2",
                                     value: Binding(
-                                        get: { userElevenLabsAPIKey },
-                                        set: { newValue in
-                                            userElevenLabsAPIKey = newValue
-                                            setElevenLabsAPIKey(newValue)
-                                        }
+                                        get: { apiKeyStore.elevenLabsAPIKey },
+                                        set: { setElevenLabsAPIKey($0) }
                                     )
                                 )
 
@@ -380,11 +372,8 @@ struct CodexAgentModeSettingsSheet: View {
                                     placeholder: "Streaming transcription",
                                     systemImage: "waveform",
                                     value: Binding(
-                                        get: { userAssemblyAIAPIKey },
-                                        set: { newValue in
-                                            userAssemblyAIAPIKey = newValue
-                                            setAssemblyAIAPIKey(newValue)
-                                        }
+                                        get: { apiKeyStore.assemblyAIAPIKey },
+                                        set: { setAssemblyAIAPIKey($0) }
                                     )
                                 )
 
@@ -393,11 +382,8 @@ struct CodexAgentModeSettingsSheet: View {
                                     placeholder: "Streaming transcription",
                                     systemImage: "waveform",
                                     value: Binding(
-                                        get: { userDeepgramAPIKey },
-                                        set: { newValue in
-                                            userDeepgramAPIKey = newValue
-                                            setDeepgramAPIKey(newValue)
-                                        }
+                                        get: { apiKeyStore.deepgramAPIKey },
+                                        set: { setDeepgramAPIKey($0) }
                                     )
                                 )
 
@@ -406,11 +392,8 @@ struct CodexAgentModeSettingsSheet: View {
                                     placeholder: "Voice ID",
                                     systemImage: "person.wave.2",
                                     value: Binding(
-                                        get: { userElevenLabsVoiceID },
-                                        set: { newValue in
-                                            userElevenLabsVoiceID = newValue
-                                            setElevenLabsVoiceID(newValue)
-                                        }
+                                        get: { apiKeyStore.elevenLabsVoiceID },
+                                        set: { setElevenLabsVoiceID($0) }
                                     )
                                 )
 
@@ -419,11 +402,8 @@ struct CodexAgentModeSettingsSheet: View {
                                     placeholder: "Coding and actions",
                                     systemImage: "terminal",
                                     value: Binding(
-                                        get: { userCodexAgentAPIKey },
-                                        set: { newValue in
-                                            userCodexAgentAPIKey = newValue
-                                            setCodexAgentAPIKey(newValue)
-                                        }
+                                        get: { apiKeyStore.openAIAPIKey },
+                                        set: { setCodexAgentAPIKey($0) }
                                     )
                                 )
                             }

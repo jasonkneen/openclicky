@@ -27,6 +27,20 @@ struct CompanionPanelView: View {
         !companionManager.hasCompletedOnboarding && !companionManager.allPermissionsGranted
     }
 
+    /// Whether to render the inline API keys section in the menu bar
+    /// panel. Surfaced during permission-granted states so users can
+    /// paste the required Anthropic key without opening the full
+    /// Settings window. Hidden during the permission onboarding flow
+    /// (Anthropic key has its own slot once permissions are granted)
+    /// and during the active advanced/Agent Mode dashboard, where the
+    /// `CodexAgentModePanelSection` already exposes the same fields.
+    private var shouldShowAPIKeysPanelSection: Bool {
+        guard companionManager.allPermissionsGranted else { return false }
+        guard !isPermissionOnboardingActive else { return false }
+        guard !companionManager.isAdvancedModeEnabled else { return false }
+        return true
+    }
+
     init(
         companionManager: CompanionManager,
         isPanelPinned: Bool = false,
@@ -141,6 +155,17 @@ struct CompanionPanelView: View {
             //     showClickyCursorToggleRow
             //         .padding(.horizontal, 16)
             // }
+
+            if shouldShowAPIKeysPanelSection {
+                Spacer()
+                    .frame(height: 16)
+
+                APIKeysPanelSection(
+                    apiKeyStore: .shared,
+                    companionManager: companionManager
+                )
+                .padding(.horizontal, 14)
+            }
 
             Spacer()
                 .frame(height: 14)
