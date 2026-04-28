@@ -1,58 +1,50 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
-	<dict>
-		<key>CFBundleURLTypes</key>
-		<array>
-			<dict>
-				<key>CFBundleURLName</key>
-				<string>OpenClicky</string>
-				<key>CFBundleURLSchemes</key>
-				<array>
-					<string>openclicky</string>
+<dict>
+	<key>AnthropicAPIKey</key>
+	<string>$(ANTHROPIC_API_KEY)</string>
+	<key>AssemblyAIAPIKey</key>
+	<string>$(ASSEMBLYAI_API_KEY)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>OpenClicky</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>openclicky</string>
 			</array>
 		</dict>
-		</array>
-		<key>LSUIElement</key>
+	</array>
+	<key>DeepgramAPIKey</key>
+	<string>$(DEEPGRAM_API_KEY)</string>
+	<key>DeepgramTranscriptionModel</key>
+	<string>nova-3</string>
+	<key>ElevenLabsAPIKey</key>
+	<string>$(ELEVENLABS_API_KEY)</string>
+	<key>ElevenLabsVoiceID</key>
+	<string>$(ELEVENLABS_VOICE_ID)</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
 		<true/>
-		<key>SUFeedURL</key>
-		<string>https://raw.githubusercontent.com/jasonkneen/openclicky/main/appcast.xml</string>
-		<key>SUPublicEDKey</key>
-		<string>fXYcC2zX+zTEH0DVS8io8agfHtphoB9/o6J33T9FLdk=</string>
-		<key>SUEnableAutomaticChecks</key>
-		<true/>
-		<key>SUAllowsAutomaticUpdates</key>
-		<true/>
-		<key>SUAutomaticallyUpdate</key>
-		<true/>
-		<key>SUScheduledCheckInterval</key>
-		<integer>86400</integer>
-		<key>NSAppTransportSecurity</key>
-		<dict>
-			<key>NSAllowsLocalNetworking</key>
-			<true/>
-		</dict>
-		<key>NSAppleEventsUsageDescription</key>
-		<string>OpenClicky uses Automation only when you ask it to work with local apps such as Reminders, Calendar, Messages, or Notes.</string>
-		<key>AnthropicAPIKey</key>
-		<string>$(ANTHROPIC_API_KEY)</string>
-		<key>AssemblyAIAPIKey</key>
-		<string>$(ASSEMBLYAI_API_KEY)</string>
-		<key>DeepgramAPIKey</key>
-		<string>$(DEEPGRAM_API_KEY)</string>
-		<key>DeepgramTranscriptionModel</key>
-		<string>nova-3</string>
-		<key>ElevenLabsAPIKey</key>
-		<string>$(ELEVENLABS_API_KEY)</string>
-		<key>ElevenLabsVoiceID</key>
-		<string>$(ELEVENLABS_VOICE_ID)</string>
-		<key>VoiceTranscriptionProvider</key>
-		<string>apple</string>
-		<key>NSMicrophoneUsageDescription</key>
-		<string>OpenClicky uses your microphone so you can talk to it</string>
-		<key>NSScreenCaptureUsageDescription</key>
-		<string>OpenClicky needs screen recording access to see your screen and help you.</string>
-		<key>NSSpeechRecognitionUsageDescription</key>
-		<string>OpenClicky uses speech recognition to transcribe your voice when you talk to it</string>
 	</dict>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>OpenClicky needs screen recording access to see your screen and help you.</string>
+	<key>SUAllowsAutomaticUpdates</key>
+	<true/>
+	<key>SUAutomaticallyUpdate</key>
+	<true/>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://raw.githubusercontent.com/jasonkneen/openclicky/main/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>fXYcC2zX+zTEH0DVS8io8agfHtphoB9/o6J33T9FLdk=</string>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
+	<key>VoiceTranscriptionProvider</key>
+	<string>automatic</string>
+</dict>
 </plist>
