@@ -898,6 +898,10 @@ private struct ClickyAgentDockStackView: View {
         VStack(alignment: .trailing, spacing: 14) {
             ForEach(companionManager.agentDockItems) { item in
                 HStack(alignment: .top, spacing: 22) {
+                    // Collapsed by default — icon-only — until the user
+                    // hovers. This removes both the always-on conversation
+                    // preview AND the post-completion expanded summary card,
+                    // matching the "just have the agent icon up there" UX.
                     if shouldShowExpandedCard(for: item) {
                         ClickyAgentDockHoverCard(
                             item: item,
@@ -906,15 +910,10 @@ private struct ClickyAgentDockStackView: View {
                             text: { companionManager.showTextFollowUpForAgentDockItem(item.id) },
                             voice: { companionManager.prepareVoiceFollowUpForAgentDockItem(item.id) },
                             close: { companionManager.closeAgentDockPanel() },
-                            stop: { companionManager.stopAgentDockItem(item.id) }
+                            stop: { companionManager.stopAgentDockItem(item.id) },
+                            dismiss: { companionManager.dismissAgentDockItem(item.id) }
                         )
                         .transition(.opacity.combined(with: .move(edge: .trailing)))
-                    } else if item.caption != nil {
-                        ClickyAgentDockConversationPreview(
-                            item: item,
-                            canOpenDashboard: companionManager.isAdvancedModeEnabled
-                        )
-                            .transition(.opacity.combined(with: .move(edge: .trailing)))
                     }
 
                     Button {
@@ -947,8 +946,12 @@ private struct ClickyAgentDockStackView: View {
                     )
                 }
                 .contentShape(Rectangle())
-                .padding(.top, 28)
-                .padding(.trailing, 36)
+                // Tighter top/trailing inset so the icon sits closer to the
+                // corner. Combined with the outer-VStack inset reductions
+                // below, the icon shifted ~50px up and ~50px right per UX
+                // request 2026-04-28.
+                .padding(.top, 0)
+                .padding(.trailing, 0)
                 .onHover { isHovering in
                     withAnimation(.easeOut(duration: 0.14)) {
                         hoveredItemID = isHovering ? item.id : nil
@@ -957,19 +960,17 @@ private struct ClickyAgentDockStackView: View {
             }
         }
         .frame(width: 820, height: 430, alignment: .topTrailing)
-        .padding(.top, 18)
-        .padding(.trailing, 18)
+        .padding(.top, 0)
+        .padding(.trailing, 4)
         .animation(.easeOut(duration: 0.16), value: companionManager.agentDockItems)
     }
 
     private func shouldShowExpandedCard(for item: ClickyAgentDockItem) -> Bool {
-        if hoveredItemID == item.id { return true }
-        switch item.status {
-        case .done, .failed:
-            return true
-        case .starting, .running:
-            return false
-        }
+        // Only expand on hover. Previously `.done` and `.failed` stayed
+        // expanded automatically so users could read the final summary,
+        // but per UX request 2026-04-28 the dock should be icon-only by
+        // default — hovering reveals the full card.
+        return hoveredItemID == item.id
     }
 }
 
@@ -990,7 +991,9 @@ private struct ClickyAgentDockItemView: View {
                         endPoint: .bottomTrailing
                     )
                 )
-                .frame(width: 68, height: 68)
+                // Smaller icon (was 68×68) so the dock takes up less screen
+                // real estate when collapsed — ties to UX request 2026-04-28.
+                .frame(width: 52, height: 52)
                 .overlay(
                     Circle()
                         .stroke(
@@ -1006,21 +1009,21 @@ private struct ClickyAgentDockItemView: View {
                             lineWidth: 1.1
                         )
                 )
-                .shadow(color: item.accentTheme.cursorColor.opacity(0.34), radius: 30, x: 0, y: 14)
-                .shadow(color: item.accentTheme.cursorColor.opacity(0.70), radius: 20, x: 0, y: 0)
-                .shadow(color: Color.black.opacity(0.50), radius: 10, x: 0, y: 5)
+                .shadow(color: item.accentTheme.cursorColor.opacity(0.34), radius: 24, x: 0, y: 11)
+                .shadow(color: item.accentTheme.cursorColor.opacity(0.70), radius: 16, x: 0, y: 0)
+                .shadow(color: Color.black.opacity(0.50), radius: 8, x: 0, y: 4)
 
             Triangle()
                 .fill(item.accentTheme.cursorColor)
-                .frame(width: 23, height: 23)
+                .frame(width: 18, height: 18)
                 .rotationEffect(.degrees(-35))
-                .shadow(color: item.accentTheme.cursorColor.opacity(0.82), radius: 9, x: 0, y: 0)
-                .frame(width: 68, height: 68)
+                .shadow(color: item.accentTheme.cursorColor.opacity(0.82), radius: 7, x: 0, y: 0)
+                .frame(width: 52, height: 52)
 
             statusIndicator
-                .offset(x: -3, y: 3)
+                .offset(x: -2, y: 2)
         }
-        .frame(width: 112, height: 112, alignment: .center)
+        .frame(width: 92, height: 92, alignment: .center)
         .help(item.title)
         .onAppear {
             isStatusAnimating = true
@@ -1326,6 +1329,10 @@ private struct ClickyAgentDockHoverCard: View {
     let voice: () -> Void
     let close: () -> Void
     let stop: () -> Void
+    /// Called when the user taps "Close" on a terminal (`.done`/`.failed`)
+    /// agent. Distinct from `stop` (which sends a cancel signal) — this
+    /// just removes the dock item visually.
+    let dismiss: () -> Void
     @State private var isConfirmingStop = false
 
     var body: some View {
@@ -1463,26 +1470,38 @@ private struct ClickyAgentDockHoverCard: View {
 
     @ViewBuilder
     private var stopControls: some View {
-        if isConfirmingStop {
-            Button {
-                isConfirmingStop = false
-                stop()
-            } label: {
-                Label("Confirm stop", systemImage: "stop.circle.fill")
-            }
-            .buttonStyle(ClickyAgentDockStopButtonStyle(isConfirming: true))
-
-            Button("Keep running") {
-                isConfirmingStop = false
+        // Once the agent is in a terminal state (.done / .failed), there's
+        // nothing to cancel — show a clean "Close" button that dismisses
+        // the dock item instead of the destructive Stop / Confirm-stop
+        // affordance.
+        switch item.status {
+        case .done, .failed:
+            Button(action: dismiss) {
+                Label("Close", systemImage: "xmark.circle")
             }
             .buttonStyle(ClickyAgentDockPillButtonStyle())
-        } else {
-            Button {
-                isConfirmingStop = true
-            } label: {
-                Label("Stop", systemImage: "stop.circle")
+        case .starting, .running:
+            if isConfirmingStop {
+                Button {
+                    isConfirmingStop = false
+                    stop()
+                } label: {
+                    Label("Confirm stop", systemImage: "stop.circle.fill")
+                }
+                .buttonStyle(ClickyAgentDockStopButtonStyle(isConfirming: true))
+
+                Button("Keep running") {
+                    isConfirmingStop = false
+                }
+                .buttonStyle(ClickyAgentDockPillButtonStyle())
+            } else {
+                Button {
+                    isConfirmingStop = true
+                } label: {
+                    Label("Stop", systemImage: "stop.circle")
+                }
+                .buttonStyle(ClickyAgentDockStopButtonStyle(isConfirming: false))
             }
-            .buttonStyle(ClickyAgentDockStopButtonStyle(isConfirming: false))
         }
     }
 
@@ -1634,8 +1653,14 @@ final class ClickyAgentDockWindowManager {
     private var customFrame: NSRect?
     private let dockSize = NSSize(width: 860, height: 480)
     private let hoverCardWidth: CGFloat = 560
-    private let dockIconWidth: CGFloat = 112
-    private let dockTrailingInset: CGFloat = 54
+    // Track the icon container size used by `ClickyAgentDockItemView`. Used
+    // by `textFollowUpOrigin()` to position follow-up popovers relative to
+    // the icon's actual width.
+    private let dockIconWidth: CGFloat = 92
+    // Trailing inset between the dock icon and the panel's right edge.
+    // Reduced together with the SwiftUI inner paddings so the icon sits
+    // closer to the screen corner.
+    private let dockTrailingInset: CGFloat = 4
     private let dockItemSpacing: CGFloat = 22
 
     func show(

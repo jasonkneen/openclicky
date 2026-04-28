@@ -487,7 +487,10 @@ final class CodexAgentSession: ObservableObject, Identifiable {
             flushPendingAssistantDeltas()
             currentAssistantEntryID = nil
             status = .ready
-            playAgentDoneSoundIfAvailable()
+            // Chime intentionally NOT played here. CompanionManager owns
+            // the audio choreography and plays the chime *after* any
+            // in-flight TTS finishes, so the chime can't cut the
+            // acknowledgement speech. See `playAgentDoneChimeAfterCurrentTTS`.
         case "error":
             let text = Self.userFacingErrorMessage(
                 from: Self.notificationErrorMessage(from: params) ?? "Codex app-server emitted an error."
@@ -728,10 +731,9 @@ final class CodexAgentSession: ObservableObject, Identifiable {
             && normalized.contains("bad gateway")
     }
 
-    private func playAgentDoneSoundIfAvailable() {
-        guard let url = Bundle.main.url(forResource: "agent-done", withExtension: "mp3") else { return }
-        NSSound(contentsOf: url, byReference: false)?.play()
-    }
+    // Note: the agent-done chime is no longer played from this class.
+    // `CompanionManager.playAgentDoneChimeAfterCurrentTTS()` owns it so
+    // it can be sequenced behind any in-flight TTS playback.
 
     private func persistCompletedTurnMemory(agentResponse: String) {
         guard let lastSubmittedPrompt else { return }

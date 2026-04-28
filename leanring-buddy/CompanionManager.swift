@@ -432,10 +432,13 @@ final class CompanionManager: ObservableObject {
     /// the harness only spawns when the transcript itself says "agent".
     private var pendingAgentOfferInstruction: String?
     private var pendingAgentOfferAt: Date?
+    private var deferredLiveAgentRoutePartial: String?
+    private var deferredLiveAgentRoutePartialAt: Date?
     /// Most recent voice transcript that fell through to the voice
     /// responder. Used as the candidate task when Haiku offers an agent.
     private var lastVoiceUserTranscript: String?
     private static let pendingAgentOfferTTL: TimeInterval = 90
+    private static let deferredLiveAgentRoutePartialTTL: TimeInterval = 20
 
     // MARK: Speculative pre-fire state
     //
@@ -482,6 +485,11 @@ final class CompanionManager: ObservableObject {
     private var announcedAgentFileURLs: Set<String> = []
     private var liveHandledComputerUseFingerprints: Set<String> = []
     private var lastAgentProgressNarrationAt: Date?
+    /// The phrase last spoken for each running agent session, keyed by
+    /// session ID. Used to suppress duplicate progress narrations — we
+    /// only speak when the *content* of the activity changed, never just
+    /// because a polling tick fired.
+    private var lastAgentProgressNarrationSignatures: [UUID: String] = [:]
     private var currentFolderContextURL: URL?
     private var activeRequestTiming: OpenClickyRequestTiming?
     private var agentRequestTimingsBySessionID: [UUID: OpenClickyRequestTiming] = [:]
@@ -1722,7 +1730,10 @@ final class CompanionManager: ObservableObject {
         lastTranscript = finalTranscript
         let requestTiming = beginRequestTiming(source: "voice_final_transcript", text: finalTranscript)
         activeRequestTiming = requestTiming
-        defer { activeRequestTiming = nil }
+        defer {
+            activeRequestTiming = nil
+            clearDeferredLiveAgentRoutePartial()
+        }
         print("Companion received transcript: \(finalTranscript)")
         lastVoiceInteractionCompletedAt = Date()
         OpenClickyMessageLogStore.shared.append(
@@ -1759,6 +1770,9 @@ final class CompanionManager: ObservableObject {
             return
         }
         if startExplicitAgentTaskIfRequested(from: finalTranscript) {
+            return
+        }
+        if startAgentTaskFromDeferredLiveAgentRouteIfNeeded(finalTranscript) {
             return
         }
         if handleDirectComputerUseRequest(from: finalTranscript, source: "final_transcript") {
@@ -1804,6 +1818,7 @@ final class CompanionManager: ObservableObject {
 
         let shouldTraceMiss = Self.isPotentialDirectComputerUseTranscript(trimmedTranscript)
         if Self.shouldDeferLiveComputerUseForAgentRoute(trimmedTranscript) {
+            recordDeferredLiveAgentRoutePartial(trimmedTranscript)
             if shouldTraceMiss {
                 OpenClickyMessageLogStore.shared.append(
                     lane: "computer-use",
@@ -1922,6 +1937,53 @@ final class CompanionManager: ObservableObject {
                 ]
             )
         }
+    }
+
+    private func recordDeferredLiveAgentRoutePartial(_ partialTranscript: String) {
+        deferredLiveAgentRoutePartial = partialTranscript
+        deferredLiveAgentRoutePartialAt = Date()
+    }
+
+    private func clearDeferredLiveAgentRoutePartial() {
+        deferredLiveAgentRoutePartial = nil
+        deferredLiveAgentRoutePartialAt = nil
+    }
+
+    private func startAgentTaskFromDeferredLiveAgentRouteIfNeeded(_ finalTranscript: String) -> Bool {
+        let trimmedTranscript = finalTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTranscript.isEmpty,
+              let partialTranscript = deferredLiveAgentRoutePartial,
+              let partialAt = deferredLiveAgentRoutePartialAt else {
+            return false
+        }
+
+        let partialAge = Date().timeIntervalSince(partialAt)
+        guard partialAge <= Self.deferredLiveAgentRoutePartialTTL,
+              Self.shouldRecoverDeferredLiveAgentRoute(
+                partialTranscript: partialTranscript,
+                finalTranscript: trimmedTranscript
+              ) else {
+            return false
+        }
+
+        let instruction = Self.normalizedAgentTaskInstruction(from: trimmedTranscript)
+        guard !instruction.isEmpty else { return false }
+
+        OpenClickyMessageLogStore.shared.append(
+            lane: "computer-use",
+            direction: "incoming",
+            event: "native_cua.final_transcript.deferred_agent_route_recovered",
+            fields: [
+                "partialTranscript": partialTranscript,
+                "finalTranscript": trimmedTranscript,
+                "partialAgeMs": Int(partialAge * 1000),
+                "executor": "agent_mode",
+                "route": "agent.start",
+                "requestID": activeRequestTiming?.requestID ?? "none"
+            ]
+        )
+        startVoiceAgentTask(instruction: instruction)
+        return true
     }
 
     private func handleDirectComputerUseRequest(from transcript: String, source: String) -> Bool {
@@ -4283,7 +4345,8 @@ final class CompanionManager: ObservableObject {
         announceAgentCompletionIfNeeded(
             sessionID: sessionID,
             outcome: "cancelled",
-            summary: announcementReason
+            summary: announcementReason,
+            cancelReason: normalizedReason
         )
         if removeDockItems {
             scheduleAgentDockItemRemoval(for: sessionID)
@@ -4782,15 +4845,32 @@ final class CompanionManager: ObservableObject {
         guard !runningSessions.isEmpty else { return }
         guard voiceState == .idle, !voiceTTSClient.isPlaying else { return }
 
+        // Only narrate sessions that have substantively new activity since
+        // the last time we spoke about them. No filler — "we're working"
+        // / "we're starting" no longer counts. If nothing meaningful has
+        // changed, stay silent. This replaces the old behavior of
+        // speaking "the agent says we're working" every 30 seconds.
+        let updates: [(session: CodexAgentSession, phrase: String, signature: String)] =
+            runningSessions.compactMap { session in
+                guard let phrase = Self.agentProgressPhrase(for: session) else { return nil }
+                let signature = "\(session.id.uuidString)|\(phrase)"
+                if lastAgentProgressNarrationSignatures[session.id] == phrase {
+                    return nil
+                }
+                return (session, phrase, signature)
+            }
+
+        guard !updates.isEmpty else { return }
+
         let updateText: String
-        if runningSessions.count == 1, let session = runningSessions.first {
-            updateText = "\(session.spokenAgentSentenceName) says \(Self.agentProgressPhrase(for: session))."
+        if updates.count == 1, let only = updates.first {
+            updateText = "\(only.session.spokenAgentSentenceName) says \(only.phrase)."
         } else {
-            let details = runningSessions
+            let details = updates
                 .prefix(3)
-                .map { "\($0.spokenAgentSentenceName) says \(Self.agentProgressPhrase(for: $0))" }
+                .map { "\($0.session.spokenAgentSentenceName) says \($0.phrase)" }
                 .joined(separator: ". ")
-            let remainingCount = runningSessions.count - min(runningSessions.count, 3)
+            let remainingCount = updates.count - min(updates.count, 3)
             if remainingCount > 0 {
                 updateText = "\(details). \(remainingCount) more running."
             } else {
@@ -4798,39 +4878,44 @@ final class CompanionManager: ObservableObject {
             }
         }
 
+        for update in updates {
+            lastAgentProgressNarrationSignatures[update.session.id] = update.phrase
+        }
         lastAgentProgressNarrationAt = now
         speakShortSystemResponse(updateText)
     }
 
-    private static func agentProgressPhrase(for session: CodexAgentSession) -> String {
-        if let activity = session.latestActivitySummary?.lowercased() {
-            if activity.contains("matching files") || activity.contains("looking for") {
-                return "we're checking the files"
-            }
-            if activity.contains("focusing") || activity.contains("showing") {
-                return "we're opening what we found"
-            }
-            if activity.contains("checking the work") {
-                return "we're checking the work"
-            }
-            if activity.contains("working") {
-                return "we're working through it"
-            }
-            return "we're \(activity)"
+    /// Build the spoken phrase for an in-flight agent. Returns `nil` when
+    /// there is nothing substantive to say — never returns filler like
+    /// "we're working" or "we're starting", because the narration policy
+    /// is now silence-by-default.
+    private static func agentProgressPhrase(for session: CodexAgentSession) -> String? {
+        guard let activity = session.latestActivitySummary?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased(),
+              !activity.isEmpty else {
+            return nil
         }
 
-        switch session.status {
-        case .starting:
-            return "we're starting"
-        case .running:
-            return "we're working"
-        case .ready:
-            return "we're done"
-        case .failed:
-            return "we need attention"
-        case .stopped:
-            return "we're stopped"
+        // Map a few well-known activity shapes to natural-sounding phrases.
+        // For anything else, just speak the raw activity verbatim.
+        if activity.contains("matching files") || activity.contains("looking for") {
+            return "we're checking the files"
         }
+        if activity.contains("focusing") || activity.contains("showing") {
+            return "we're opening what we found"
+        }
+        if activity.contains("checking the work") {
+            return "we're checking the work"
+        }
+        // Suppress the "we're working" / "still working" filler — we want
+        // silence when nothing concrete has happened. If the activity is
+        // genuinely just a "working" word with no detail, return nil.
+        if activity == "working" || activity == "still working"
+            || activity == "running" || activity == "in progress" {
+            return nil
+        }
+        return "we're \(activity)"
     }
 
     private static func isAgentStatusQuestion(_ transcript: String) -> Bool {
@@ -5786,6 +5871,41 @@ final class CompanionManager: ObservableObject {
             || isReferentialAgentWorkFollowUp(transcript)
     }
 
+    private static func shouldRecoverDeferredLiveAgentRoute(
+        partialTranscript: String,
+        finalTranscript: String
+    ) -> Bool {
+        guard isAgentRoutingCandidate(partialTranscript) else { return false }
+
+        let normalizedFinal = normalizedSpokenCommandText(finalTranscript)
+        guard !normalizedFinal.isEmpty else { return false }
+
+        let cancellationSignals = [
+            "never mind",
+            "nevermind",
+            "ignore that",
+            "forget that",
+            "cancel that",
+            "stop that"
+        ]
+        if cancellationSignals.contains(where: { normalizedFinal.contains($0) }) {
+            return false
+        }
+
+        if isLikelyAgentFollowUpPhrasing(finalTranscript) {
+            return true
+        }
+
+        if isLikelyAgentToolWorkInstruction(finalTranscript) {
+            return true
+        }
+
+        let workVerbPattern = #"\b(?:create|make|build|update|change|edit|fix|design|redesign|open|show|preview|pull\s+up|find|save|export|write|review|test|run)\b"#
+        let artifactPattern = #"\b(?:form|page|site|website|app|file|document|report|code|repo|repository|folder|version|style|design)\b"#
+        return normalizedFinal.range(of: workVerbPattern, options: .regularExpression) != nil
+            && normalizedFinal.range(of: artifactPattern, options: .regularExpression) != nil
+    }
+
     private static func isPotentialDirectComputerUseTranscript(_ transcript: String) -> Bool {
         let normalizedTranscript = transcript
             .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
@@ -6430,10 +6550,13 @@ final class CompanionManager: ObservableObject {
 
             // Audio defer: with the dock now on-screen and the agent in
             // flight, give the appearance animation a short settle window
-            // (~250ms) before speaking. This eliminates the prior bug where
-            // TTS started at t=0 and visibly skipped/overlapped the cursor
-            // flight + dock fade-in.
-            try? await Task.sleep(nanoseconds: 250_000_000)
+            // before speaking. This eliminates the bug where TTS started
+            // at t=0 and visibly skipped/overlapped the cursor flight +
+            // dock fade-in. Bumped from 250→350ms now that the periodic
+            // progress narration is suppressed — the acknowledgement is
+            // the only spoken line at spawn, so it should feel intentional
+            // rather than rushed.
+            try? await Task.sleep(nanoseconds: 350_000_000)
 
             currentResponseTask = Task { [acknowledgement, dockItemID] in
                 await MainActor.run { self.voiceState = .processing }
@@ -6675,7 +6798,8 @@ final class CompanionManager: ObservableObject {
             announceAgentCompletionIfNeeded(
                 sessionID: sessionID,
                 outcome: "cancelled",
-                summary: Self.prettyCancelReason(for: normalizedStopReason)
+                summary: Self.prettyCancelReason(for: normalizedStopReason),
+                cancelReason: normalizedStopReason
             )
             break
         }
@@ -6689,6 +6813,9 @@ final class CompanionManager: ObservableObject {
     ) {
         let timing = agentRequestTimingsBySessionID.removeValue(forKey: sessionID)
         let executionStartedAt = agentExecutionStartDatesBySessionID.removeValue(forKey: sessionID)
+        // Drop the dedup signature for terminal sessions so the map can't
+        // grow without bound across long-running OpenClicky sessions.
+        lastAgentProgressNarrationSignatures.removeValue(forKey: sessionID)
         guard timing != nil || executionStartedAt != nil else { return }
 
         var fields = extra
@@ -6725,7 +6852,8 @@ final class CompanionManager: ObservableObject {
     private func announceAgentCompletionIfNeeded(
         sessionID: UUID,
         outcome: String,
-        summary: String?
+        summary: String?,
+        cancelReason: String? = nil
     ) {
         if lastNarratedAgentOutcomeBySessionID[sessionID] == outcome { return }
         lastNarratedAgentOutcomeBySessionID[sessionID] = outcome
@@ -6736,6 +6864,14 @@ final class CompanionManager: ObservableObject {
         // responder — the dock item still updates visually, and we don't
         // want to talk over the user's current request.
         if voiceState == .listening { return }
+
+        // User-initiated cancellation: the user just clicked Stop / said
+        // "cancel" — they already know what happened. Don't narrate it back.
+        // Only system-initiated cancellations get spoken (those would
+        // otherwise be invisible to the user).
+        if outcome == "cancelled", Self.isUserInitiatedCancelReason(cancelReason) {
+            return
+        }
 
         let trimmedSummary = summary?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -6755,13 +6891,60 @@ final class CompanionManager: ObservableObject {
                 : "The agent has completed the task — \(Self.briefCompletionSummary(trimmedSummary))."
         }
 
-        // Defer to the next runloop tick — narration triggers voice-state
-        // and response-card mutations, and we're called from inside a
-        // dock-status update. Updating both in the same frame produces
-        // a "multiple times per frame" warning from SwiftUI's onChange.
-        DispatchQueue.main.async { [weak self] in
-            self?.speakShortSystemResponse(line)
+        // Sequence behind any in-flight TTS instead of cutting it.
+        // Previously this called `speakShortSystemResponse(line)` directly,
+        // whose `interruptCurrentVoiceResponse()` would chop the
+        // acknowledgement TTS mid-sentence when fast tasks completed
+        // before the acknowledgement finished playing. Now we wait for
+        // the audio device to go idle, then play the chime (success
+        // only), then speak the announcement — so the success line is
+        // always heard, never elided, and never overlaps prior audio.
+        let playChime = (outcome == "success")
+        speakSystemAnnouncementAfterCurrentTTS(line, withChime: playChime)
+    }
+
+    /// Queue a system announcement to play *after* any currently-playing
+    /// TTS finishes. Polls `voiceTTSClient.isPlaying` rather than awaiting
+    /// a Task, because the relevant signal is "audio device idle", not
+    /// "Swift Task completed" — TTS playback can outlive its dispatching
+    /// task by a few hundred milliseconds while audio buffers drain.
+    ///
+    /// When `withChime` is true, the agent-done chime is played first,
+    /// followed by a settle gap, then the announcement. This is how
+    /// success completion announces — chime, then the spoken summary.
+    /// Play an agent-completion announcement. Chime first (if requested),
+    /// then the spoken line. Anything currently playing is cut so the
+    /// chime never overlaps speech and never gets cut by speech.
+    private func speakSystemAnnouncementAfterCurrentTTS(
+        _ line: String,
+        withChime: Bool = false
+    ) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            if withChime {
+                // Stop any in-flight TTS (acknowledgement, progress
+                // narration, anything) so the chime plays cleanly.
+                self.interruptCurrentVoiceResponse()
+                // Tiny gap to let the audio device settle after stop.
+                try? await Task.sleep(nanoseconds: 80_000_000)
+                if Task.isCancelled { return }
+                self.playAgentDoneChime()
+                // Chime length + breathing room before speech starts.
+                try? await Task.sleep(nanoseconds: 700_000_000)
+                if Task.isCancelled { return }
+            }
+            self.speakShortSystemResponse(line)
         }
+    }
+
+    /// Play the bundled "agent-done" chime via NSSound on a system
+    /// audio channel separate from TTS. Caller is responsible for
+    /// timing this so it doesn't overlap in-flight TTS.
+    private func playAgentDoneChime() {
+        guard let url = Bundle.main.url(forResource: "agent-done", withExtension: "mp3") else {
+            return
+        }
+        NSSound(contentsOf: url, byReference: false)?.play()
     }
 
     /// Trims an agent activity summary to a sentence-length spoken line.
@@ -6788,6 +6971,38 @@ final class CompanionManager: ObservableObject {
             return "model changed"
         default:
             return reason
+        }
+    }
+
+    /// Whether a cancellation reason was *initiated by the user* (Stop
+    /// click, "cancel" voice command, dismiss response card). Those
+    /// cancellations should be silent — the user already knows. Only
+    /// system-initiated cancellations (API key changed, model changed,
+    /// session externally stopped with no other context) get spoken.
+    private static func isUserInitiatedCancelReason(_ reason: String?) -> Bool {
+        guard let reason = reason?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased(),
+              !reason.isEmpty else {
+            return false
+        }
+        switch reason {
+        case "agent_dock_stop",
+             "agent.cancel",
+             "agent.cancel_current",
+             "agent.cancel_all",
+             "response_card_dismissed":
+            return true
+        case "api_key_reconfigured",
+             "model_changed",
+             "session_stopped",
+             "unknown":
+            return false
+        default:
+            // For anything else, default to "system" — user-initiated
+            // reasons are explicit and known. Unknown reasons get a
+            // narration so the user can find out what happened.
+            return false
         }
     }
 

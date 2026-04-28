@@ -546,6 +546,14 @@ final class AgentMenuBarStatusManager: NSObject {
             stop: { [weak companionManager, weak popover] in
                 popover?.performClose(nil)
                 companionManager?.stopAgentDockItem(item.id)
+            },
+            dismiss: { [weak companionManager, weak popover] in
+                // Close == dismiss the finished item: hide the popover
+                // and remove the dock entry. dismissAgentDockItem is
+                // UI-only — it does NOT send a cancel signal (the agent
+                // is already terminal here).
+                popover?.performClose(nil)
+                companionManager?.dismissAgentDockItem(item.id)
             }
         )
         let controller = NSHostingController(rootView: rootView)
@@ -639,6 +647,11 @@ private struct AgentMenuBarStatusPopoverView: View {
     let dashboard: () -> Void
     let close: () -> Void
     let stop: () -> Void
+    /// Called when the user taps "Close" on a terminal (`.done` / `.failed`)
+    /// agent. Distinct from `stop` (which sends a cancel signal) — Close
+    /// dismisses the popover AND removes the finished item from the dock
+    /// collection so it stops occupying the menu bar.
+    let dismiss: () -> Void
     @State private var isConfirmingStop = false
 
     var body: some View {
@@ -725,20 +738,30 @@ private struct AgentMenuBarStatusPopoverView: View {
 
     @ViewBuilder
     private var stopControls: some View {
-        if isConfirmingStop {
-            Button("Confirm stop") {
-                isConfirmingStop = false
-                stop()
+        // Once the agent is in a terminal state (.done / .failed), there's
+        // nothing to cancel — show "Close" instead of the Stop / Confirm
+        // affordance. Mirrors the dock hover-card behavior in
+        // `OverlayWindow.swift` so both surfaces stay in sync.
+        switch item.status {
+        case .done, .failed:
+            Button("Close", action: dismiss)
+                .foregroundColor(Color.white.opacity(0.82))
+        case .starting, .running:
+            if isConfirmingStop {
+                Button("Confirm stop") {
+                    isConfirmingStop = false
+                    stop()
+                }
+                .foregroundColor(Color(hex: "#FFB4BA"))
+                Button("Keep") {
+                    isConfirmingStop = false
+                }
+            } else {
+                Button("Stop") {
+                    isConfirmingStop = true
+                }
+                .foregroundColor(Color(hex: "#FFB4BA"))
             }
-            .foregroundColor(Color(hex: "#FFB4BA"))
-            Button("Keep") {
-                isConfirmingStop = false
-            }
-        } else {
-            Button("Stop") {
-                isConfirmingStop = true
-            }
-            .foregroundColor(Color(hex: "#FFB4BA"))
         }
     }
 
