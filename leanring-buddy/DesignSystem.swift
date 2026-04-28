@@ -10,6 +10,11 @@
 import SwiftUI
 import AppKit
 
+enum OpenClickyAgentPreferences {
+    /// Default `true`. When `false`, Agent Mode follow-up turns send text only (no desktop screenshot attachments).
+    static let followUpAttachScreenKey = "openclicky.agent.followUpAttachScreen"
+}
+
 enum ClickyAccentTheme: String, CaseIterable, Identifiable {
     case blue
     case mint

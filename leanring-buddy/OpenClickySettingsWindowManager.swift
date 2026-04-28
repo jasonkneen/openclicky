@@ -99,6 +99,11 @@ struct OpenClickySettingsView: View {
     @AppStorage(AppBundleConfiguration.userCodexAgentAPIKeyDefaultsKey) private var userCodexAgentAPIKey = ""
     @AppStorage(AppBundleConfiguration.userAssemblyAIAPIKeyDefaultsKey) private var userAssemblyAIAPIKey = ""
     @AppStorage(AppBundleConfiguration.userDeepgramAPIKeyDefaultsKey) private var userDeepgramAPIKey = ""
+    @AppStorage(AppBundleConfiguration.userGeminiAPIKeyDefaultsKey) private var userGeminiAPIKey = ""
+    @AppStorage(AppBundleConfiguration.userGeminiTTSVoiceDefaultsKey) private var userGeminiTTSVoice = "Kore"
+    @AppStorage(AppBundleConfiguration.userGeminiTTSModelDefaultsKey) private var userGeminiTTSModel = "gemini-2.5-flash-preview-tts"
+    @AppStorage(AppBundleConfiguration.userOpenAITTSVoiceDefaultsKey) private var userOpenAITTSVoice = "alloy"
+    @AppStorage(AppBundleConfiguration.userOpenAITTSModelDefaultsKey) private var userOpenAITTSModel = "gpt-4o-mini-tts"
     @AppStorage(AppBundleConfiguration.userWidgetsEnabledDefaultsKey) private var widgetsEnabled = false
     @AppStorage(AppBundleConfiguration.userWidgetsIncludeAgentTaskNamesDefaultsKey) private var widgetsIncludeAgentTaskNames = false
     @AppStorage(AppBundleConfiguration.userWidgetsIncludeMemorySnippetsDefaultsKey) private var widgetsIncludeMemorySnippets = false
@@ -404,6 +409,68 @@ struct OpenClickySettingsView: View {
                         text: Binding(
                             get: { userDeepgramTTSVoice },
                             set: { userDeepgramTTSVoice = $0; companionManager.setDeepgramTTSVoice($0) }
+                        )
+                    )
+                case .gemini:
+                    secureFieldRow(
+                        title: "Gemini API key",
+                        subtitle: "Google AI Studio API key for Gemini native TTS (speech generation). Can also set GEMINI_API_KEY in secrets.env.",
+                        systemImageName: "speaker.wave.2",
+                        placeholder: "AI Studio key",
+                        text: Binding(
+                            get: { userGeminiAPIKey },
+                            set: { userGeminiAPIKey = $0; companionManager.setGeminiAPIKey($0) }
+                        )
+                    )
+                    textFieldRow(
+                        title: "Gemini TTS voice name",
+                        subtitle: "Prebuilt voice e.g. Kore, Puck (see Gemini speech-generation docs).",
+                        systemImageName: "person.wave.2",
+                        placeholder: "Kore",
+                        text: Binding(
+                            get: { userGeminiTTSVoice },
+                            set: { userGeminiTTSVoice = $0; companionManager.setGeminiTTSVoice($0) }
+                        )
+                    )
+                    textFieldRow(
+                        title: "Gemini TTS model",
+                        subtitle: "e.g. gemini-2.5-flash-preview-tts or gemini-3.1-flash-preview-tts (when available in AI Studio).",
+                        systemImageName: "cpu",
+                        placeholder: "gemini-2.5-flash-preview-tts",
+                        text: Binding(
+                            get: { userGeminiTTSModel },
+                            set: { userGeminiTTSModel = $0; companionManager.setGeminiTTSModel($0) }
+                        )
+                    )
+                case .openAI:
+                    secureFieldRow(
+                        title: "OpenAI API key",
+                        subtitle: "Same key as Agent Mode / Codex (OPENAI_API_KEY in secrets.env also works). Used for OpenAI Speech TTS.",
+                        systemImageName: "key",
+                        placeholder: "sk-…",
+                        text: Binding(
+                            get: { userCodexAgentAPIKey },
+                            set: { userCodexAgentAPIKey = $0; companionManager.setCodexAgentAPIKey($0) }
+                        )
+                    )
+                    textFieldRow(
+                        title: "OpenAI TTS voice",
+                        subtitle: "e.g. alloy, echo, fable, onyx, nova, shimmer.",
+                        systemImageName: "person.wave.2",
+                        placeholder: "alloy",
+                        text: Binding(
+                            get: { userOpenAITTSVoice },
+                            set: { userOpenAITTSVoice = $0; companionManager.setOpenAITTSVoice($0) }
+                        )
+                    )
+                    textFieldRow(
+                        title: "OpenAI TTS model",
+                        subtitle: "Speech API: prefer gpt-4o-mini-tts. Legacy tts-1 is often disabled per project.",
+                        systemImageName: "cpu",
+                        placeholder: "gpt-4o-mini-tts",
+                        text: Binding(
+                            get: { userOpenAITTSModel },
+                            set: { userOpenAITTSModel = $0; companionManager.setOpenAITTSModel($0) }
                         )
                     )
                 }

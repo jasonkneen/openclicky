@@ -90,6 +90,11 @@ final class CodexAgentSession: ObservableObject, Identifiable {
     let accentTheme: ClickyAccentTheme
     @Published private(set) var status: CodexAgentSessionStatus = .stopped
     @Published private(set) var entries: [CodexTranscriptEntry] = []
+
+    /// True when the transcript already includes a user message (the next `submitPromptFromUI` is a follow-up).
+    var hasPriorUserTurnInTranscript: Bool {
+        entries.contains { $0.role == .user }
+    }
     @Published private(set) var activeThreadID: String?
     @Published private(set) var lastErrorMessage: String?
     @Published private(set) var latestResponseCard: ClickyResponseCard?
@@ -100,7 +105,15 @@ final class CodexAgentSession: ObservableObject, Identifiable {
     ).id
     @Published var workingDirectoryPath: String = UserDefaults.standard.string(forKey: "clickyCodexWorkingDirectory")
         ?? FileManager.default.homeDirectoryForCurrentUser.path
+    /// Files produced in this thread (session workspace + paths parsed from assistant text).
+    @Published private(set) var sessionArtifactFileURLs: [URL] = []
     var onOpenableFileFound: (@MainActor (URL) -> Void)?
+
+    /// Dedicated output folder for this agent thread; also the Codex process working directory.
+    var sessionWorkspaceDirectoryURL: URL {
+        homeManager.codexHomeDirectory
+            .appendingPathComponent("sessions/agents/\(id.uuidString)/workspace", isDirectory: true)
+    }
 
     var spokenAgentName: String {
         "the agent"
@@ -255,7 +268,7 @@ final class CodexAgentSession: ObservableObject, Identifiable {
                     "text": prompt,
                     "text_elements": []
                 ]],
-                "cwd": workingDirectoryPath,
+                "cwd": sessionWorkspaceDirectoryURL.path,
                 "approvalPolicy": "never",
                 "model": model,
                 "effort": homeManager.reasoningEffort
@@ -291,6 +304,9 @@ final class CodexAgentSession: ObservableObject, Identifiable {
         OpenClicky Agent Mode brief:
         - User request: \(prompt)
         - Work as an independent background agent. Each OpenClicky agent session has its own Codex runtime, thread, and process; do not assume another agent has your local state.
+        - Per-session workspace (Codex cwd — default location for new files and scratch work; this thread’s outputs stay here): \(sessionWorkspaceDirectoryURL.path)
+        - User project / working directory (use absolute paths to read or edit the user’s repo and existing files): \(workingDirectoryPath)
+        - When the user does not specify an output location, write deliverables under the per-session workspace. When editing an existing project, change files in the user project directory using full paths.
         - Runtime map file: \(homeManager.runtimeMapFile.path)
         - Codex home directory: \(homeManager.codexHomeDirectory.path)
         - Codex config file: \(homeManager.codexHomeDirectory.appendingPathComponent("config.toml", isDirectory: false).path)
@@ -319,6 +335,7 @@ final class CodexAgentSession: ObservableObject, Identifiable {
         - When working on the OpenClicky app repo, do not run terminal `xcodebuild`. Use Xcode for app builds and permission testing, and use `swiftc -parse <relevant Swift source files>` for lightweight Swift syntax checks.
         - Proceed autonomously. Choose sensible defaults and keep working without asking the user unless critical information is truly missing or the action would be destructive, credential-related, or permission-sensitive.
         - Voice is the primary interaction path. Keep user-facing progress and final answers concise enough to be spoken aloud, and put detailed logs or code context in the transcript when needed.
+        - When you create or identify a local file the user should open, include its exact absolute path in your final answer so OpenClicky can surface it in the UI.
         - When you find a local document, image, or other user file, include its exact local path in your final answer so OpenClicky can show it.
         - If blocked, report the exact blocker and the smallest user action needed. If not blocked, finish the task and summarize what changed or what you found.
         - At the end of your final response, include one metadata line exactly like `TASK_TITLE: Short task title` using 2-5 words. OpenClicky strips this line and uses it to rename the agent task.
@@ -344,6 +361,7 @@ final class CodexAgentSession: ObservableObject, Identifiable {
         let homeManager = self.homeManager
         let processManager = self.processManager
         let preparedLayout = try homeManager.prepare(bundle: .main)
+        try FileManager.default.createDirectory(at: sessionWorkspaceDirectoryURL, withIntermediateDirectories: true)
         let executable = try CodexRuntimeLocator.codexExecutableURL(bundle: .main)
         let layout = try await Task.detached(priority: .userInitiated) {
             try processManager.start(executableURL: executable, codexHome: preparedLayout.homeDirectory)
@@ -361,6 +379,8 @@ final class CodexAgentSession: ObservableObject, Identifiable {
             ?? "You are OpenClicky, a friendly macOS cursor companion with Codex Agent Mode."
         let developerInstructions = """
         You are running inside OpenClicky Agent Mode on macOS. Be direct, helpful, and careful. Prefer concrete actions over vague advice.
+
+        Your shell working directory for this thread is the per-session workspace at \(sessionWorkspaceDirectoryURL.path). New files and artifacts belong there unless the user names another path or you must edit an existing file in the user’s project. The user’s configured project directory is \(workingDirectoryPath); use absolute paths when reading or modifying that tree.
 
         When working on the OpenClicky app repo, do not run terminal `xcodebuild`. Use Xcode for app builds and permission testing, and use `swiftc -parse <relevant Swift source files>` for lightweight Swift syntax checks.
 
@@ -392,7 +412,7 @@ final class CodexAgentSession: ObservableObject, Identifiable {
             threadStart = try await processManager.sendRequest(method: "thread/start", params: [
                 "model": model,
                 "modelProvider": homeManager.modelProviderID,
-                "cwd": workingDirectoryPath,
+                "cwd": sessionWorkspaceDirectoryURL.path,
                 "approvalPolicy": "never",
                 "sandbox": "danger-full-access",
                 "config": [:],
@@ -486,6 +506,7 @@ final class CodexAgentSession: ObservableObject, Identifiable {
         case "turn/completed":
             flushPendingAssistantDeltas()
             currentAssistantEntryID = nil
+            refreshArtifactsFromSessionWorkspace()
             status = .ready
             // Chime intentionally NOT played here. CompanionManager owns
             // the audio choreography and plays the chime *after* any
@@ -625,6 +646,7 @@ final class CodexAgentSession: ObservableObject, Identifiable {
                     rawText: Self.userFacingAgentMessage(from: visibleText),
                     contextTitle: lastSubmittedPrompt
                 )
+                registerArtifacts(fromAssistantText: visibleText)
                 if let fileURL = Self.firstOpenableFileURL(in: visibleText) {
                     onOpenableFileFound?(fileURL)
                 }
@@ -647,6 +669,45 @@ final class CodexAgentSession: ObservableObject, Identifiable {
         default:
             break
         }
+    }
+
+    private func registerArtifacts(fromAssistantText text: String) {
+        mergeSessionArtifacts(Self.allOpenableFileURLs(in: text))
+    }
+
+    private func mergeSessionArtifacts(_ urls: [URL]) {
+        let fm = FileManager.default
+        var paths = Set(sessionArtifactFileURLs.map(\.path))
+        var merged = sessionArtifactFileURLs
+        for raw in urls {
+            let url = raw.standardizedFileURL
+            guard fm.fileExists(atPath: url.path) else { continue }
+            var isDirectory: ObjCBool = false
+            guard fm.fileExists(atPath: url.path, isDirectory: &isDirectory), !isDirectory.boolValue else { continue }
+            let path = url.path
+            guard !paths.contains(path) else { continue }
+            paths.insert(path)
+            merged.append(url)
+        }
+        if merged.count > 32 {
+            merged = Array(merged.suffix(32))
+        }
+        sessionArtifactFileURLs = merged
+    }
+
+    private func refreshArtifactsFromSessionWorkspace() {
+        let root = sessionWorkspaceDirectoryURL
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: root.path) else { return }
+        guard let enumerator = fm.enumerator(at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else { return }
+        var discovered: [URL] = []
+        while let url = enumerator.nextObject() as? URL {
+            var isDirectory: ObjCBool = false
+            guard fm.fileExists(atPath: url.path, isDirectory: &isDirectory), !isDirectory.boolValue else { continue }
+            discovered.append(url.standardizedFileURL)
+            if discovered.count >= 40 { break }
+        }
+        mergeSessionArtifacts(discovered)
     }
 
     private func appendAssistantDelta(itemID: String, delta: String) {
@@ -1204,12 +1265,20 @@ final class CodexAgentSession: ObservableObject, Identifiable {
     }
 
     private static func firstOpenableFileURL(in text: String, fileManager: FileManager = .default) -> URL? {
+        allOpenableFileURLs(in: text, fileManager: fileManager).first
+    }
+
+    private static func allOpenableFileURLs(in text: String, fileManager: FileManager = .default) -> [URL] {
+        var result: [URL] = []
+        var seen = Set<String>()
         for candidate in pathCandidates(in: text) {
             guard let fileURL = resolvedFileURL(from: candidate, fileManager: fileManager) else { continue }
-            return fileURL
+            let path = fileURL.path
+            guard !seen.contains(path) else { continue }
+            seen.insert(path)
+            result.append(fileURL)
         }
-
-        return nil
+        return result
     }
 
     private static func pathCandidates(in text: String) -> [String] {
@@ -1277,24 +1346,38 @@ final class CodexAgentSession: ObservableObject, Identifiable {
     }
 
     private static let openableFileExtensions: Set<String> = [
+        "css",
         "csv",
         "doc",
         "docx",
         "gif",
         "heic",
+        "html",
         "jpeg",
         "jpg",
+        "js",
+        "json",
+        "jsx",
         "key",
         "md",
         "numbers",
         "pages",
         "pdf",
+        "plist",
         "png",
+        "py",
         "rtf",
+        "sh",
+        "swift",
+        "ts",
+        "tsx",
         "txt",
         "webp",
         "xls",
-        "xlsx"
+        "xlsx",
+        "xml",
+        "yaml",
+        "yml"
     ]
 
     private static let pathTrimCharacters = CharacterSet.whitespacesAndNewlines

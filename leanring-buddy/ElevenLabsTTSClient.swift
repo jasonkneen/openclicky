@@ -444,7 +444,7 @@ final class ElevenLabsTTSClient {
     }
 
     @discardableResult
-    fileprivate static func scheduleSamples(
+    static func scheduleSamples(
         _ samples: [Int16],
         on player: AVAudioPlayerNode,
         format: AVAudioFormat
@@ -483,7 +483,7 @@ final class ElevenLabsTTSClient {
         return AVAudioFramePosition(buffer.frameLength)
     }
 
-    fileprivate static func waitForPlaybackToDrain(
+    static func waitForPlaybackToDrain(
         _ player: AVAudioPlayerNode,
         scheduledFrameCount: AVAudioFramePosition,
         sampleRate: Double = ElevenLabsTTSClient.streamSampleRate
@@ -567,16 +567,20 @@ final class ElevenLabsTTSClient {
 /// TTS requests in parallel, and schedules audio onto the shared player
 /// node in sentence order.
 @MainActor
-final class StreamingTTSSession {
+internal final class StreamingTTSSession {
     /// Per-sentence PCM fetcher. Provider-agnostic — ElevenLabs and
     /// Cartesia both supply one of these on session creation. The
     /// session itself owns no networking code; it only orchestrates
     /// fetch-in-parallel and schedule-in-order.
-    fileprivate let fetchSamples: @Sendable (String) async throws -> [Int16]
-    fileprivate let playerNode: AVAudioPlayerNode?
-    fileprivate let format: AVAudioFormat?
-    fileprivate let sampleRate: Double
-    fileprivate let onPlaybackStarted: @MainActor () -> Void
+    private let fetchSamples: @Sendable (String) async throws -> [Int16]
+    private let playerNode: AVAudioPlayerNode?
+    private let format: AVAudioFormat?
+    private let sampleRate: Double
+    private let onPlaybackStarted: @MainActor () -> Void
+    /// When true, a failed per-sentence fetch retries with OpenAI Speech API if `OPENAI_API_KEY` is set. Disabled for the OpenAI TTS provider itself.
+    private let allowsOpenAIFallbackOnFailure: Bool
+    /// When true, after OpenAI fallback fails or is skipped, retries with Gemini TTS if `GEMINI_API_KEY` / `GOOGLE_GEMINI_API_KEY` is set. Disabled when primary provider is Gemini.
+    private let allowsGeminiFallbackOnFailure: Bool
 
     private var pendingText: String = ""
     /// Serialized chain of sentence-playback tasks. Each new sentence
@@ -595,18 +599,23 @@ final class StreamingTTSSession {
         "mr", "mrs", "ms", "dr", "jr", "sr", "st", "vs", "etc", "eg", "ie"
     ]
 
-    fileprivate init(
+    /// Must be `internal` (not `fileprivate`): instantiated from `GeminiTTSClient` and `OpenAITTSClient` in other source files.
+    internal init(
         fetchSamples: @escaping @Sendable (String) async throws -> [Int16],
         playerNode: AVAudioPlayerNode?,
         format: AVAudioFormat?,
         sampleRate: Double,
-        onPlaybackStarted: @escaping @MainActor () -> Void
+        onPlaybackStarted: @escaping @MainActor () -> Void,
+        allowsOpenAIFallbackOnFailure: Bool = true,
+        allowsGeminiFallbackOnFailure: Bool = true
     ) {
         self.fetchSamples = fetchSamples
         self.playerNode = playerNode
         self.format = format
         self.sampleRate = sampleRate
         self.onPlaybackStarted = onPlaybackStarted
+        self.allowsOpenAIFallbackOnFailure = allowsOpenAIFallbackOnFailure
+        self.allowsGeminiFallbackOnFailure = allowsGeminiFallbackOnFailure
     }
 
     /// Adds the text the LLM produced since the last call. Sentence
@@ -892,10 +901,24 @@ final class StreamingTTSSession {
             } catch is CancellationError {
                 return
             } catch {
-                // Drop this sentence — never play a system-voice
-                // fallback. The next sentence keeps the response moving.
-                print("⚠️ Sentence \(sentenceIndex) TTS fetch failed; skipping: \(error)")
-                return
+                var resolved: [Int16]?
+                if allowsOpenAIFallbackOnFailure,
+                   let openAI = await OpenAITTSClient.tryFetchSentenceSamplesFallback(text: text, targetSampleRate: sampleRate),
+                   !openAI.isEmpty {
+                    print("ℹ️ Sentence \(sentenceIndex) TTS: using OpenAI speech fallback (primary error: \(error.localizedDescription))")
+                    resolved = openAI
+                }
+                if resolved == nil, allowsGeminiFallbackOnFailure,
+                   let gemini = await GeminiTTSClient.tryFetchSentenceSamplesFallback(text: text, targetSampleRate: sampleRate),
+                   !gemini.isEmpty {
+                    print("ℹ️ Sentence \(sentenceIndex) TTS: using Gemini TTS fallback (primary error: \(error.localizedDescription))")
+                    resolved = gemini
+                }
+                guard let fallbackSamples = resolved, !fallbackSamples.isEmpty else {
+                    print("⚠️ Sentence \(sentenceIndex) TTS fetch failed; skipping: \(error)")
+                    return
+                }
+                samples = fallbackSamples
             }
 
             try Task.checkCancellation()
@@ -1478,12 +1501,16 @@ nonisolated enum OpenClickyTTSProvider: String, CaseIterable, Identifiable {
     case elevenLabs = "elevenlabs"
     case cartesia = "cartesia"
     case deepgram = "deepgram"
+    case gemini = "gemini"
+    case openAI = "openai"
     var id: String { rawValue }
     var displayName: String {
         switch self {
         case .elevenLabs: return "ElevenLabs"
         case .cartesia: return "Cartesia"
         case .deepgram: return "Deepgram Aura"
+        case .gemini: return "Gemini TTS"
+        case .openAI: return "OpenAI Speech"
         }
     }
     static func resolve(_ raw: String?) -> OpenClickyTTSProvider {

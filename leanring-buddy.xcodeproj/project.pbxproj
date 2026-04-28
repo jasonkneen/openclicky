@@ -625,8 +625,12 @@
 				INFOPLIST_FILE = "leanring-buddy/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = OpenClicky;
 				INFOPLIST_KEY_CFBundleName = OpenClicky;
+				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSAppleEventsUsageDescription = "OpenClicky uses Automation only when you ask it to work with local apps such as Reminders, Calendar, Messages, or Notes.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Jason Kneen. All rights reserved.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "OpenClicky uses your microphone so you can talk to it";
 				INFOPLIST_KEY_NSScreenCaptureUsageDescription = "OpenClicky needs screen recording access to see your screen and help you.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "OpenClicky uses speech recognition to transcribe your voice when you talk to it";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -665,8 +669,12 @@
 				INFOPLIST_FILE = "leanring-buddy/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = OpenClicky;
 				INFOPLIST_KEY_CFBundleName = OpenClicky;
+				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSAppleEventsUsageDescription = "OpenClicky uses Automation only when you ask it to work with local apps such as Reminders, Calendar, Messages, or Notes.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Jason Kneen. All rights reserved.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "OpenClicky uses your microphone so you can talk to it";
 				INFOPLIST_KEY_NSScreenCaptureUsageDescription = "OpenClicky needs screen recording access to see your screen and help you.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "OpenClicky uses speech recognition to transcribe your voice when you talk to it";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

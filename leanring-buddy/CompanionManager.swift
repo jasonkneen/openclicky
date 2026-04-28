@@ -21,6 +21,15 @@ enum CompanionVoiceState {
     case responding
 }
 
+/// Live phase for agent voice follow-up (dock / HUD). Drives explicit UI
+/// feedback because capture happens on the cursor pipeline, not in the popup.
+enum OpenClickyAgentVoiceFollowUpCapturePhase: Equatable {
+    case idle
+    case preparing
+    case listening
+    case processing
+}
+
 enum OpenClickyCompanionRuntimeMode {
     case menuBar
     case embeddedWindow
@@ -53,6 +62,10 @@ struct ClickyAgentDockItem: Identifiable, Equatable {
     var accentTheme: ClickyAccentTheme
     var status: ClickyAgentDockStatus
     var caption: String?
+    /// Per-thread Codex workspace; used to reveal outputs in Finder.
+    var sessionWorkspacePath: String
+    /// Recent files produced or referenced for this agent; mirrors the session when bound.
+    var artifactFileURLs: [URL]
     var createdAt: Date
 }
 
@@ -238,6 +251,7 @@ final class CompanionManager: ObservableObject {
     @Published private(set) var latestVoiceResponseCard: ClickyResponseCard?
     @Published private(set) var handoffQueue: [HandoffQueuedRegionScreenshot] = []
     @Published private(set) var agentDockItems: [ClickyAgentDockItem] = []
+    @Published private(set) var agentVoiceFollowUpCapturePhase: OpenClickyAgentVoiceFollowUpCapturePhase = .idle
     // Response text is now displayed inline on the cursor overlay via
     // streamingResponseText, so no separate response overlay manager is needed.
 
@@ -301,6 +315,20 @@ final class CompanionManager: ObservableObject {
         )
     }()
 
+    private lazy var geminiTTSClient: GeminiTTSClient = {
+        GeminiTTSClient(
+            apiKey: AppBundleConfiguration.geminiAPIKey(),
+            voiceID: AppBundleConfiguration.geminiTTSVoice()
+        )
+    }()
+
+    private lazy var openAITTSSpeechClient: OpenAITTSSpeechClient = {
+        OpenAITTSSpeechClient(
+            apiKey: AppBundleConfiguration.openAIAPIKey(),
+            voiceID: AppBundleConfiguration.openAITTSVoice()
+        )
+    }()
+
     /// Currently selected TTS provider. Persisted to UserDefaults under
     /// `openClickyTTSProvider`. Default ElevenLabs.
     @Published var selectedTTSProvider: OpenClickyTTSProvider =
@@ -315,6 +343,8 @@ final class CompanionManager: ObservableObject {
         case .elevenLabs: return elevenLabsTTSClient
         case .cartesia:   return cartesiaTTSClient
         case .deepgram:   return deepgramTTSClient
+        case .gemini:     return geminiTTSClient
+        case .openAI:     return openAITTSSpeechClient
         }
     }
 
@@ -326,6 +356,8 @@ final class CompanionManager: ObservableObject {
         case .elevenLabs: return "ElevenLabsTTSClient"
         case .cartesia:   return "CartesiaTTSClient"
         case .deepgram:   return "DeepgramTTSClient"
+        case .gemini:     return "GeminiTTSClient"
+        case .openAI:     return "OpenAITTSSpeechClient"
         }
     }
 
@@ -334,6 +366,8 @@ final class CompanionManager: ObservableObject {
         case .elevenLabs: return "ElevenLabsTTSClient.speakText"
         case .cartesia:   return "CartesiaTTSClient.speakText"
         case .deepgram:   return "DeepgramTTSClient.speakText"
+        case .gemini:     return "GeminiTTSClient.speakText"
+        case .openAI:     return "OpenAITTSSpeechClient.speakText"
         }
     }
 
@@ -342,6 +376,8 @@ final class CompanionManager: ObservableObject {
         case .elevenLabs: return "ElevenLabsTTSClient.beginStreamingResponse"
         case .cartesia:   return "CartesiaTTSClient.beginStreamingResponse"
         case .deepgram:   return "DeepgramTTSClient.beginStreamingResponse"
+        case .gemini:     return "GeminiTTSClient.beginStreamingResponse"
+        case .openAI:     return "OpenAITTSSpeechClient.beginStreamingResponse"
         }
     }
 
@@ -502,9 +538,11 @@ final class CompanionManager: ObservableObject {
     private var shortcutTransitionCancellable: AnyCancellable?
     private var controlDoubleTapCancellable: AnyCancellable?
     private var voiceStateCancellable: AnyCancellable?
+    private var agentVoiceFollowUpPhaseCancellable: AnyCancellable?
     private var audioPowerCancellable: AnyCancellable?
     private var agentStatusCancellables: [UUID: AnyCancellable] = [:]
     private var agentActivityCancellables: [UUID: AnyCancellable] = [:]
+    private var agentArtifactCancellables: [UUID: AnyCancellable] = [:]
     private var agentTitleCancellables: [UUID: AnyCancellable] = [:]
     private var pendingAgentActivityRefreshTasks: [UUID: Task<Void, Never>] = [:]
     private var tutorIdleCancellable: AnyCancellable?
@@ -873,6 +911,53 @@ final class CompanionManager: ObservableObject {
         )
     }
 
+    func setGeminiAPIKey(_ apiKey: String) {
+        persistOptionalSecret(apiKey, defaultsKey: AppBundleConfiguration.userGeminiAPIKeyDefaultsKey)
+        geminiTTSClient.updateConfiguration(
+            apiKey: AppBundleConfiguration.geminiAPIKey(),
+            voiceID: AppBundleConfiguration.geminiTTSVoice()
+        )
+        if selectedTTSProvider == .gemini {
+            FillerPhraseLibrary.shared.prepare(client: geminiTTSClient)
+        }
+    }
+
+    func setGeminiTTSVoice(_ voice: String) {
+        persistOptionalSecret(voice, defaultsKey: AppBundleConfiguration.userGeminiTTSVoiceDefaultsKey)
+        geminiTTSClient.updateConfiguration(
+            apiKey: AppBundleConfiguration.geminiAPIKey(),
+            voiceID: AppBundleConfiguration.geminiTTSVoice()
+        )
+        if selectedTTSProvider == .gemini {
+            FillerPhraseLibrary.shared.prepare(client: geminiTTSClient)
+        }
+    }
+
+    func setGeminiTTSModel(_ model: String) {
+        persistOptionalSecret(model, defaultsKey: AppBundleConfiguration.userGeminiTTSModelDefaultsKey)
+        if selectedTTSProvider == .gemini {
+            FillerPhraseLibrary.shared.prepare(client: geminiTTSClient)
+        }
+    }
+
+    func setOpenAITTSVoice(_ voice: String) {
+        persistOptionalSecret(voice, defaultsKey: AppBundleConfiguration.userOpenAITTSVoiceDefaultsKey)
+        openAITTSSpeechClient.updateConfiguration(
+            apiKey: AppBundleConfiguration.openAIAPIKey(),
+            voiceID: AppBundleConfiguration.openAITTSVoice()
+        )
+        if selectedTTSProvider == .openAI {
+            FillerPhraseLibrary.shared.prepare(client: openAITTSSpeechClient)
+        }
+    }
+
+    func setOpenAITTSModel(_ model: String) {
+        persistOptionalSecret(model, defaultsKey: AppBundleConfiguration.userOpenAITTSModelDefaultsKey)
+        if selectedTTSProvider == .openAI {
+            FillerPhraseLibrary.shared.prepare(client: openAITTSSpeechClient)
+        }
+    }
+
     func setAssemblyAIAPIKey(_ apiKey: String) {
         persistOptionalSecret(apiKey, defaultsKey: AppBundleConfiguration.userAssemblyAIAPIKeyDefaultsKey)
         buddyDictationManager.setTranscriptionProvider(buddyDictationManager.transcriptionProviderID)
@@ -890,6 +975,10 @@ final class CompanionManager: ObservableObject {
     func setCodexAgentAPIKey(_ apiKey: String) {
         persistOptionalSecret(apiKey, defaultsKey: AppBundleConfiguration.userCodexAgentAPIKeyDefaultsKey)
         openAIAPI.setAPIKey(AppBundleConfiguration.openAIAPIKey())
+        openAITTSSpeechClient.updateConfiguration(
+            apiKey: AppBundleConfiguration.openAIAPIKey(),
+            voiceID: AppBundleConfiguration.openAITTSVoice()
+        )
         codexAgentSessions.forEach { $0.stop(reason: "api_key_reconfigured") }
     }
 
@@ -964,6 +1053,7 @@ final class CompanionManager: ObservableObject {
         print("OpenClicky start - accessibility: \(hasAccessibilityPermission), screen: \(hasScreenRecordingPermission), mic: \(hasMicrophonePermission), screenContent: \(hasScreenContentPermission), fullDiskAccess: \(hasFullDiskAccessPermission), onboarded: \(hasCompletedOnboarding)")
         startPermissionPolling()
         bindVoiceStateObservation()
+        bindAgentVoiceFollowUpCapturePhase()
         bindAudioPowerLevel()
         bindShortcutTransitions()
         bindAgentSessionObservation()
@@ -1120,9 +1210,11 @@ final class CompanionManager: ObservableObject {
         pendingAgentDockItemRemovalTasks.values.forEach { $0.cancel() }
         pendingAgentDockItemRemovalTasks.removeAll()
         agentTitleCancellables.removeAll()
+        agentArtifactCancellables.removeAll()
         shortcutTransitionCancellable?.cancel()
         stopTutorIdleObservation()
         voiceStateCancellable?.cancel()
+        agentVoiceFollowUpPhaseCancellable?.cancel()
         audioPowerCancellable?.cancel()
         accessibilityCheckTimer?.invalidate()
         accessibilityCheckTimer = nil
@@ -1312,6 +1404,46 @@ final class CompanionManager: ObservableObject {
             }
     }
 
+    private func bindAgentVoiceFollowUpCapturePhase() {
+        agentVoiceFollowUpPhaseCancellable = Publishers.CombineLatest3(
+            buddyDictationManager.$isPreparingToRecord,
+            buddyDictationManager.$isRecordingFromMicrophoneButton,
+            buddyDictationManager.$isFinalizingTranscript
+        )
+        .receive(on: DispatchQueue.main)
+        .sink { [weak self] _, _, _ in
+            self?.syncAgentVoiceFollowUpCapturePhase()
+        }
+    }
+
+    private func syncAgentVoiceFollowUpCapturePhase() {
+        guard pendingAgentVoiceFollowUpSessionID != nil else {
+            if agentVoiceFollowUpCapturePhase != .idle {
+                agentVoiceFollowUpCapturePhase = .idle
+            }
+            return
+        }
+        let next: OpenClickyAgentVoiceFollowUpCapturePhase
+        if buddyDictationManager.isFinalizingTranscript {
+            next = .processing
+        } else if buddyDictationManager.isRecordingFromMicrophoneButton {
+            next = .listening
+        } else if buddyDictationManager.isPreparingToRecord {
+            next = .preparing
+        } else {
+            next = .preparing
+        }
+        if agentVoiceFollowUpCapturePhase != next {
+            agentVoiceFollowUpCapturePhase = next
+        }
+    }
+
+    func cancelAgentVoiceFollowUpCapture() {
+        pendingAgentVoiceFollowUpSessionID = nil
+        pendingAgentVoiceFollowUpCreatedAt = nil
+        stopSDKVoiceCapture()
+    }
+
     private func bindShortcutTransitions() {
         shortcutTransitionCancellable = globalPushToTalkShortcutMonitor
             .shortcutTransitionPublisher
@@ -1363,6 +1495,12 @@ final class CompanionManager: ObservableObject {
             .sink { [weak self, sessionID = session.id] title in
                 self?.updateAgentDockTitle(for: sessionID, title: title)
             }
+
+        agentArtifactCancellables[session.id] = session.$sessionArtifactFileURLs
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self, sessionID = session.id] urls in
+                self?.updateAgentDockArtifacts(for: sessionID, urls: urls)
+            }
     }
 
     private func updateAgentDockTitle(for sessionID: UUID, title: String) {
@@ -1370,6 +1508,13 @@ final class CompanionManager: ObservableObject {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTitle.isEmpty, agentDockItems[itemIndex].title != trimmedTitle else { return }
         agentDockItems[itemIndex].title = trimmedTitle
+        scheduleWidgetSnapshotPublish()
+    }
+
+    private func updateAgentDockArtifacts(for sessionID: UUID, urls: [URL]) {
+        guard let itemIndex = agentDockItems.lastIndex(where: { $0.sessionID == sessionID }) else { return }
+        guard agentDockItems[itemIndex].artifactFileURLs != urls else { return }
+        agentDockItems[itemIndex].artifactFileURLs = urls
         scheduleWidgetSnapshotPublish()
     }
 
@@ -1432,6 +1577,69 @@ final class CompanionManager: ObservableObject {
         guard codexAgentSessions.contains(where: { $0.id == sessionID }) else { return }
         activeCodexAgentSessionID = sessionID
         lastAgentContextSessionID = sessionID
+    }
+
+    /// Stops this agent, removes its dock tiles, and removes it from the team strip.
+    /// Other agents are unchanged. If this was the last agent, a fresh default session is inserted.
+    func closeCodexAgentSession(_ sessionID: UUID) {
+        guard let index = codexAgentSessions.firstIndex(where: { $0.id == sessionID }) else { return }
+
+        cancelPendingAgentDockItemRemoval(for: sessionID)
+        pendingAgentActivityRefreshTasks[sessionID]?.cancel()
+        pendingAgentActivityRefreshTasks.removeValue(forKey: sessionID)
+
+        agentStatusCancellables[sessionID]?.cancel()
+        agentStatusCancellables.removeValue(forKey: sessionID)
+        agentActivityCancellables[sessionID]?.cancel()
+        agentActivityCancellables.removeValue(forKey: sessionID)
+        agentTitleCancellables[sessionID]?.cancel()
+        agentTitleCancellables.removeValue(forKey: sessionID)
+        agentArtifactCancellables[sessionID]?.cancel()
+        agentArtifactCancellables.removeValue(forKey: sessionID)
+
+        agentRequestTimingsBySessionID.removeValue(forKey: sessionID)
+        agentExecutionStartDatesBySessionID.removeValue(forKey: sessionID)
+        lastNarratedAgentOutcomeBySessionID.removeValue(forKey: sessionID)
+        lastAgentProgressNarrationSignatures.removeValue(forKey: sessionID)
+
+        if pendingAgentVoiceFollowUpSessionID == sessionID {
+            pendingAgentVoiceFollowUpSessionID = nil
+            pendingAgentVoiceFollowUpCreatedAt = nil
+            syncAgentVoiceFollowUpCapturePhase()
+        }
+        if lastAgentContextSessionID == sessionID {
+            lastAgentContextSessionID = nil
+        }
+
+        agentDockItems.removeAll { $0.sessionID == sessionID }
+        if agentDockItems.isEmpty {
+            agentDockWindowManager.hide()
+        }
+
+        let session = codexAgentSessions[index]
+        session.onOpenableFileFound = nil
+        session.stop(reason: "user_closed_session")
+
+        let wasActive = activeCodexAgentSessionID == sessionID
+        var sessions = codexAgentSessions
+        sessions.remove(at: index)
+
+        if sessions.isEmpty {
+            let fresh = CodexAgentSession(title: "Agent 1", accentTheme: .blue)
+            observeCodexAgentSession(fresh)
+            codexAgentSessions = [fresh]
+            activeCodexAgentSessionID = fresh.id
+            lastAgentContextSessionID = fresh.id
+        } else {
+            codexAgentSessions = sessions
+            if wasActive {
+                let nextID = sessions[0].id
+                activeCodexAgentSessionID = nextID
+                lastAgentContextSessionID = nextID
+            }
+        }
+
+        scheduleWidgetSnapshotPublish()
     }
 
     private func beginRequestTiming(source: String, text: String) -> OpenClickyRequestTiming {
@@ -3354,6 +3562,7 @@ final class CompanionManager: ObservableObject {
         guard let sessionID = pendingAgentVoiceFollowUpSessionID else { return false }
         pendingAgentVoiceFollowUpSessionID = nil
         pendingAgentVoiceFollowUpCreatedAt = nil
+        defer { syncAgentVoiceFollowUpCapturePhase() }
         let timing = activeRequestTiming
         let executionStartedAt = markRequestExecutionStarted(
             route: "agent.followup",
@@ -4238,6 +4447,7 @@ final class CompanionManager: ObservableObject {
         pendingAgentVoiceFollowUpSessionID = nil
         pendingAgentVoiceFollowUpCreatedAt = nil
         lastAgentContextSessionID = nil
+        syncAgentVoiceFollowUpCapturePhase()
 
         OpenClickyMessageLogStore.shared.append(
             lane: "agent",
@@ -4354,6 +4564,7 @@ final class CompanionManager: ObservableObject {
         if pendingAgentVoiceFollowUpSessionID == sessionID {
             pendingAgentVoiceFollowUpSessionID = nil
             pendingAgentVoiceFollowUpCreatedAt = nil
+            syncAgentVoiceFollowUpCapturePhase()
         }
         if lastAgentContextSessionID == sessionID {
             lastAgentContextSessionID = nil
@@ -5403,6 +5614,31 @@ final class CompanionManager: ObservableObject {
             .joined(separator: " ")
     }
 
+    /// Phrases like "Open what can you do for me?" (often a misheard "OpenClicky, what can you…")
+    /// match the local "open \<app\>" regex but are conversational — route to the model instead.
+    private static func isConversationalFalsePositiveLocalAppOpenTarget(_ rawTarget: String) -> Bool {
+        let normalized = normalizedSpokenCommandText(rawTarget)
+        let patterns = [
+            #"\bwhat\s+(can|could|would)\s+you\b"#,
+            #"\bwhat\s+(do|does)\s+you\b"#,
+            #"\bhow\s+(can|could|do|does)\s+you\b"#,
+            #"\bwhat\s+are\s+you\b"#,
+            #"\bwho\s+are\s+you\b"#,
+            #"\bwhy\s+"#,
+            #"\bwhen\s+(can|could|will)\s+you\b"#,
+            #"\bwhere\s+is\b"#,
+            #"\btell\s+me\b"#,
+            #"\bhelp\s+me\b"#,
+            #"\byou\s+do\s+for\s+me\b"#,
+        ]
+        for pattern in patterns {
+            if normalized.range(of: pattern, options: .regularExpression) != nil {
+                return true
+            }
+        }
+        return false
+    }
+
     private static func localAppOpenRequest(from transcript: String) -> OpenClickyAppOpenRequest? {
         let trimmedTranscript = normalizedCommandCandidate(from: transcript)
         guard !trimmedTranscript.isEmpty else { return nil }
@@ -5416,6 +5652,7 @@ final class CompanionManager: ObservableObject {
            ),
            let targetRange = Range(match.range(at: 1), in: trimmedTranscript) {
             let rawTarget = String(trimmedTranscript[targetRange])
+            guard !isConversationalFalsePositiveLocalAppOpenTarget(rawTarget) else { return nil }
             let normalizedTarget = normalizedApplicationName(from: rawTarget)
             guard !normalizedTarget.isEmpty,
                   !isReservedAgentOpenTarget(rawTarget),
@@ -6493,6 +6730,8 @@ final class CompanionManager: ObservableObject {
                 accentTheme: accentTheme,
                 status: .starting,
                 caption: acknowledgement,
+                sessionWorkspacePath: agentSession.sessionWorkspaceDirectoryURL.path,
+                artifactFileURLs: agentSession.sessionArtifactFileURLs,
                 createdAt: Date()
             )
 
@@ -6614,6 +6853,8 @@ final class CompanionManager: ObservableObject {
             accentTheme: Self.nextAgentDockAccentTheme(existingCount: agentDockItems.count),
             status: .done,
             caption: caption,
+            sessionWorkspacePath: "",
+            artifactFileURLs: [],
             createdAt: Date()
         )
         agentDockItems.append(dockItem)
@@ -6718,6 +6959,9 @@ final class CompanionManager: ObservableObject {
     private func updateAgentDockItem(for sessionID: UUID, status: CodexAgentSessionStatus) {
         guard let itemIndex = agentDockItems.lastIndex(where: { $0.sessionID == sessionID }) else { return }
         let session = codexAgentSessions.first(where: { $0.id == sessionID })
+        if let session, agentDockItems[itemIndex].sessionWorkspacePath.isEmpty {
+            agentDockItems[itemIndex].sessionWorkspacePath = session.sessionWorkspaceDirectoryURL.path
+        }
         let activitySummary = session?.latestActivitySummary
 
         switch status {
@@ -6965,6 +7209,8 @@ final class CompanionManager: ObservableObject {
             return "dock stop"
         case "response_card_dismissed":
             return "response card dismissed"
+        case "user_closed_session":
+            return "agent tab closed"
         case "api_key_reconfigured":
             return "API configuration changed"
         case "model_changed":
@@ -6975,7 +7221,7 @@ final class CompanionManager: ObservableObject {
     }
 
     /// Whether a cancellation reason was *initiated by the user* (Stop
-    /// click, "cancel" voice command, dismiss response card). Those
+    /// click, "cancel" voice command, closing an agent tab). Those
     /// cancellations should be silent — the user already knows. Only
     /// system-initiated cancellations (API key changed, model changed,
     /// session externally stopped with no other context) get spoken.
@@ -6991,7 +7237,8 @@ final class CompanionManager: ObservableObject {
              "agent.cancel",
              "agent.cancel_current",
              "agent.cancel_all",
-             "response_card_dismissed":
+             "response_card_dismissed",
+             "user_closed_session":
             return true
         case "api_key_reconfigured",
              "model_changed",
@@ -7040,6 +7287,17 @@ final class CompanionManager: ObservableObject {
         agentDockWindowManager.hide()
     }
 
+    /// Removes a single agent from the dock + team strip (and stops Codex when tied to a session).
+    /// Use this from per-agent popovers; `closeAgentDockPanel()` hides the whole dock only.
+    func closeAgentFromDockItem(_ dockItemID: UUID) {
+        guard let dockItem = agentDockItems.first(where: { $0.id == dockItemID }) else { return }
+        if let sessionID = dockItem.sessionID {
+            closeCodexAgentSession(sessionID)
+        } else {
+            dismissAgentDockItem(dockItemID)
+        }
+    }
+
     func dismissAgentDockItem(_ itemID: UUID) {
         // Dismiss is a visual close/removal only. It must not cancel the
         // underlying Codex task; explicit Stop handles that after confirm.
@@ -7076,6 +7334,7 @@ final class CompanionManager: ObservableObject {
         pendingAgentVoiceFollowUpCreatedAt = Date()
         selectCodexAgentSession(sessionID)
         prepareForVoiceFollowUp()
+        syncAgentVoiceFollowUpCapturePhase()
     }
 
     func showTextFollowUpForAgentDockItem(_ itemID: UUID) {
@@ -7197,22 +7456,33 @@ final class CompanionManager: ObservableObject {
         )
     }
 
-    private func submitAgentPrompt(_ prompt: String, to session: CodexAgentSession, includeScreenContext: Bool = true) {
+    private func submitAgentPrompt(_ prompt: String, to session: CodexAgentSession, includeScreenContext: Bool? = nil) {
         let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPrompt.isEmpty else { return }
 
         lastAgentContextSessionID = session.id
         activeCodexAgentSessionID = session.id
         let baselinePasteboardChangeCount = NSPasteboard.general.changeCount
+        let isFollowUp = session.hasPriorUserTurnInTranscript
+        let includeScreen: Bool
+        if let includeScreenContext {
+            includeScreen = includeScreenContext
+        } else if isFollowUp {
+            includeScreen = Self.followUpAttachScreenContextPreference()
+        } else {
+            includeScreen = true
+        }
+
         Task {
-            let screenContext = includeScreenContext ? await prepareAgentScreenContextForNextTurn(minimumPasteboardChangeCount: baselinePasteboardChangeCount) : nil
-            if !includeScreenContext {
+            let screenContext = includeScreen ? await prepareAgentScreenContextForNextTurn(minimumPasteboardChangeCount: baselinePasteboardChangeCount) : nil
+            if !includeScreen {
                 OpenClickyMessageLogStore.shared.append(
                     lane: "agent",
                     direction: "internal",
                     event: "openclicky.agent_screen_context.skipped",
                     fields: [
-                        "reason": "text_only_agent_turn",
+                        "reason": isFollowUp ? "follow_up_attach_screen_disabled" : "text_only_agent_turn",
+                        "isFollowUp": "\(isFollowUp)",
                         "sessionID": session.id.uuidString,
                         "instructionLength": trimmedPrompt.count
                     ]
@@ -7220,6 +7490,13 @@ final class CompanionManager: ObservableObject {
             }
             session.submitPromptFromUI(trimmedPrompt, screenContext: screenContext)
         }
+    }
+
+    private static func followUpAttachScreenContextPreference() -> Bool {
+        if UserDefaults.standard.object(forKey: OpenClickyAgentPreferences.followUpAttachScreenKey) == nil {
+            return true
+        }
+        return UserDefaults.standard.bool(forKey: OpenClickyAgentPreferences.followUpAttachScreenKey)
     }
 
     private func interruptCurrentVoiceResponse() {
@@ -8947,6 +9224,10 @@ final class CompanionManager: ObservableObject {
             return "Claude returned an error. Check the app log for the exact response."
         case "ElevenLabsTTS":
             return "Voice playback failed, but the Claude response completed. Check the app log for the TTS error."
+        case "GeminiTTS":
+            return "Gemini TTS failed, but the model response completed. Check the API key, model ID, and voice name in Settings or secrets.env."
+        case "OpenAITTS":
+            return "OpenAI speech failed, but the model response completed. Check the API key, voice, and model in Settings or OPENAI_API_KEY / OPENAI_TTS_* in secrets.env."
         case "CompanionScreenCapture":
             return "Screen capture failed. Grant Screen Recording to this exact app, then quit and reopen."
         default:
@@ -9204,6 +9485,7 @@ final class CompanionManager: ObservableObject {
                 self.pendingAgentVoiceFollowUpSessionID = self.activeCodexAgentSessionID
                 self.pendingAgentVoiceFollowUpCreatedAt = Date()
                 self.prepareForVoiceFollowUp()
+                self.syncAgentVoiceFollowUpCapturePhase()
             }
         )
     }
@@ -9231,9 +9513,7 @@ final class CompanionManager: ObservableObject {
 
     func dismissLatestResponseCard() {
         if codexAgentSession.latestResponseCard != nil {
-            let sessionID = codexAgentSession.id
             codexAgentSession.dismissLatestResponseCard()
-            cancelAgentTask(sessionID: sessionID, removeDockItems: true, reason: "response_card_dismissed")
         } else {
             latestVoiceResponseCard = nil
         }
@@ -9297,10 +9577,14 @@ final class CompanionManager: ObservableObject {
         voiceFollowUpStopTask = nil
         ClickyAnalytics.trackPushToTalkReleased()
         buddyDictationManager.stopPersistentDictationFromMicrophoneButton()
+        syncAgentVoiceFollowUpCapturePhase()
     }
 
     private func beginVoiceFollowUpCapture() {
-        guard !buddyDictationManager.isDictationInProgress else { return }
+        guard !buddyDictationManager.isDictationInProgress else {
+            syncAgentVoiceFollowUpCapturePhase()
+            return
+        }
 
         showCursorOverlayIfAvailable()
         transientHideTask?.cancel()
@@ -9311,6 +9595,8 @@ final class CompanionManager: ObservableObject {
         ClickyAnalytics.trackPushToTalkStarted()
 
         Task {
+            // Give TTS `AVAudioEngine` time to stop and release HAL before capture starts (agent voice follow-up).
+            try? await Task.sleep(for: .milliseconds(160))
             await buddyDictationManager.startAutoSubmittingDictationFromMicrophoneButton(
                 currentDraftText: "",
                 updateDraftText: { _ in
@@ -9330,6 +9616,7 @@ final class CompanionManager: ObservableObject {
                 self.stopSDKVoiceCapture()
             }
         }
+        syncAgentVoiceFollowUpCapturePhase()
     }
 
     func queueHandoffRegion(selection: HandoffRegionSelection, imageData: Data) {
@@ -9423,17 +9710,25 @@ private final class ClickyTextModePanel: NSPanel {
 @MainActor
 final class ClickyTextModeWindowManager {
     private var panel: NSPanel?
-    private let panelSize = NSSize(width: 340, height: 54)
+    private var panelContentSize = NSSize(width: 340, height: 54)
+
+    private func resolvedSize(accentTheme: ClickyAccentTheme?) -> NSSize {
+        accentTheme != nil
+            ? NSSize(width: 400, height: 124)
+            : NSSize(width: 340, height: 54)
+    }
 
     func show(at cursorLocation: CGPoint, accentTheme: ClickyAccentTheme? = nil, submitText: @escaping (String) -> Void) {
-        preparePanel(accentTheme: accentTheme, submitText: submitText)
+        let size = resolvedSize(accentTheme: accentTheme)
+        preparePanel(accentTheme: accentTheme, submitText: submitText, size: size)
         positionPanel(near: cursorLocation)
         panel?.makeKeyAndOrderFront(nil)
         panel?.orderFrontRegardless()
     }
 
     func show(origin: CGPoint, accentTheme: ClickyAccentTheme? = nil, submitText: @escaping (String) -> Void) {
-        preparePanel(accentTheme: accentTheme, submitText: submitText)
+        let size = resolvedSize(accentTheme: accentTheme)
+        preparePanel(accentTheme: accentTheme, submitText: submitText, size: size)
         positionPanel(at: origin)
         panel?.makeKeyAndOrderFront(nil)
         panel?.orderFrontRegardless()
@@ -9443,9 +9738,10 @@ final class ClickyTextModeWindowManager {
         panel?.orderOut(nil)
     }
 
-    private func createPanel(accentTheme: ClickyAccentTheme?, submitText: @escaping (String) -> Void) {
+    private func createPanel(accentTheme: ClickyAccentTheme?, submitText: @escaping (String) -> Void, size: NSSize) {
+        panelContentSize = size
         let textModePanel = ClickyTextModePanel(
-            contentRect: NSRect(origin: .zero, size: panelSize),
+            contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.borderless],
             backing: .buffered,
             defer: false
@@ -9465,19 +9761,26 @@ final class ClickyTextModeWindowManager {
                 self?.hide()
             }
         )
-        hostingView.frame = NSRect(origin: .zero, size: panelSize)
+        hostingView.frame = NSRect(origin: .zero, size: size)
         hostingView.autoresizingMask = [.width, .height]
         textModePanel.contentView = hostingView
 
         panel = textModePanel
     }
 
-    private func preparePanel(accentTheme: ClickyAccentTheme?, submitText: @escaping (String) -> Void) {
+    private func preparePanel(accentTheme: ClickyAccentTheme?, submitText: @escaping (String) -> Void, size: NSSize) {
+        panelContentSize = size
         if panel == nil {
-            createPanel(accentTheme: accentTheme, submitText: submitText)
+            createPanel(accentTheme: accentTheme, submitText: submitText, size: size)
         } else if let hostingView = panel?.contentView as? NSHostingView<ClickyTextModeInputView> {
             hostingView.rootView = ClickyTextModeInputView(accentThemeOverride: accentTheme, submitText: submitText) { [weak self] in
                 self?.hide()
+            }
+            hostingView.frame = NSRect(origin: .zero, size: size)
+            if let panel {
+                var frame = panel.frame
+                frame.size = size
+                panel.setFrame(frame, display: false)
             }
         }
     }
@@ -9489,14 +9792,14 @@ final class ClickyTextModeWindowManager {
         let visibleFrame = targetScreen?.visibleFrame ?? NSScreen.screens.first?.visibleFrame ?? .zero
         let proposedOrigin = CGPoint(
             x: cursorLocation.x + 18,
-            y: cursorLocation.y - panelSize.height - 12
+            y: cursorLocation.y - panelContentSize.height - 12
         )
         let clampedOrigin = CGPoint(
-            x: min(max(proposedOrigin.x, visibleFrame.minX + 10), visibleFrame.maxX - panelSize.width - 10),
-            y: min(max(proposedOrigin.y, visibleFrame.minY + 10), visibleFrame.maxY - panelSize.height - 10)
+            x: min(max(proposedOrigin.x, visibleFrame.minX + 10), visibleFrame.maxX - panelContentSize.width - 10),
+            y: min(max(proposedOrigin.y, visibleFrame.minY + 10), visibleFrame.maxY - panelContentSize.height - 10)
         )
 
-        panel.setFrame(NSRect(origin: clampedOrigin, size: panelSize), display: true)
+        panel.setFrame(NSRect(origin: clampedOrigin, size: panelContentSize), display: true)
     }
 
     private func positionPanel(at origin: CGPoint) {
@@ -9505,11 +9808,11 @@ final class ClickyTextModeWindowManager {
         let targetScreen = NSScreen.screens.first { $0.frame.contains(origin) } ?? NSScreen.main
         let visibleFrame = targetScreen?.visibleFrame ?? NSScreen.screens.first?.visibleFrame ?? .zero
         let clampedOrigin = CGPoint(
-            x: min(max(origin.x, visibleFrame.minX + 10), visibleFrame.maxX - panelSize.width - 10),
-            y: min(max(origin.y, visibleFrame.minY + 10), visibleFrame.maxY - panelSize.height - 10)
+            x: min(max(origin.x, visibleFrame.minX + 10), visibleFrame.maxX - panelContentSize.width - 10),
+            y: min(max(origin.y, visibleFrame.minY + 10), visibleFrame.maxY - panelContentSize.height - 10)
         )
 
-        panel.setFrame(NSRect(origin: clampedOrigin, size: panelSize), display: true)
+        panel.setFrame(NSRect(origin: clampedOrigin, size: panelContentSize), display: true)
     }
 }
 
@@ -9522,7 +9825,96 @@ private struct ClickyTextModeInputView: View {
     let submitText: (String) -> Void
     let dismiss: () -> Void
 
+    private var isAgentFollowUpChrome: Bool {
+        accentThemeOverride != nil
+    }
+
     var body: some View {
+        Group {
+            if isAgentFollowUpChrome {
+                agentFollowUpChrome
+            } else {
+                defaultTextModeChrome
+            }
+        }
+        .onAppear {
+            DispatchQueue.main.async {
+                isFocused = true
+            }
+        }
+    }
+
+    private var agentFollowUpChrome: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "text.bubble")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(accentTheme.cursorColor)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Text follow-up")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(DS.Colors.textPrimary)
+                    Text("Sent to this agent. Return or Send — ✕ discards.")
+                        .font(.system(size: 10))
+                        .foregroundColor(DS.Colors.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                Button(action: dismiss) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(DS.Colors.textTertiary)
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+            }
+
+            HStack(alignment: .center, spacing: 10) {
+                TextField("", text: $text, prompt: Text(agentPlaceholder)
+                    .foregroundColor(DS.Colors.textTertiary)
+                )
+                .textFieldStyle(.plain)
+                .font(.system(size: 14, weight: .regular))
+                .foregroundColor(DS.Colors.textPrimary)
+                .focused($isFocused)
+                .onSubmit(submit)
+
+                Button(action: submit) {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(DS.Colors.textOnAccent)
+                        .frame(width: 34, height: 34)
+                        .background(
+                            Circle().fill(canSubmit ? accentTheme.cursorColor : DS.Colors.surface3)
+                        )
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+                .disabled(!canSubmit)
+            }
+        }
+        .padding(14)
+        .frame(width: 400, height: 124, alignment: .topLeading)
+        .background(DS.Colors.surface1)
+        .clipShape(RoundedRectangle(cornerRadius: DS.CornerRadius.large, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.CornerRadius.large, style: .continuous)
+                .stroke(DS.Colors.borderSubtle, lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.18), radius: 18, x: 0, y: 10)
+    }
+
+    private var agentPlaceholder: String {
+        "Type a follow-up for this agent…"
+    }
+
+    private var canSubmit: Bool {
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var defaultTextModeChrome: some View {
         HStack(spacing: 10) {
             Image(systemName: "text.cursor")
                 .font(.system(size: 16, weight: .medium))
@@ -9531,11 +9923,11 @@ private struct ClickyTextModeInputView: View {
             TextField("", text: $text, prompt: Text(placeholderText)
                 .foregroundColor(placeholderColor)
             )
-                .textFieldStyle(.plain)
-                .font(.system(size: 16, weight: .regular))
-                .foregroundColor(textColor)
-                .focused($isFocused)
-                .onSubmit(submit)
+            .textFieldStyle(.plain)
+            .font(.system(size: 16, weight: .regular))
+            .foregroundColor(textColor)
+            .focused($isFocused)
+            .onSubmit(submit)
 
             Button(action: submit) {
                 Image(systemName: "arrow.up.circle.fill")
@@ -9544,7 +9936,7 @@ private struct ClickyTextModeInputView: View {
             }
             .buttonStyle(.plain)
             .pointerCursor()
-            .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .disabled(!canSubmit)
 
             Button(action: dismiss) {
                 Image(systemName: "xmark.circle.fill")
@@ -9566,11 +9958,6 @@ private struct ClickyTextModeInputView: View {
         )
         .shadow(color: accentTheme.cursorColor.opacity(0.32), radius: 18, x: 0, y: 0)
         .shadow(color: Color.black.opacity(0.28), radius: 14, x: 0, y: 8)
-        .onAppear {
-            DispatchQueue.main.async {
-                isFocused = true
-            }
-        }
     }
 
     private func submit() {

@@ -17,9 +17,14 @@ nonisolated enum AppBundleConfiguration {
     /// (`userDeepgramAPIKeyDefaultsKey`). Only the voice/model is
     /// TTS-specific.
     static let userDeepgramTTSVoiceDefaultsKey = "openClickyDeepgramTTSVoice"
+    static let userGeminiAPIKeyDefaultsKey = "openClickyGeminiAPIKey"
+    static let userGeminiTTSVoiceDefaultsKey = "openClickyGeminiTTSVoice"
+    static let userGeminiTTSModelDefaultsKey = "openClickyGeminiTTSModel"
     static let userTTSProviderDefaultsKey = "openClickyTTSProvider"
     static let userSpeculativePreFireDefaultsKey = "openClickySpeculativePreFireEnabled"
     static let userCodexAgentAPIKeyDefaultsKey = "openClickyCodexAgentAPIKey"
+    static let userOpenAITTSVoiceDefaultsKey = "openClickyOpenAITTSVoice"
+    static let userOpenAITTSModelDefaultsKey = "openClickyOpenAITTSModel"
     static let userAssemblyAIAPIKeyDefaultsKey = "openClickyAssemblyAIAPIKey"
     static let userDeepgramAPIKeyDefaultsKey = "openClickyDeepgramAPIKey"
     static let userVoiceTranscriptionProviderDefaultsKey = "openClickyVoiceTranscriptionProvider"
@@ -47,6 +52,26 @@ nonisolated enum AppBundleConfiguration {
             forKey: "OpenAIAPIKey",
             environmentKeys: ["OPENAI_API_KEY"]
         ) ?? localDevelopmentEnvironmentValue(forKey: "OPENAI_API_KEY")
+    }
+
+    /// OpenAI TTS voice (`alloy`, `echo`, `fable`, `onyx`, `nova`, `shimmer`).
+    static func openAITTSVoice() -> String {
+        userDefaultsValue(forKey: userOpenAITTSVoiceDefaultsKey) ?? stringValue(
+            forKey: "OpenAITTSVoice",
+            environmentKeys: ["OPENAI_TTS_VOICE"]
+        ) ?? localDevelopmentEnvironmentValue(forKey: "OPENAI_TTS_VOICE")
+        ?? "alloy"
+    }
+
+    /// OpenAI TTS model for `/v1/audio/speech`. Some API projects no longer allow
+    /// legacy `tts-1` / `tts-1-hd`; `gpt-4o-mini-tts` is the current default.
+    /// Override with `OPENAI_TTS_MODEL` or Settings → Voice.
+    static func openAITTSModel() -> String {
+        userDefaultsValue(forKey: userOpenAITTSModelDefaultsKey) ?? stringValue(
+            forKey: "OpenAITTSModel",
+            environmentKeys: ["OPENAI_TTS_MODEL"]
+        ) ?? localDevelopmentEnvironmentValue(forKey: "OPENAI_TTS_MODEL")
+        ?? "gpt-4o-mini-tts"
     }
 
     static func assemblyAIAPIKey() -> String? {
@@ -96,9 +121,61 @@ nonisolated enum AppBundleConfiguration {
         ?? "a0e99841-438c-4a64-b679-ae501e7d6091"
     }
 
-    /// Selected TTS provider — "elevenlabs" (default), "cartesia", or "deepgram".
+    /// Selected TTS provider — "elevenlabs" (default), "cartesia", "deepgram", or "gemini".
     static func ttsProviderRaw() -> String {
-        userDefaultsValue(forKey: userTTSProviderDefaultsKey) ?? "elevenlabs"
+        userDefaultsValue(forKey: userTTSProviderDefaultsKey)
+        ?? stringValue(forKey: "OpenClickyTTSProvider", environmentKeys: ["OPENCLICKY_TTS_PROVIDER"])
+        ?? localDevelopmentEnvironmentValue(forKey: "OPENCLICKY_TTS_PROVIDER")
+        ?? "elevenlabs"
+    }
+
+    /// Google AI Studio / Gemini API key (used for Gemini native TTS).
+    static func geminiAPIKey() -> String? {
+        userDefaultsValue(forKey: userGeminiAPIKeyDefaultsKey) ?? stringValue(
+            forKey: "GeminiAPIKey",
+            environmentKeys: ["GEMINI_API_KEY", "GOOGLE_GEMINI_API_KEY", "GOOGLE_API_KEY"]
+        ) ?? localDevelopmentEnvironmentValue(forKey: "GEMINI_API_KEY")
+            ?? localDevelopmentEnvironmentValue(forKey: "GOOGLE_GEMINI_API_KEY")
+            ?? localDevelopmentEnvironmentValue(forKey: "GOOGLE_API_KEY")
+    }
+
+    /// Prebuilt voice name for Gemini speech generation (e.g. `Kore`, `Puck`).
+    static func geminiTTSVoice() -> String {
+        userDefaultsValue(forKey: userGeminiTTSVoiceDefaultsKey) ?? stringValue(
+            forKey: "GeminiTTSVoice",
+            environmentKeys: ["GEMINI_TTS_VOICE"]
+        ) ?? localDevelopmentEnvironmentValue(forKey: "GEMINI_TTS_VOICE")
+        ?? "Kore"
+    }
+
+    /// Gemini TTS model id for `generateContent` (e.g. `gemini-2.5-flash-preview-tts`).
+    static func geminiTTSModel() -> String {
+        userDefaultsValue(forKey: userGeminiTTSModelDefaultsKey) ?? stringValue(
+            forKey: "GeminiTTSModel",
+            environmentKeys: ["GEMINI_TTS_MODEL"]
+        ) ?? localDevelopmentEnvironmentValue(forKey: "GEMINI_TTS_MODEL")
+        ?? "gemini-2.5-flash-preview-tts"
+    }
+
+    /// OpenAI audio transcription model (`/v1/audio/transcriptions`): `whisper-1`,
+    /// `gpt-4o-transcribe`, `gpt-4o-mini-transcribe`, etc. Set `OPENAI_TRANSCRIPTION_MODEL`
+    /// if your project restricts Whisper or you prefer GPT-4o-class STT.
+    static func openAITranscriptionModel() -> String {
+        stringValue(
+            forKey: "OpenAITranscriptionModel",
+            environmentKeys: ["OPENAI_TRANSCRIPTION_MODEL"]
+        ) ?? localDevelopmentEnvironmentValue(forKey: "OPENAI_TRANSCRIPTION_MODEL")
+        ?? "whisper-1"
+    }
+
+    /// Voice STT provider id: `automatic`, `apple`, `assemblyai`, `deepgram`, `openai`. Secrets: `OPENCLICKY_VOICE_TRANSCRIPTION_PROVIDER`.
+    static func voiceTranscriptionProviderRaw() -> String? {
+        userDefaultsValue(forKey: userVoiceTranscriptionProviderDefaultsKey)
+        ?? stringValue(
+            forKey: "VoiceTranscriptionProvider",
+            environmentKeys: ["OPENCLICKY_VOICE_TRANSCRIPTION_PROVIDER"]
+        )
+        ?? localDevelopmentEnvironmentValue(forKey: "OPENCLICKY_VOICE_TRANSCRIPTION_PROVIDER")
     }
 
     /// Deepgram TTS voice/model identifier. Defaults to Aura 2 Thalia

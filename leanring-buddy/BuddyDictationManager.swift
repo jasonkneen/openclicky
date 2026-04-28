@@ -264,7 +264,8 @@ final class BuddyDictationManager: NSObject, ObservableObject {
     }
 
     private var transcriptionProvider: any BuddyTranscriptionProvider
-    private let audioEngine = AVAudioEngine()
+    /// Fresh instance after each teardown avoids stuck HAL graphs when switching from TTS playback to capture (error 35 / -10877).
+    private var audioEngine = AVAudioEngine()
     private var hasInstalledInputTap = false
     private var activeTranscriptionSession: (any BuddyStreamingTranscriptionSession)?
     private var activeStartSource: BuddyDictationStartSource?
@@ -636,7 +637,11 @@ final class BuddyDictationManager: NSObject, ObservableObject {
             ?? Self.defaultFinalTranscriptFallbackDelaySeconds
 
         tearDownAudioCapture(cancelTranscriptionSession: false)
-        activeTranscriptionSession?.requestFinalTranscript()
+        // Defer finalization one turn so CoreAudio can tear down the capture graph before
+        // Apple Speech / the next session starts — reduces HAL "error 35" and duplicate IO threads.
+        DispatchQueue.main.async { [weak self] in
+            self?.activeTranscriptionSession?.requestFinalTranscript()
+        }
 
         finalizeFallbackWorkItem?.cancel()
         let shouldSubmitFinalDraftWhenFallbackTriggers = shouldAutomaticallySubmitFinalDraft
@@ -671,6 +676,8 @@ final class BuddyDictationManager: NSObject, ObservableObject {
             activeTranscriptionSession?.cancel()
             activeTranscriptionSession = nil
         }
+        // New engine next session — previous graph may still be detaching from HAL after TTS/stop.
+        audioEngine = AVAudioEngine()
     }
 
     private func removeInputTapIfNeeded() {
@@ -681,6 +688,8 @@ final class BuddyDictationManager: NSObject, ObservableObject {
 
     private func startRecognitionSession() async throws {
         tearDownAudioCapture(cancelTranscriptionSession: true)
+        // Let Core Audio finish releasing the previous graph (especially after `voiceTTSClient.stopPlayback()`).
+        try await Task.sleep(nanoseconds: 220_000_000)
 
         print("🎙️ BuddyDictationManager: opening transcription provider \(transcriptionProvider.displayName)")
         activeTranscriptionProviderOpenStartedAt = Date()
@@ -750,7 +759,26 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         hasInstalledInputTap = true
 
         audioEngine.prepare()
-        try audioEngine.start()
+        do {
+            try audioEngine.start()
+        } catch {
+            print("⚠️ BuddyDictationManager: audioEngine.start failed (\(error)); retrying after HAL cooldown")
+            if audioEngine.isRunning {
+                audioEngine.stop()
+            }
+            removeInputTapIfNeeded()
+            audioEngine = AVAudioEngine()
+            try await Task.sleep(nanoseconds: 280_000_000)
+            let retryInput = audioEngine.inputNode
+            let retryFormat = retryInput.outputFormat(forBus: 0)
+            retryInput.installTap(onBus: 0, bufferSize: 1024, format: retryFormat) { [weak self] buffer, _ in
+                self?.activeTranscriptionSession?.appendAudioBuffer(buffer)
+                self?.updateAudioPowerLevel(from: buffer)
+            }
+            hasInstalledInputTap = true
+            audioEngine.prepare()
+            try audioEngine.start()
+        }
     }
 
     private func handleRecognitionError(_ error: Error) {

@@ -18,8 +18,7 @@ struct OpenAIAudioTranscriptionProviderError: LocalizedError {
 
 final class OpenAIAudioTranscriptionProvider: BuddyTranscriptionProvider {
     private let apiKey = AppBundleConfiguration.openAIAPIKey()
-    private let modelName = AppBundleConfiguration.stringValue(forKey: "OpenAITranscriptionModel")
-        ?? "gpt-4o-transcribe"
+    private let modelName = AppBundleConfiguration.openAITranscriptionModel()
 
     let displayName = "OpenAI"
     let requiresSpeechRecognitionPermission = false

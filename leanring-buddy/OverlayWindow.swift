@@ -896,6 +896,16 @@ private struct ClickyAgentDockStackView: View {
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 14) {
+            if companionManager.agentVoiceFollowUpCapturePhase != .idle {
+                AgentVoiceFollowUpCaptureBanner(
+                    phase: companionManager.agentVoiceFollowUpCapturePhase,
+                    audioLevel: companionManager.currentAudioPowerLevel,
+                    onCancel: { companionManager.cancelAgentVoiceFollowUpCapture() }
+                )
+                .frame(width: 512, alignment: .leading)
+                .transition(.opacity.combined(with: .move(edge: .trailing)))
+            }
+
             ForEach(companionManager.agentDockItems) { item in
                 HStack(alignment: .top, spacing: 22) {
                     // Collapsed by default — icon-only — until the user
@@ -909,9 +919,20 @@ private struct ClickyAgentDockStackView: View {
                             chat: { companionManager.openAgentDockItem(item.id) },
                             text: { companionManager.showTextFollowUpForAgentDockItem(item.id) },
                             voice: { companionManager.prepareVoiceFollowUpForAgentDockItem(item.id) },
-                            close: { companionManager.closeAgentDockPanel() },
+                            closeThisAgent: { companionManager.closeAgentFromDockItem(item.id) },
+                            hideDock: { companionManager.closeAgentDockPanel() },
                             stop: { companionManager.stopAgentDockItem(item.id) },
-                            dismiss: { companionManager.dismissAgentDockItem(item.id) }
+                            dismiss: { companionManager.dismissAgentDockItem(item.id) },
+                            dockDragBegan: {
+                                companionManager.beginAgentDockDrag()
+                            },
+                            dockDragChanged: { companionManager.dragAgentDock(by: $0) },
+                            dockDragEnded: {
+                                companionManager.endAgentDockDrag()
+                                DispatchQueue.main.async {
+                                    didDragDock = false
+                                }
+                            }
                         )
                         .transition(.opacity.combined(with: .move(edge: .trailing)))
                     }
@@ -963,6 +984,7 @@ private struct ClickyAgentDockStackView: View {
         .padding(.top, 0)
         .padding(.trailing, 4)
         .animation(.easeOut(duration: 0.16), value: companionManager.agentDockItems)
+        .animation(.easeOut(duration: 0.18), value: companionManager.agentVoiceFollowUpCapturePhase)
     }
 
     private func shouldShowExpandedCard(for item: ClickyAgentDockItem) -> Bool {
@@ -981,43 +1003,23 @@ private struct ClickyAgentDockItemView: View {
     var body: some View {
         ZStack(alignment: .topTrailing) {
             Circle()
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color.black.opacity(0.82),
-                            Color(hex: "#101827").opacity(0.78)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
+                .fill(DS.Colors.surface2)
                 // Smaller icon (was 68×68) so the dock takes up less screen
                 // real estate when collapsed — ties to UX request 2026-04-28.
                 .frame(width: 52, height: 52)
                 .overlay(
                     Circle()
-                        .stroke(
-                            LinearGradient(
-                                colors: [
-                                    Color.white.opacity(0.26),
-                                    item.accentTheme.cursorColor.opacity(0.36),
-                                    Color.white.opacity(0.04)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 1.1
+                        .strokeBorder(
+                            item.accentTheme.cursorColor.opacity(0.45),
+                            lineWidth: 1.5
                         )
                 )
-                .shadow(color: item.accentTheme.cursorColor.opacity(0.34), radius: 24, x: 0, y: 11)
-                .shadow(color: item.accentTheme.cursorColor.opacity(0.70), radius: 16, x: 0, y: 0)
-                .shadow(color: Color.black.opacity(0.50), radius: 8, x: 0, y: 4)
+                .shadow(color: Color.black.opacity(0.22), radius: 10, x: 0, y: 5)
 
             Triangle()
                 .fill(item.accentTheme.cursorColor)
                 .frame(width: 18, height: 18)
                 .rotationEffect(.degrees(-35))
-                .shadow(color: item.accentTheme.cursorColor.opacity(0.82), radius: 7, x: 0, y: 0)
                 .frame(width: 52, height: 52)
 
             statusIndicator
@@ -1177,107 +1179,6 @@ private struct ClickyAgentDockItemView: View {
     }
 }
 
-private struct ClickyAgentDockConversationPreview: View {
-    let item: ClickyAgentDockItem
-    let canOpenDashboard: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            conversationBubble(
-                label: "YOU",
-                content: { userBubbleText },
-                labelColor: Color(hex: "#FF7A9A"),
-                backgroundColor: Color(hex: "#341214").opacity(0.96),
-                borderColor: Color(hex: "#7F1D3A").opacity(0.42)
-            )
-
-            conversationBubble(
-                label: "AGENT",
-                content: { agentBubbleContent },
-                labelColor: item.accentTheme.cursorColor.opacity(0.95),
-                backgroundColor: item.accentTheme.cursorColor.opacity(0.12),
-                borderColor: item.accentTheme.cursorColor.opacity(0.28)
-            )
-        }
-        .frame(width: 430, alignment: .leading)
-        .shadow(color: item.accentTheme.cursorColor.opacity(0.18), radius: 18, x: 0, y: 8)
-        .shadow(color: Color.black.opacity(0.30), radius: 10, x: 0, y: 6)
-    }
-
-    private func conversationBubble<Content: View>(
-        label: String,
-        @ViewBuilder content: () -> Content,
-        labelColor: Color,
-        backgroundColor: Color,
-        borderColor: Color
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(label)
-                .font(.system(size: 10, weight: .heavy, design: .rounded))
-                .foregroundColor(labelColor)
-                .kerning(0.4)
-
-            content()
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(backgroundColor)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(borderColor, lineWidth: 1)
-        )
-    }
-
-    /// The full user instruction — no clipping. The dock card width and
-    /// `lineLimit(nil)` let it wrap so the user sees exactly what was sent.
-    private var userBubbleText: some View {
-        Text(fullUserInstruction)
-            .font(.system(size: 13, weight: .medium))
-            .foregroundColor(DS.Colors.textPrimary)
-            .lineLimit(nil)
-            .fixedSize(horizontal: false, vertical: true)
-    }
-
-    /// Either the latest streamed assistant text, or a live "thinking"
-    /// indicator while we wait for the first token. Never the canned
-    /// "An agent is working on this." string.
-    @ViewBuilder
-    private var agentBubbleContent: some View {
-        let trimmedCaption = item.caption?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if trimmedCaption.isEmpty {
-            switch item.status {
-            case .starting, .running:
-                ClickyThinkingDots(tint: item.accentTheme.cursorColor)
-            case .done:
-                Text("Done.")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(DS.Colors.textPrimary)
-            case .failed:
-                Text("Needs attention.")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(DS.Colors.textPrimary)
-            }
-        } else {
-            Text(trimmedCaption)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(DS.Colors.textPrimary)
-                .lineLimit(nil)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private var fullUserInstruction: String {
-        let fullInstruction = item.userInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !fullInstruction.isEmpty { return fullInstruction }
-        let trimmedTitle = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmedTitle.isEmpty ? "hey there" : trimmedTitle
-    }
-}
-
 /// Three softly-pulsing dots used as a "thinking" affordance while the
 /// agent has not produced its first streamed token yet. Replaces the
 /// previous static "An agent is working on this." string.
@@ -1327,131 +1228,223 @@ private struct ClickyAgentDockHoverCard: View {
     let chat: () -> Void
     let text: () -> Void
     let voice: () -> Void
-    let close: () -> Void
+    /// Stops/removes only this agent (session + dock row + HUD tab). Does not hide the whole dock.
+    let closeThisAgent: () -> Void
+    /// Minimize the dock panel without removing agents.
+    let hideDock: () -> Void
     let stop: () -> Void
     /// Called when the user taps "Close" on a terminal (`.done`/`.failed`)
     /// agent. Distinct from `stop` (which sends a cancel signal) — this
     /// just removes the dock item visually.
     let dismiss: () -> Void
+    let dockDragBegan: () -> Void
+    let dockDragChanged: (CGSize) -> Void
+    let dockDragEnded: () -> Void
     @State private var isConfirmingStop = false
+    @State private var dockCardDragHasMoved = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .center, spacing: 8) {
-                Text(displayTitle)
-                    .font(.system(size: 10, weight: .heavy, design: .rounded))
-                    .foregroundColor(item.accentTheme.cursorColor.opacity(0.95))
-                    .kerning(1.4)
-                    .lineLimit(1)
+        HStack(alignment: .top, spacing: 0) {
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(item.accentTheme.cursorColor.opacity(0.85))
+                .frame(width: 3)
+                .padding(.vertical, 10)
+                .contentShape(Rectangle())
+                .frame(width: 14)
+                .highPriorityGesture(
+                    DragGesture(minimumDistance: 6)
+                        .onChanged(cardDockDragChanged)
+                        .onEnded { _ in cardDockDragEnded() }
+                )
+                .pointerCursor()
 
-                Spacer()
+                VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(displayTitle)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(DS.Colors.textPrimary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
 
-                Text(statusText)
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(statusTextColor)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Capsule().fill(statusBackgroundColor))
-            }
-
-            agentProgressContent
-                .padding(.top, 4)
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Follow up")
-                    .font(.system(size: 10, weight: .heavy))
-                    .foregroundColor(DS.Colors.textTertiary)
-
-                HStack(spacing: 8) {
-                    stopControls
-
-                    Spacer(minLength: 10)
-
-                    Button(action: voice) {
-                        Label("Voice", systemImage: "mic")
+                        Button(action: closeThisAgent) {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 11, weight: .semibold))
+                        }
+                        .buttonStyle(
+                            DSIconButtonStyle(
+                                size: 28,
+                                isDestructiveOnHover: false,
+                                tooltipText: "Close this agent",
+                                tooltipAlignment: .trailing
+                            )
+                        )
                     }
-                    .buttonStyle(ClickyAgentDockPillButtonStyle())
 
-                    Button(action: text) {
-                        Label("Text", systemImage: "text.cursor")
+                    AgentStatusPill(
+                        title: statusText,
+                        subtitle: nil,
+                        indicatorColor: dockStatusIndicatorColor
+                    )
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    HStack(spacing: 6) {
+                        Image(systemName: "line.3.horizontal")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(DS.Colors.textTertiary)
+                        Text("Drag here or the left edge to move the dock")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(DS.Colors.textTertiary)
                     }
-                    .buttonStyle(ClickyAgentDockPillButtonStyle())
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(DS.Colors.surface3.opacity(0.65))
+                    .clipShape(RoundedRectangle(cornerRadius: DS.CornerRadius.small, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DS.CornerRadius.small, style: .continuous)
+                            .stroke(DS.Colors.borderSubtle.opacity(0.8), lineWidth: 1)
+                    )
+                    .highPriorityGesture(
+                        DragGesture(minimumDistance: 6)
+                            .onChanged(cardDockDragChanged)
+                            .onEnded { _ in cardDockDragEnded() }
+                    )
+                    .pointerCursor()
+                }
+                .padding(.bottom, 8)
 
-                    if canOpenDashboard {
-                        Button(action: chat) {
-                            Label("Dashboard", systemImage: "rectangle.grid.2x2")
+                if hasDistinctUserInstruction {
+                    dockWellSection(title: "Your request") {
+                        Text(userInstructionDisplay)
+                            .font(.system(size: 11))
+                            .foregroundColor(DS.Colors.textPrimary)
+                            .lineSpacing(2)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.bottom, 8)
+                }
+
+                dockWellSection(title: "Latest output") {
+                    latestOutputContent
+                }
+                .padding(.bottom, 8)
+
+                if hasSessionOutputs {
+                    dockWellSection(title: "Session files") {
+                        sessionFilesContent
+                    }
+                    .padding(.bottom, 8)
+                }
+
+                Rectangle()
+                    .fill(DS.Colors.borderSubtle)
+                    .frame(height: 1)
+                    .padding(.bottom, 8)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Follow up")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(DS.Colors.textTertiary)
+
+                    Text("Voice opens the mic on your cursor; a status strip appears above the dock while we listen.")
+                        .font(.system(size: 10))
+                        .foregroundColor(DS.Colors.textTertiary.opacity(0.92))
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    HStack(spacing: 8) {
+                        stopControls
+
+                        Spacer(minLength: 10)
+
+                        Button(action: voice) {
+                            Label("Voice", systemImage: "mic")
                         }
                         .buttonStyle(ClickyAgentDockPillButtonStyle())
+
+                        Button(action: text) {
+                            Label("Text", systemImage: "text.cursor")
+                        }
+                        .buttonStyle(ClickyAgentDockPillButtonStyle())
+
+                        if canOpenDashboard {
+                            Button(action: chat) {
+                                Label("Dashboard", systemImage: "rectangle.grid.2x2")
+                            }
+                            .buttonStyle(ClickyAgentDockPillButtonStyle())
+                        }
                     }
+
+                    Button(action: hideDock) {
+                        Text("Hide dock")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(DS.Colors.textTertiary.opacity(0.95))
+                    }
+                    .buttonStyle(.plain)
+                    .pointerCursor()
+                    .help("Hide the agent dock until the next task")
                 }
             }
+            .padding(.leading, 10)
+            .padding(.trailing, 12)
+            .padding(.vertical, 10)
         }
-        .overlay(alignment: .topTrailing) {
-            Button(action: close) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .bold))
-            }
-            .buttonStyle(
-                DSIconButtonStyle(
-                    size: 28,
-                    isDestructiveOnHover: false,
-                    tooltipText: "Close panel",
-                    tooltipAlignment: .trailing
-                )
-            )
-            .offset(x: 8, y: -8)
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 16)
-        .frame(width: 560, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            item.accentTheme.cursorColor.opacity(0.18),
-                            Color(hex: "#111827").opacity(0.98)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-        )
+        .frame(width: 512, alignment: .leading)
+        .background(DS.Colors.surface1)
+        .clipShape(RoundedRectangle(cornerRadius: DS.CornerRadius.large, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(item.accentTheme.cursorColor.opacity(0.20), lineWidth: 1.2)
+            RoundedRectangle(cornerRadius: DS.CornerRadius.large, style: .continuous)
+                .stroke(DS.Colors.borderSubtle, lineWidth: 1)
         )
-        .shadow(color: item.accentTheme.cursorColor.opacity(0.24), radius: 18, x: 0, y: 8)
-        .shadow(color: Color.black.opacity(0.42), radius: 10, x: 0, y: 6)
+        .shadow(color: Color.black.opacity(0.14), radius: 14, x: 0, y: 6)
+    }
+
+    private func cardDockDragChanged(_ value: DragGesture.Value) {
+        if !dockCardDragHasMoved {
+            dockCardDragHasMoved = true
+            dockDragBegan()
+        }
+        dockDragChanged(value.translation)
+    }
+
+    private func cardDockDragEnded() {
+        dockCardDragHasMoved = false
+        dockDragEnded()
+    }
+
+    private func dockWellSection<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(DS.Colors.textTertiary)
+
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(8)
+        .background(DS.Colors.background)
+        .clipShape(RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                .stroke(DS.Colors.borderSubtle, lineWidth: 1)
+        )
     }
 
     @ViewBuilder
-    private var agentProgressContent: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let trimmedCaption,
-               !trimmedCaption.isEmpty {
-                Text(trimmedCaption)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(DS.Colors.textPrimary)
-                    .lineLimit(5)
-                    .minimumScaleFactor(0.82)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else {
-                // No real activity yet — surface a thinking indicator
-                // instead of the canned "An agent is working on this." line.
-                switch item.status {
-                case .starting, .running:
-                    ClickyThinkingDots(tint: item.accentTheme.cursorColor)
-                case .done:
-                    Text("Done.")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(DS.Colors.textPrimary)
-                case .failed:
-                    Text("Needs attention.")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(DS.Colors.textPrimary)
-                }
-            }
+    private var latestOutputContent: some View {
+        if let trimmedCaption,
+           !trimmedCaption.isEmpty {
+            Text(trimmedCaption)
+                .font(.system(size: 12))
+                .foregroundColor(DS.Colors.textPrimary)
+                .lineSpacing(2)
+                .lineLimit(6)
+                .minimumScaleFactor(0.88)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
 
             if let linkTarget {
                 Button {
@@ -1460,8 +1453,30 @@ private struct ClickyAgentDockHoverCard: View {
                     Label(linkButtonTitle(for: linkTarget), systemImage: "arrow.up.right.square")
                 }
                 .buttonStyle(ClickyAgentDockPillButtonStyle())
+                .padding(.top, 4)
+            }
+        } else {
+            switch item.status {
+            case .starting, .running:
+                ClickyThinkingDots(tint: item.accentTheme.cursorColor)
+            case .done:
+                Text("Done.")
+                    .font(.system(size: 13))
+                    .foregroundColor(DS.Colors.textSecondary)
+            case .failed:
+                Text("Needs attention.")
+                    .font(.system(size: 13))
+                    .foregroundColor(DS.Colors.destructiveText)
             }
         }
+    }
+
+    private var hasDistinctUserInstruction: Bool {
+        !userInstructionDisplay.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var userInstructionDisplay: String {
+        item.userInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var trimmedCaption: String? {
@@ -1512,6 +1527,35 @@ private struct ClickyAgentDockHoverCard: View {
         Self.firstOpenableURL(in: item.caption ?? "")
     }
 
+    private var hasSessionOutputs: Bool {
+        let trimmedPath = item.sessionWorkspacePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !item.artifactFileURLs.isEmpty || (!trimmedPath.isEmpty && item.sessionID != nil)
+    }
+
+    @ViewBuilder
+    private var sessionFilesContent: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            let path = item.sessionWorkspacePath.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !path.isEmpty, item.sessionID != nil {
+                Button {
+                    NSWorkspace.shared.open(URL(fileURLWithPath: path))
+                } label: {
+                    Label("Session folder", systemImage: "folder")
+                }
+                .buttonStyle(ClickyAgentDockPillButtonStyle())
+            }
+            ForEach(Array(item.artifactFileURLs.prefix(10)), id: \.path) { url in
+                Button {
+                    NSWorkspace.shared.open(url)
+                } label: {
+                    Label(url.lastPathComponent, systemImage: "doc.text")
+                        .lineLimit(1)
+                }
+                .buttonStyle(ClickyAgentDockPillButtonStyle())
+            }
+        }
+    }
+
     private func linkButtonTitle(for url: URL) -> String {
         url.isFileURL ? "Open \(url.lastPathComponent)" : "Open link"
     }
@@ -1544,7 +1588,7 @@ private struct ClickyAgentDockHoverCard: View {
 
     private var displayTitle: String {
         let trimmedTitle = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmedTitle.isEmpty ? "HEY THERE" : trimmedTitle.uppercased()
+        return trimmedTitle.isEmpty ? "Agent" : trimmedTitle
     }
 
     private var statusText: String {
@@ -1560,28 +1604,16 @@ private struct ClickyAgentDockHoverCard: View {
         }
     }
 
-    private var statusTextColor: Color {
+    private var dockStatusIndicatorColor: Color {
         switch item.status {
         case .starting, .running:
-            return Color(hex: "#93C5FD")
+            return DS.Colors.warning
         case .done:
-            return Color(hex: "#FF7A9A")
+            return DS.Colors.success
         case .failed:
-            return Color(hex: "#FF6369")
+            return DS.Colors.destructiveText
         }
     }
-
-    private var statusBackgroundColor: Color {
-        switch item.status {
-        case .starting, .running:
-            return Color(hex: "#1D4ED8").opacity(0.25)
-        case .done:
-            return Color(hex: "#7F1D3A").opacity(0.72)
-        case .failed:
-            return DS.Colors.destructive.opacity(0.24)
-        }
-    }
-
 }
 
 private struct ClickyAgentDockStopButtonStyle: ButtonStyle {
@@ -1625,11 +1657,13 @@ private struct ClickyAgentDockPillButtonStyle: ButtonStyle {
             .padding(.vertical, 7)
             .background(
                 Capsule()
-                    .fill(Color.white.opacity(configuration.isPressed ? 0.18 : (isHovered ? 0.14 : 0.10)))
+                    .fill(
+                        DS.Colors.surface2.opacity(configuration.isPressed ? 1.0 : (isHovered ? 1.0 : 0.92))
+                    )
             )
             .overlay(
                 Capsule()
-                    .stroke(Color.white.opacity(isHovered ? 0.24 : 0.14), lineWidth: 1)
+                    .stroke(DS.Colors.borderSubtle.opacity(isHovered ? 1.0 : 0.85), lineWidth: 1)
             )
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
             .animation(.easeOut(duration: DS.Animation.fast), value: configuration.isPressed)
@@ -1652,7 +1686,7 @@ final class ClickyAgentDockWindowManager {
     private var dragStartFrame: NSRect?
     private var customFrame: NSRect?
     private let dockSize = NSSize(width: 860, height: 480)
-    private let hoverCardWidth: CGFloat = 560
+    private let hoverCardWidth: CGFloat = 512
     // Track the icon container size used by `ClickyAgentDockItemView`. Used
     // by `textFollowUpOrigin()` to position follow-up popovers relative to
     // the icon's actual width.
