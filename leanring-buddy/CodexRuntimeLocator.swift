@@ -82,13 +82,55 @@ nonisolated enum CodexRuntimeLocator {
 
     static func sourceAppResourcesDirectory(fileManager: FileManager = .default) -> URL? {
         let sourceFile = URL(fileURLWithPath: #filePath)
-        let repoRoot = sourceFile.deletingLastPathComponent().deletingLastPathComponent()
-        let candidate = repoRoot
-            .appendingPathComponent("AppResources", isDirectory: true)
-            .appendingPathComponent("OpenClicky", isDirectory: true)
-        var isDirectory: ObjCBool = false
-        guard fileManager.fileExists(atPath: candidate.path, isDirectory: &isDirectory), isDirectory.boolValue else { return nil }
-        return candidate
+        let sourceRoot = sourceFile.deletingLastPathComponent().deletingLastPathComponent()
+        let packageRoot = sourceRoot.deletingLastPathComponent()
+        let bundle = Bundle.main
+        var candidates: [URL] = [
+            sourceRoot
+                .appendingPathComponent("AppResources", isDirectory: true)
+                .appendingPathComponent("OpenClicky", isDirectory: true),
+            sourceRoot
+                .appendingPathComponent("Resources", isDirectory: true)
+                .appendingPathComponent("OpenClicky", isDirectory: true),
+            packageRoot
+                .appendingPathComponent("AppResources", isDirectory: true)
+                .appendingPathComponent("OpenClicky", isDirectory: true),
+            packageRoot
+                .appendingPathComponent("Muxy", isDirectory: true)
+                .appendingPathComponent("Resources", isDirectory: true)
+                .appendingPathComponent("OpenClicky", isDirectory: true),
+        ]
+
+        if let bundledOpenClicky = bundle.url(forResource: "OpenClicky", withExtension: nil) {
+            candidates.append(bundledOpenClicky)
+        }
+        if let resourceURL = bundle.resourceURL {
+            candidates.append(resourceURL.appendingPathComponent("OpenClicky", isDirectory: true))
+            candidates.append(
+                resourceURL
+                    .appendingPathComponent("Muxy_Muxy.bundle", isDirectory: true)
+                    .appendingPathComponent("OpenClicky", isDirectory: true)
+            )
+        }
+        candidates.append(
+            bundle.bundleURL
+                .appendingPathComponent("Muxy_Muxy.bundle", isDirectory: true)
+                .appendingPathComponent("OpenClicky", isDirectory: true)
+        )
+        candidates.append(
+            bundle.bundleURL
+                .appendingPathComponent("Contents/Resources/Muxy_Muxy.bundle", isDirectory: true)
+                .appendingPathComponent("OpenClicky", isDirectory: true)
+        )
+
+        for candidate in candidates {
+            var isDirectory: ObjCBool = false
+            if fileManager.fileExists(atPath: candidate.path, isDirectory: &isDirectory), isDirectory.boolValue {
+                return candidate
+            }
+        }
+
+        return nil
     }
 
     static func pathCodexExecutableURL(fileManager: FileManager = .default) -> URL? {

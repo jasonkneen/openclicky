@@ -15,3 +15,5 @@ worker/.dev.vars
 worker/.env
 worker/.env.local
 /AppResources/OpenClicky/CodexRuntime
+/.codesurf
+/.contex

@@ -664,11 +664,18 @@ private struct AgentMenuBarStatusPopoverView: View {
                 .padding(.top, 2)
 
             VStack(alignment: .leading, spacing: 8) {
-                Text(progressText)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(Color.white.opacity(0.82))
-                    .lineLimit(4)
-                    .fixedSize(horizontal: false, vertical: true)
+                if let liveProgressText, !liveProgressText.isEmpty {
+                    Text(liveProgressText)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(Color.white.opacity(0.82))
+                        .lineLimit(4)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    // No real activity yet — emit a thinking affordance
+                    // instead of "An agent is working on this." so the user
+                    // sees real-time progress, not canned filler.
+                    AgentMenuBarThinkingDots(tint: item.accentTheme.cursorColor)
+                }
 
                 if let linkTarget {
                     Button {
@@ -736,7 +743,24 @@ private struct AgentMenuBarStatusPopoverView: View {
     }
 
     private var linkTarget: URL? {
-        Self.firstOpenableURL(in: progressText)
+        Self.firstOpenableURL(in: liveProgressText ?? "")
+    }
+
+    /// Caption text — only the actual streamed agent activity. nil when the
+    /// agent has not produced any output yet so the view can render a
+    /// thinking indicator instead of the "An agent is working on this."
+    /// placeholder.
+    private var liveProgressText: String? {
+        let trimmed = item.caption?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmed.isEmpty { return trimmed }
+        switch item.status {
+        case .starting, .running:
+            return nil
+        case .done:
+            return "Done."
+        case .failed:
+            return "Needs attention."
+        }
     }
 
     private func linkButtonTitle(for url: URL) -> String {
@@ -768,17 +792,6 @@ private struct AgentMenuBarStatusPopoverView: View {
         return title.isEmpty ? "Agent task" : title
     }
 
-    private var progressText: String {
-        if let caption = item.caption?.trimmingCharacters(in: .whitespacesAndNewlines), !caption.isEmpty {
-            return caption
-        }
-        switch item.status {
-        case .starting: return "An agent is getting ready."
-        case .running: return "An agent is working on this."
-        case .done: return "The agent has completed the task."
-        case .failed: return "The agent needs attention."
-        }
-    }
 
     private var statusText: String {
         switch item.status {
@@ -796,5 +809,47 @@ private struct AgentMenuBarStatusPopoverView: View {
         case .done: return Color(hex: "#34D399")
         case .failed: return Color(hex: "#FF6369")
         }
+    }
+}
+
+/// Three softly-pulsing dots used in the menu-bar status popover while the
+/// agent has not yet produced its first streamed token. Replaces the
+/// previous static "An agent is working on this." caption fallback.
+private struct AgentMenuBarThinkingDots: View {
+    let tint: Color
+    @State private var phase: Int = 0
+    /// Stored handle for the phase-cycling task so we can cancel it in
+    /// `onDisappear`. Without this, every popover open/close leaks
+    /// another infinite task — the menu-bar popover is shown/hidden far
+    /// more often than the dock card, so the leak compounds quickly.
+    @State private var animationTask: Task<Void, Never>?
+
+    var body: some View {
+        HStack(spacing: 5) {
+            ForEach(0..<3, id: \.self) { index in
+                Circle()
+                    .fill(tint.opacity(opacity(for: index)))
+                    .frame(width: 5, height: 5)
+            }
+        }
+        .padding(.vertical, 4)
+        .onAppear {
+            animationTask?.cancel()
+            animationTask = Task { @MainActor in
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 360_000_000)
+                    if Task.isCancelled { return }
+                    phase = (phase + 1) % 3
+                }
+            }
+        }
+        .onDisappear {
+            animationTask?.cancel()
+            animationTask = nil
+        }
+    }
+
+    private func opacity(for index: Int) -> Double {
+        index == phase ? 0.95 : 0.32
     }
 }

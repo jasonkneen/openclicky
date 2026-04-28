@@ -208,6 +208,10 @@ struct BlueCursorView: View {
     @State private var timer: Timer?
     /// High-priority background timer that drives cursor tracking. Held
     /// as a strong reference so the source isn't deallocated mid-tick.
+    /// We sample on a `userInteractive` queue (not @MainActor) so the
+    /// buddy stays smooth even when the main thread is busy with SwiftUI
+    /// animation work or LLM streaming. Hops to main only when the cursor
+    /// has actually moved.
     @State private var cursorTrackingTimer: DispatchSourceTimer?
     @State private var welcomeText: String = ""
     @State private var showWelcome: Bool = true
@@ -463,16 +467,19 @@ struct BlueCursorView: View {
 
     private func startTrackingCursor() {
         // Sample `NSEvent.mouseLocation` (thread-safe) on a high-priority
-        // background queue so cursor tracking is independent of main-
-        // actor pressure. The previous Foundation `Timer` lived on the
-        // main RunLoop and got starved when LLM streaming + audio
-        // scheduling saturated the actor — visible as the cursor
-        // freezing in place.
+        // background queue so cursor tracking is independent of main-actor
+        // pressure. A previous version moved this to `Task { @MainActor in
+        // ... try? await Task.sleep(...) }` — that re-introduced the
+        // exact freeze it was meant to fix because every wake-up landed
+        // back on main, contending with SwiftUI animation work and TTS
+        // scheduling during agent spawn.
         //
-        // We only hop to main when the cursor actually moved. If main
-        // is busy, multiple hops may queue up, but each one re-reads
-        // `NSEvent.mouseLocation` when it runs, so the buddy never
-        // lags behind reality — it just catches up in a burst.
+        // We only hop to main when the cursor actually moved. If main is
+        // busy, multiple hops may queue up, but each one re-reads
+        // `NSEvent.mouseLocation` when it runs, so the buddy never lags
+        // behind reality — it just catches up in a burst.
+        cursorTrackingTimer?.cancel()
+
         let queue = DispatchQueue(label: "openclicky.cursor.tracker", qos: .userInteractive)
         let dispatchTimer = DispatchSource.makeTimerSource(queue: queue)
         dispatchTimer.schedule(deadline: .now(), repeating: .milliseconds(16), leeway: .milliseconds(2))
@@ -1175,7 +1182,7 @@ private struct ClickyAgentDockConversationPreview: View {
         VStack(alignment: .leading, spacing: 20) {
             conversationBubble(
                 label: "YOU",
-                text: userText,
+                content: { userBubbleText },
                 labelColor: Color(hex: "#FF7A9A"),
                 backgroundColor: Color(hex: "#341214").opacity(0.96),
                 borderColor: Color(hex: "#7F1D3A").opacity(0.42)
@@ -1183,7 +1190,7 @@ private struct ClickyAgentDockConversationPreview: View {
 
             conversationBubble(
                 label: "AGENT",
-                text: assistantText,
+                content: { agentBubbleContent },
                 labelColor: item.accentTheme.cursorColor.opacity(0.95),
                 backgroundColor: item.accentTheme.cursorColor.opacity(0.12),
                 borderColor: item.accentTheme.cursorColor.opacity(0.28)
@@ -1194,9 +1201,9 @@ private struct ClickyAgentDockConversationPreview: View {
         .shadow(color: Color.black.opacity(0.30), radius: 10, x: 0, y: 6)
     }
 
-    private func conversationBubble(
+    private func conversationBubble<Content: View>(
         label: String,
-        text: String,
+        @ViewBuilder content: () -> Content,
         labelColor: Color,
         backgroundColor: Color,
         borderColor: Color
@@ -1207,11 +1214,7 @@ private struct ClickyAgentDockConversationPreview: View {
                 .foregroundColor(labelColor)
                 .kerning(0.4)
 
-            Text(text)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(DS.Colors.textPrimary)
-                .lineLimit(2)
-                .minimumScaleFactor(0.78)
+            content()
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -1226,27 +1229,92 @@ private struct ClickyAgentDockConversationPreview: View {
         )
     }
 
-    private var userText: String {
+    /// The full user instruction — no clipping. The dock card width and
+    /// `lineLimit(nil)` let it wrap so the user sees exactly what was sent.
+    private var userBubbleText: some View {
+        Text(fullUserInstruction)
+            .font(.system(size: 13, weight: .medium))
+            .foregroundColor(DS.Colors.textPrimary)
+            .lineLimit(nil)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// Either the latest streamed assistant text, or a live "thinking"
+    /// indicator while we wait for the first token. Never the canned
+    /// "An agent is working on this." string.
+    @ViewBuilder
+    private var agentBubbleContent: some View {
+        let trimmedCaption = item.caption?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if trimmedCaption.isEmpty {
+            switch item.status {
+            case .starting, .running:
+                ClickyThinkingDots(tint: item.accentTheme.cursorColor)
+            case .done:
+                Text("Done.")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(DS.Colors.textPrimary)
+            case .failed:
+                Text("Needs attention.")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(DS.Colors.textPrimary)
+            }
+        } else {
+            Text(trimmedCaption)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(DS.Colors.textPrimary)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var fullUserInstruction: String {
+        let fullInstruction = item.userInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !fullInstruction.isEmpty { return fullInstruction }
         let trimmedTitle = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmedTitle.isEmpty ? "hey there" : trimmedTitle
     }
+}
 
-    private var assistantText: String {
-        let trimmedCaption = item.caption?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return trimmedCaption.isEmpty ? progressText : trimmedCaption
+/// Three softly-pulsing dots used as a "thinking" affordance while the
+/// agent has not produced its first streamed token yet. Replaces the
+/// previous static "An agent is working on this." string.
+private struct ClickyThinkingDots: View {
+    let tint: Color
+    @State private var phase: Int = 0
+    /// Stored handle for the phase-cycling task so we can cancel it in
+    /// `onDisappear`. Without this, every remount of the view (dock
+    /// hide/show, hover-card toggle) leaks another infinite task.
+    @State private var animationTask: Task<Void, Never>?
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(0..<3, id: \.self) { index in
+                Circle()
+                    .fill(tint.opacity(opacity(for: index)))
+                    .frame(width: 6, height: 6)
+            }
+        }
+        .padding(.vertical, 4)
+        .onAppear {
+            // Cancel any prior task before starting a fresh one — guards
+            // against duplicate `onAppear` events during transitions.
+            animationTask?.cancel()
+            animationTask = Task { @MainActor in
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 360_000_000)
+                    if Task.isCancelled { return }
+                    phase = (phase + 1) % 3
+                }
+            }
+        }
+        .onDisappear {
+            animationTask?.cancel()
+            animationTask = nil
+        }
     }
 
-    private var progressText: String {
-        switch item.status {
-        case .starting:
-            return "An agent is getting ready."
-        case .running:
-            return "An agent is working on this."
-        case .done:
-            return "The agent has completed the task."
-        case .failed:
-            return "The agent needs attention."
-        }
+    private func opacity(for index: Int) -> Double {
+        index == phase ? 0.95 : 0.32
     }
 }
 
@@ -1353,12 +1421,30 @@ private struct ClickyAgentDockHoverCard: View {
     @ViewBuilder
     private var agentProgressContent: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(progressText)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(DS.Colors.textPrimary)
-                .lineLimit(5)
-                .minimumScaleFactor(0.82)
-                .fixedSize(horizontal: false, vertical: true)
+            if let trimmedCaption,
+               !trimmedCaption.isEmpty {
+                Text(trimmedCaption)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(DS.Colors.textPrimary)
+                    .lineLimit(5)
+                    .minimumScaleFactor(0.82)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                // No real activity yet — surface a thinking indicator
+                // instead of the canned "An agent is working on this." line.
+                switch item.status {
+                case .starting, .running:
+                    ClickyThinkingDots(tint: item.accentTheme.cursorColor)
+                case .done:
+                    Text("Done.")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(DS.Colors.textPrimary)
+                case .failed:
+                    Text("Needs attention.")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(DS.Colors.textPrimary)
+                }
+            }
 
             if let linkTarget {
                 Button {
@@ -1369,6 +1455,10 @@ private struct ClickyAgentDockHoverCard: View {
                 .buttonStyle(ClickyAgentDockPillButtonStyle())
             }
         }
+    }
+
+    private var trimmedCaption: String? {
+        item.caption?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     @ViewBuilder
@@ -1397,7 +1487,10 @@ private struct ClickyAgentDockHoverCard: View {
     }
 
     private var linkTarget: URL? {
-        Self.firstOpenableURL(in: progressText)
+        // Only scan the live caption — the previous version scanned the
+        // canned "An agent is working on this." fallback, which never
+        // contained a link anyway.
+        Self.firstOpenableURL(in: item.caption ?? "")
     }
 
     private func linkButtonTitle(for url: URL) -> String {
@@ -1415,7 +1508,7 @@ private struct ClickyAgentDockHoverCard: View {
             let range = NSRange(text.startIndex..<text.endIndex, in: text)
             guard let match = regex.firstMatch(in: text, range: range), match.numberOfRanges > 1,
                   let matchRange = Range(match.range(at: 1), in: text) else { continue }
-            var raw = String(text[matchRange])
+            let raw = String(text[matchRange])
                 .trimmingCharacters(in: CharacterSet(charactersIn: "`'\".,)\n\t "))
             if raw.hasPrefix("file://"), let url = URL(string: raw) {
                 return url
@@ -1470,22 +1563,6 @@ private struct ClickyAgentDockHoverCard: View {
         }
     }
 
-    private var progressText: String {
-        if let caption = item.caption, !caption.isEmpty {
-            return caption
-        }
-
-        switch item.status {
-        case .starting:
-            return "An agent is getting ready."
-        case .running:
-            return "An agent is working on this."
-        case .done:
-            return "The agent has completed the task."
-        case .failed:
-            return "The agent needs attention."
-        }
-    }
 }
 
 private struct ClickyAgentDockStopButtonStyle: ButtonStyle {

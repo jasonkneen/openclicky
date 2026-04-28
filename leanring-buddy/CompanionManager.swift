@@ -46,6 +46,10 @@ struct ClickyAgentDockItem: Identifiable, Equatable {
     let id: UUID
     let sessionID: UUID?
     var title: String
+    /// Full, untruncated instruction the user gave the agent. Used by the
+    /// conversation preview's YOU bubble so the user can see exactly what was
+    /// requested (the short `title` is reserved for compact dock labels).
+    var userInstruction: String
     var accentTheme: ClickyAccentTheme
     var status: ClickyAgentDockStatus
     var caption: String?
@@ -513,7 +517,7 @@ final class CompanionManager: ObservableObject {
     private static let prewarmedScreenshotMaxAge: TimeInterval = 8.0
     /// Duration to keep a cancelled dock item visible so users can see
     /// explicit completion text before it auto-dismisses.
-    private static let cancelledDockItemHoldDuration: TimeInterval = 0.45
+    private let cancelledDockItemHoldDuration: TimeInterval = 0.45
     /// Scheduled hide for transient cursor mode — cancelled if the user
     /// speaks again before the delay elapses.
     private var transientHideTask: Task<Void, Never>?
@@ -823,8 +827,10 @@ final class CompanionManager: ObservableObject {
         isTutorModeEnabled = enabled
         UserDefaults.standard.set(enabled, forKey: Self.tutorModeDefaultsKey)
         if enabled {
-            ensureCursorOverlayVisibleForAgentTask()
-            startTutorIdleObservation()
+            showCursorOverlayIfAvailable()
+            if runtimeMode == .menuBar {
+                startTutorIdleObservation()
+            }
         } else {
             stopTutorIdleObservation()
         }
@@ -902,9 +908,7 @@ final class CompanionManager: ObservableObject {
         transientHideTask = nil
 
         if enabled {
-            overlayWindowManager.hasShownOverlayBefore = true
-            overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-            isOverlayVisible = true
+            showCursorOverlayIfAvailable()
         } else {
             overlayWindowManager.hideOverlay()
             isOverlayVisible = false
@@ -953,11 +957,9 @@ final class CompanionManager: ObservableObject {
         startPermissionPolling()
         bindVoiceStateObservation()
         bindAudioPowerLevel()
-        if runtimeMode == .menuBar {
-            bindShortcutTransitions()
-        }
+        bindShortcutTransitions()
         bindAgentSessionObservation()
-        if isTutorModeEnabled {
+        if runtimeMode == .menuBar && isTutorModeEnabled {
             startTutorIdleObservation()
         }
         let selectedVoiceResponseModel = OpenClickyModelCatalog.voiceResponseModel(withID: selectedModel)
@@ -996,10 +998,8 @@ final class CompanionManager: ObservableObject {
         // still granted, show the cursor overlay immediately. If permissions
         // were revoked (e.g. signing change), don't show the cursor — the
         // panel will show the permissions UI instead.
-        if runtimeMode == .menuBar && hasCompletedOnboarding && allPermissionsGranted && isClickyCursorEnabled {
-            overlayWindowManager.hasShownOverlayBefore = true
-            overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-            isOverlayVisible = true
+        if hasCompletedOnboarding && isClickyCursorEnabled {
+            showCursorOverlayIfAvailable()
         }
     }
 
@@ -1130,7 +1130,7 @@ final class CompanionManager: ObservableObject {
         let currentlyHasAccessibility = WindowPositionManager.hasAccessibilityPermission()
         hasAccessibilityPermission = currentlyHasAccessibility
 
-        if runtimeMode == .menuBar && currentlyHasAccessibility {
+        if currentlyHasAccessibility {
             globalPushToTalkShortcutMonitor.start()
         } else {
             globalPushToTalkShortcutMonitor.stop()
@@ -1207,10 +1207,8 @@ final class CompanionManager: ObservableObject {
                     ClickyAnalytics.trackPermissionGranted(permission: "screen_content")
 
                     // If onboarding was already completed, show the cursor overlay now
-                    if hasCompletedOnboarding && allPermissionsGranted && !isOverlayVisible && isClickyCursorEnabled {
-                        overlayWindowManager.hasShownOverlayBefore = true
-                        overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-                        isOverlayVisible = true
+                    if hasCompletedOnboarding && !isOverlayVisible && isClickyCursorEnabled {
+                        showCursorOverlayIfAvailable()
                     }
                 }
             } catch {
@@ -1370,8 +1368,11 @@ final class CompanionManager: ObservableObject {
     private func scheduleAgentActivityRefresh(for sessionID: UUID) {
         guard pendingAgentActivityRefreshTasks[sessionID] == nil else { return }
 
+        // Short debounce so streaming assistant deltas feel real-time in the
+        // dock caption. The old 450ms interval batched too aggressively and
+        // produced visibly "stalled" updates while tokens were arriving.
         pendingAgentActivityRefreshTasks[sessionID] = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(450))
+            try? await Task.sleep(for: .milliseconds(120))
             await MainActor.run {
                 guard let self else { return }
                 self.pendingAgentActivityRefreshTasks[sessionID] = nil
@@ -6322,7 +6323,11 @@ final class CompanionManager: ObservableObject {
         ensureCursorOverlayVisibleForAgentTask()
 
         let dockItemID = UUID()
-        let acknowledgement = acknowledgement ?? "got it. an agent is starting."
+        // Build a richer acknowledgement that echoes the requirement back
+        // so the user immediately hears/sees that the app understood what
+        // they asked for and what's about to happen next. Falls back to the
+        // caller's override (e.g., the explicit-agent path) when supplied.
+        let acknowledgement = acknowledgement ?? Self.acknowledgementForAgentInstruction(instruction)
         let dockScreen = agentDockTargetScreen()
 
         latestVoiceResponseCard = ClickyResponseCard(
@@ -6342,6 +6347,10 @@ final class CompanionManager: ObservableObject {
             clearDetectedElementLocation()
         }
 
+        // Hand the dock-spawn task a captured reference to the response work
+        // so we can start TTS *after* the dock is on-screen (no audio
+        // overlapping the spawn animation). The previous structure ran TTS
+        // on a sibling Task that started at t=0.
         Task { @MainActor in
             // Let the cursor visibly start/mostly complete the upward
             // flight before the agent dock appears at the target.
@@ -6360,6 +6369,7 @@ final class CompanionManager: ObservableObject {
                 id: dockItemID,
                 sessionID: agentSession.id,
                 title: Self.shortAgentInstructionSummary(instruction),
+                userInstruction: instruction.trimmingCharacters(in: .whitespacesAndNewlines),
                 accentTheme: accentTheme,
                 status: .starting,
                 caption: acknowledgement,
@@ -6417,33 +6427,45 @@ final class CompanionManager: ObservableObject {
                 to: agentSession,
                 includeScreenContext: Self.shouldAttachScreenContext(to: instruction)
             )
-        }
 
-        currentResponseTask = Task {
-            self.voiceState = .processing
-            do {
-                try await voiceTTSClient.speakText(acknowledgement) {
-                    self.voiceState = .responding
+            // Audio defer: with the dock now on-screen and the agent in
+            // flight, give the appearance animation a short settle window
+            // (~250ms) before speaking. This eliminates the prior bug where
+            // TTS started at t=0 and visibly skipped/overlapped the cursor
+            // flight + dock fade-in.
+            try? await Task.sleep(nanoseconds: 250_000_000)
+
+            currentResponseTask = Task { [acknowledgement, dockItemID] in
+                await MainActor.run { self.voiceState = .processing }
+                do {
+                    try await voiceTTSClient.speakText(acknowledgement) {
+                        Task { @MainActor in self.voiceState = .responding }
+                    }
+                } catch {
+                    guard !Self.isExpectedCancellation(error) else { return }
+                    ClickyAnalytics.trackTTSError(error: error.localizedDescription)
+                    print("ElevenLabs TTS error: \(error)")
+                    await MainActor.run { self.speakResponseFailureFallback(error) }
                 }
-            } catch {
-                guard !Self.isExpectedCancellation(error) else { return }
-                ClickyAnalytics.trackTTSError(error: error.localizedDescription)
-                print("ElevenLabs TTS error: \(error)")
-                speakResponseFailureFallback(error)
-            }
 
-            try? await Task.sleep(nanoseconds: 4_000_000_000)
-            await MainActor.run {
-                clearAgentDockCaption(for: dockItemID)
-                if !Task.isCancelled {
-                    self.voiceState = .idle
-                    scheduleTransientHideIfNeeded()
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                await MainActor.run {
+                    self.clearAgentDockCaption(for: dockItemID)
+                    if !Task.isCancelled {
+                        self.voiceState = .idle
+                        self.scheduleTransientHideIfNeeded()
+                    }
                 }
             }
         }
     }
 
     private func ensureCursorOverlayVisibleForAgentTask() {
+        showCursorOverlayIfAvailable()
+    }
+
+    private func showCursorOverlayIfAvailable() {
+        guard hasAccessibilityPermission else { return }
         guard !isOverlayVisible || !overlayWindowManager.isShowingOverlay() else { return }
         overlayWindowManager.hasShownOverlayBefore = true
         overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
@@ -6465,6 +6487,7 @@ final class CompanionManager: ObservableObject {
             id: dockItemID,
             sessionID: nil,
             title: selectedComputerUseBackend.label,
+            userInstruction: caption,
             accentTheme: Self.nextAgentDockAccentTheme(existingCount: agentDockItems.count),
             status: .done,
             caption: caption,
@@ -6491,10 +6514,11 @@ final class CompanionManager: ObservableObject {
         pendingAgentDockItemRemovalTasks.removeValue(forKey: sessionID)
     }
 
-    private func scheduleAgentDockItemRemoval(for sessionID: UUID, delay: TimeInterval = Self.cancelledDockItemHoldDuration) {
+    private func scheduleAgentDockItemRemoval(for sessionID: UUID, delay: TimeInterval? = nil) {
         cancelPendingAgentDockItemRemoval(for: sessionID)
         guard agentDockItems.contains(where: { $0.sessionID == sessionID }) else { return }
 
+        let effectiveDelay = delay ?? cancelledDockItemHoldDuration
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.agentDockItems.removeAll { $0.sessionID == sessionID }
@@ -6505,7 +6529,7 @@ final class CompanionManager: ObservableObject {
             self.scheduleWidgetSnapshotPublish()
         }
         pendingAgentDockItemRemovalTasks[sessionID] = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+        DispatchQueue.main.asyncAfter(deadline: .now() + effectiveDelay, execute: workItem)
     }
 
     private static func shortAgentInstructionSummary(_ instruction: String) -> String {
@@ -6526,6 +6550,43 @@ final class CompanionManager: ObservableObject {
         return prefix
     }
 
+    /// Build the spoken/displayed acknowledgement for a freshly invoked
+    /// agent task. Echoes the user's intent back so they immediately hear
+    /// confirmation of what was understood and what happens next, instead
+    /// of the previous generic "got it. an agent is starting." line.
+    ///
+    /// Format: "got it — \(intentClause). starting an agent now."
+    /// - intentClause is a short, lower-cased, verb-leading paraphrase of
+    ///   the instruction (capped at ~80 chars on a word boundary).
+    private static func acknowledgementForAgentInstruction(_ instruction: String) -> String {
+        let flattened = instruction
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        guard !flattened.isEmpty else {
+            return "got it. starting an agent now."
+        }
+        let trimmed: String = {
+            guard flattened.count > 80 else { return flattened }
+            let endIndex = flattened.index(flattened.startIndex, offsetBy: 80)
+            let prefix = String(flattened[..<endIndex])
+            if let lastSpace = prefix.lastIndex(of: " ") {
+                return String(prefix[..<lastSpace])
+            }
+            return prefix
+        }()
+        // Lower-case the first character so the echoed clause reads naturally
+        // in the middle of the spoken sentence ("got it — open the README ...").
+        let lowercasedFirst: String
+        if let first = trimmed.first {
+            lowercasedFirst = String(first).lowercased() + trimmed.dropFirst()
+        } else {
+            lowercasedFirst = trimmed
+        }
+        let stripped = lowercasedFirst.trimmingCharacters(in: CharacterSet(charactersIn: ".!?"))
+        return "got it — \(stripped). starting an agent now."
+    }
+
     private static func nextAgentDockAccentTheme(existingCount: Int) -> ClickyAccentTheme {
         let accentThemes: [ClickyAccentTheme] = [.blue, .mint, .rose, .blue, .amber]
         return accentThemes[existingCount % accentThemes.count]
@@ -6539,19 +6600,33 @@ final class CompanionManager: ObservableObject {
         switch status {
         case .starting:
             agentDockItems[itemIndex].status = .starting
-            agentDockItems[itemIndex].caption = activitySummary ?? "An agent is getting ready."
+            // Only overwrite the caption when we actually have real assistant
+            // activity. Otherwise preserve the existing caption (the user's
+            // acknowledgement message) instead of replacing it with the
+            // generic "An agent is getting ready." placeholder. When neither
+            // is present, leave caption nil so the view can render its own
+            // streaming "thinking" affordance.
+            if let activitySummary,
+               !activitySummary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                agentDockItems[itemIndex].caption = activitySummary
+            }
         case .running:
             agentDockItems[itemIndex].status = .running
-            agentDockItems[itemIndex].caption = activitySummary ?? "An agent is working on this."
+            // Same rationale as .starting — never replace the caption with
+            // "An agent is working on this." Leave nil to surface the
+            // animated thinking indicator until real tokens stream in.
+            if let activitySummary,
+               !activitySummary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                agentDockItems[itemIndex].caption = activitySummary
+            }
         case .ready:
             // Codex briefly reports `.ready` after thread startup and before
             // the actual turn starts. Do not turn that preflight ready state
             // into "done"; it caused "the red agent is done" followed by
             // "working" while the task had not begun yet.
             guard let activitySummary, !activitySummary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                if agentDockItems[itemIndex].status == .starting {
-                    agentDockItems[itemIndex].caption = "An agent is getting ready."
-                }
+                // Preflight ready with nothing to report: leave caption alone
+                // so the acknowledgement / streaming affordance stays visible.
                 return
             }
             if agentDockItems[itemIndex].status == .running || agentDockItems[itemIndex].status == .starting {
@@ -9012,6 +9087,7 @@ final class CompanionManager: ObservableObject {
     private func beginVoiceFollowUpCapture() {
         guard !buddyDictationManager.isDictationInProgress else { return }
 
+        showCursorOverlayIfAvailable()
         transientHideTask?.cancel()
         transientHideTask = nil
         voiceFollowUpStopTask?.cancel()

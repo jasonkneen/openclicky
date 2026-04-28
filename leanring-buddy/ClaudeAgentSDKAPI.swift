@@ -664,16 +664,56 @@ final class ClaudeAgentSDKAPI {
     }
 
     private static func findBridgeScript(fileManager: FileManager = .default) -> URL? {
-        if let bundled = Bundle.main.url(forResource: "ClaudeAgentSDKBridge", withExtension: nil)?
-            .appendingPathComponent("bridge.mjs", isDirectory: false),
-           fileManager.fileExists(atPath: bundled.path) {
-            return bundled
+        let environment = ProcessInfo.processInfo.environment
+        var candidates: [URL] = []
+
+        func appendBridgeCandidate(_ url: URL) {
+            if url.lastPathComponent == "bridge.mjs" {
+                candidates.append(url)
+            } else {
+                candidates.append(url.appendingPathComponent("bridge.mjs", isDirectory: false))
+            }
+        }
+
+        for key in ["OPENCLICKY_CLAUDE_AGENT_BRIDGE", "OPENCLICKY_CLAUDE_AGENT_SDK_BRIDGE"] {
+            guard let rawPath = environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !rawPath.isEmpty else {
+                continue
+            }
+            appendBridgeCandidate(URL(fileURLWithPath: (rawPath as NSString).expandingTildeInPath, isDirectory: false))
+        }
+
+        if let bundled = Bundle.main.url(forResource: "ClaudeAgentSDKBridge", withExtension: nil) {
+            appendBridgeCandidate(bundled)
+        }
+
+        if let resourcesDirectory = Bundle.main.resourceURL {
+            appendBridgeCandidate(resourcesDirectory.appendingPathComponent("ClaudeAgentSDKBridge", isDirectory: true))
         }
 
         if let sourceResources = CodexRuntimeLocator.sourceAppResourcesDirectory(fileManager: fileManager) {
-            let candidate = sourceResources
-                .appendingPathComponent("ClaudeAgentSDKBridge", isDirectory: true)
-                .appendingPathComponent("bridge.mjs", isDirectory: false)
+            appendBridgeCandidate(sourceResources.appendingPathComponent("ClaudeAgentSDKBridge", isDirectory: true))
+        }
+
+        appendBridgeCandidate(URL(
+            fileURLWithPath: "\(fileManager.homeDirectoryForCurrentUser.path)/Documents/GitHub/openclicky/AppResources/OpenClicky/ClaudeAgentSDKBridge",
+            isDirectory: true
+        ))
+
+        var currentDirectory = URL(fileURLWithPath: fileManager.currentDirectoryPath, isDirectory: true)
+        for _ in 0..<8 {
+            appendBridgeCandidate(
+                currentDirectory
+                    .appendingPathComponent("AppResources", isDirectory: true)
+                    .appendingPathComponent("OpenClicky", isDirectory: true)
+                    .appendingPathComponent("ClaudeAgentSDKBridge", isDirectory: true)
+            )
+            let parent = currentDirectory.deletingLastPathComponent()
+            guard parent.path != currentDirectory.path else { break }
+            currentDirectory = parent
+        }
+
+        for candidate in candidates {
             if fileManager.fileExists(atPath: candidate.path) {
                 return candidate
             }

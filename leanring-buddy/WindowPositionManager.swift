@@ -232,27 +232,42 @@ class WindowPositionManager {
 
         let appElement = AXUIElementCreateApplication(frontApp.processIdentifier)
 
-        // Get the focused window of the front app
-        var focusedWindowValue: AnyObject?
-        let focusedResult = AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &focusedWindowValue)
+        // Get the focused window of the front app.
+        //
+        // AX APIs return `CFTypeRef` whose actual type depends on the
+        // attribute. We must NOT force-cast — a sandboxed/unexpected
+        // process can return a different CF type and crash the host. Use
+        // CFGetTypeID guards so a mismatch becomes a silent early return.
+        var focusedWindowValue: CFTypeRef?
+        let focusedResult = AXUIElementCopyAttributeValue(
+            appElement,
+            kAXFocusedWindowAttribute as CFString,
+            &focusedWindowValue
+        )
         guard focusedResult == .success,
-              let focusedWindow = focusedWindowValue as? AXUIElement else {
+              let focusedWindowValue,
+              CFGetTypeID(focusedWindowValue) == AXUIElementGetTypeID() else {
             return
         }
+        let focusedWindow = focusedWindowValue as! AXUIElement // safe: TypeID checked above
 
         // Get position and size of the focused window
-        var positionValue: AnyObject?
-        var sizeValue: AnyObject?
-        guard AXUIElementCopyAttributeValue(focusedWindow, kAXPositionAttribute as CFString, &positionValue) == .success,
-              AXUIElementCopyAttributeValue(focusedWindow, kAXSizeAttribute as CFString, &sizeValue) == .success else {
+        var positionValueRef: CFTypeRef?
+        var sizeValueRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(focusedWindow, kAXPositionAttribute as CFString, &positionValueRef) == .success,
+              AXUIElementCopyAttributeValue(focusedWindow, kAXSizeAttribute as CFString, &sizeValueRef) == .success,
+              let positionValueRef,
+              let sizeValueRef,
+              CFGetTypeID(positionValueRef) == AXValueGetTypeID(),
+              CFGetTypeID(sizeValueRef) == AXValueGetTypeID() else {
             return
         }
+        let positionValue = positionValueRef as! AXValue // safe: TypeID checked above
+        let sizeValue = sizeValueRef as! AXValue         // safe: TypeID checked above
 
         var otherPosition = CGPoint.zero
         var otherSize = CGSize.zero
-        guard let positionValue = positionValue as? AXValue,
-              let sizeValue = sizeValue as? AXValue,
-              AXValueGetValue(positionValue, .cgPoint, &otherPosition),
+        guard AXValueGetValue(positionValue, .cgPoint, &otherPosition),
               AXValueGetValue(sizeValue, .cgSize, &otherSize) else {
             return
         }

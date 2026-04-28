@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 /// Public execution mode for an embedded OpenClicky runtime.
@@ -122,19 +123,32 @@ public final class OpenClickySDKSession: ObservableObject {
     /// Build an embedded panel view pre-wired to this session.
     public func makePanelView(
         isPanelPinned: Bool = false,
-        actions: OpenClickySDKPanelActions = .init(),
+        actions: OpenClickySDKPanelActions,
         setPanelPinned: @escaping (Bool) -> Void = { _ in }
     ) -> OpenClickySDKPanel {
-        OpenClickySDKPanel(
-            companionManager: manager,
+        MainActor.assumeIsolated {
+            OpenClickySDKPanel(
+                companionManager: manager,
+                isPanelPinned: isPanelPinned,
+                setPanelPinned: setPanelPinned,
+                onPanelDismiss: actions.onPanelDismiss,
+                onQuit: actions.onQuit,
+                onOpenHUD: actions.onOpenHUD,
+                onOpenMemory: actions.onOpenMemory,
+                onOpenFeedback: actions.onOpenFeedback,
+                onShowSettings: actions.onShowSettings
+            )
+        }
+    }
+
+    public func makePanelView(
+        isPanelPinned: Bool = false,
+        setPanelPinned: @escaping (Bool) -> Void = { _ in }
+    ) -> OpenClickySDKPanel {
+        makePanelView(
             isPanelPinned: isPanelPinned,
-            setPanelPinned: setPanelPinned,
-            onPanelDismiss: actions.onPanelDismiss,
-            onQuit: actions.onQuit,
-            onOpenHUD: actions.onOpenHUD,
-            onOpenMemory: actions.onOpenMemory,
-            onOpenFeedback: actions.onOpenFeedback,
-            onShowSettings: actions.onShowSettings
+            actions: OpenClickySDKPanelActions(),
+            setPanelPinned: setPanelPinned
         )
     }
 }
