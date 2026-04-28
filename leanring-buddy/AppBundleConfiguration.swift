@@ -33,7 +33,11 @@ nonisolated enum AppBundleConfiguration {
     static let appGroupIdentifier = "group.com.jkneen.openclicky"
 
     static func anthropicAPIKey() -> String? {
-        let configuredAnthropicAPIKey = userDefaultsValue(forKey: userAnthropicAPIKeyDefaultsKey) ?? stringValue(
+        // User-provided keys live in the Keychain (canonical) via
+        // `ClickyAPIKeyStore`. The Info.plist / launch-env / secrets-file
+        // fallbacks remain so a developer can wire up a build without
+        // touching the in-app settings.
+        let configuredAnthropicAPIKey = ClickyAPIKeyStore.keychainValue(for: .anthropicAPIKey) ?? stringValue(
             forKey: "AnthropicAPIKey",
             environmentKeys: ["ANTHROPIC_API_KEY"]
         ) ?? localDevelopmentEnvironmentValue(forKey: "ANTHROPIC_API_KEY")
@@ -43,14 +47,14 @@ nonisolated enum AppBundleConfiguration {
     }
 
     static func openAIAPIKey() -> String? {
-        userDefaultsValue(forKey: userCodexAgentAPIKeyDefaultsKey) ?? stringValue(
+        ClickyAPIKeyStore.keychainValue(for: .openAIAPIKey) ?? stringValue(
             forKey: "OpenAIAPIKey",
             environmentKeys: ["OPENAI_API_KEY"]
         ) ?? localDevelopmentEnvironmentValue(forKey: "OPENAI_API_KEY")
     }
 
     static func assemblyAIAPIKey() -> String? {
-        userDefaultsValue(forKey: userAssemblyAIAPIKeyDefaultsKey) ?? stringValue(
+        ClickyAPIKeyStore.keychainValue(for: .assemblyAIAPIKey) ?? stringValue(
             forKey: "AssemblyAIAPIKey",
             environmentKeys: ["ASSEMBLYAI_API_KEY", "ASSEMBLY_AI_API_KEY"]
         ) ?? localDevelopmentEnvironmentValue(forKey: "ASSEMBLYAI_API_KEY")
@@ -58,21 +62,21 @@ nonisolated enum AppBundleConfiguration {
     }
 
     static func deepgramAPIKey() -> String? {
-        userDefaultsValue(forKey: userDeepgramAPIKeyDefaultsKey) ?? stringValue(
+        ClickyAPIKeyStore.keychainValue(for: .deepgramAPIKey) ?? stringValue(
             forKey: "DeepgramAPIKey",
             environmentKeys: ["DEEPGRAM_API_KEY"]
         ) ?? localDevelopmentEnvironmentValue(forKey: "DEEPGRAM_API_KEY")
     }
 
     static func elevenLabsAPIKey() -> String? {
-        userDefaultsValue(forKey: userElevenLabsAPIKeyDefaultsKey) ?? stringValue(
+        ClickyAPIKeyStore.keychainValue(for: .elevenLabsAPIKey) ?? stringValue(
             forKey: "ElevenLabsAPIKey",
             environmentKeys: ["ELEVENLABS_API_KEY"]
         ) ?? localDevelopmentEnvironmentValue(forKey: "ELEVENLABS_API_KEY")
     }
 
     static func elevenLabsVoiceID() -> String {
-        userDefaultsValue(forKey: userElevenLabsVoiceIDDefaultsKey) ?? stringValue(
+        ClickyAPIKeyStore.keychainValue(for: .elevenLabsVoiceID) ?? stringValue(
             forKey: "ElevenLabsVoiceID",
             environmentKeys: ["ELEVENLABS_VOICE_ID"]
         ) ?? localDevelopmentEnvironmentValue(forKey: "ELEVENLABS_VOICE_ID")
@@ -80,7 +84,7 @@ nonisolated enum AppBundleConfiguration {
     }
 
     static func cartesiaAPIKey() -> String? {
-        userDefaultsValue(forKey: userCartesiaAPIKeyDefaultsKey) ?? stringValue(
+        ClickyAPIKeyStore.keychainValue(for: .cartesiaAPIKey) ?? stringValue(
             forKey: "CartesiaAPIKey",
             environmentKeys: ["CARTESIA_API_KEY"]
         ) ?? localDevelopmentEnvironmentValue(forKey: "CARTESIA_API_KEY")
@@ -89,7 +93,7 @@ nonisolated enum AppBundleConfiguration {
     /// Cartesia voice ID. Defaults to one of their public neutral voices.
     /// Users override via Settings → Voice → Cartesia voice ID.
     static func cartesiaVoiceID() -> String {
-        userDefaultsValue(forKey: userCartesiaVoiceIDDefaultsKey) ?? stringValue(
+        ClickyAPIKeyStore.keychainValue(for: .cartesiaVoiceID) ?? stringValue(
             forKey: "CartesiaVoiceID",
             environmentKeys: ["CARTESIA_VOICE_ID"]
         ) ?? localDevelopmentEnvironmentValue(forKey: "CARTESIA_VOICE_ID")
