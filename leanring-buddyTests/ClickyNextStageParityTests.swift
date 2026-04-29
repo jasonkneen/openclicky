@@ -6,7 +6,7 @@ import Testing
 @MainActor
 struct ClickyNextStageParityTests {
     @Test func debugDevModeUsesOpenClickyIdentityAndDisablesSideEffects() throws {
-        #expect(Bundle.main.bundleIdentifier == "com.jkneen.openclicky")
+        #expect(OpenClickyRuntimeMode.isOpenClickyBundle)
         #expect(Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String == "OpenClicky")
         #expect(Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String == "OpenClicky")
         #expect(OpenClickyRuntimeMode.isDevelopmentBuild == true)

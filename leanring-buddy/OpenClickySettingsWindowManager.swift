@@ -4,14 +4,14 @@ import SwiftUI
 @MainActor
 final class OpenClickySettingsWindowManager {
     private var window: NSWindow?
-    private let windowSize = NSSize(width: 860, height: 580)
-    private let minimumWindowSize = NSSize(width: 760, height: 500)
+    private let windowSize = NSSize(width: 900, height: 600)
+    private let minimumWindowSize = NSSize(width: 780, height: 520)
 
-    func show(companionManager: CompanionManager) {
+    func show(companionManager: CompanionManager, initialSection: OpenClickySettingsSection = .general) {
         if window == nil {
-            createWindow(companionManager: companionManager)
+            createWindow(companionManager: companionManager, initialSection: initialSection)
         } else if let hostingView = window?.contentView as? NSHostingView<OpenClickySettingsView> {
-            hostingView.rootView = OpenClickySettingsView(companionManager: companionManager)
+            hostingView.rootView = OpenClickySettingsView(companionManager: companionManager, initialSection: initialSection)
         }
 
         guard let settingsWindow = window else { return }
@@ -23,7 +23,7 @@ final class OpenClickySettingsWindowManager {
         settingsWindow.makeMain()
     }
 
-    private func createWindow(companionManager: CompanionManager) {
+    private func createWindow(companionManager: CompanionManager, initialSection: OpenClickySettingsSection) {
         let settingsWindow = NSWindow(
             contentRect: NSRect(origin: .zero, size: windowSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -39,7 +39,7 @@ final class OpenClickySettingsWindowManager {
         settingsWindow.collectionBehavior.insert(.moveToActiveSpace)
         settingsWindow.center()
 
-        let hostingView = NSHostingView(rootView: OpenClickySettingsView(companionManager: companionManager))
+        let hostingView = NSHostingView(rootView: OpenClickySettingsView(companionManager: companionManager, initialSection: initialSection))
         hostingView.frame = NSRect(origin: .zero, size: windowSize)
         hostingView.autoresizingMask = [.width, .height]
         settingsWindow.contentView = hostingView
@@ -48,7 +48,7 @@ final class OpenClickySettingsWindowManager {
     }
 }
 
-private enum OpenClickySettingsSection: String, CaseIterable, Identifiable {
+enum OpenClickySettingsSection: String, CaseIterable, Identifiable, Hashable {
     case general
     case voice
     case pointing
@@ -99,87 +99,84 @@ struct OpenClickySettingsView: View {
     @AppStorage(AppBundleConfiguration.userCodexAgentAPIKeyDefaultsKey) private var userCodexAgentAPIKey = ""
     @AppStorage(AppBundleConfiguration.userAssemblyAIAPIKeyDefaultsKey) private var userAssemblyAIAPIKey = ""
     @AppStorage(AppBundleConfiguration.userDeepgramAPIKeyDefaultsKey) private var userDeepgramAPIKey = ""
+    @AppStorage(AppBundleConfiguration.userGeminiAPIKeyDefaultsKey) private var userGeminiAPIKey = ""
+    @AppStorage(AppBundleConfiguration.userGeminiTTSVoiceDefaultsKey) private var userGeminiTTSVoice = "Kore"
+    @AppStorage(AppBundleConfiguration.userGeminiTTSModelDefaultsKey) private var userGeminiTTSModel = "gemini-2.5-flash-preview-tts"
+    @AppStorage(AppBundleConfiguration.userOpenAITTSVoiceDefaultsKey) private var userOpenAITTSVoice = "alloy"
+    @AppStorage(AppBundleConfiguration.userOpenAITTSModelDefaultsKey) private var userOpenAITTSModel = "gpt-4o-mini-tts"
     @AppStorage(AppBundleConfiguration.userWidgetsEnabledDefaultsKey) private var widgetsEnabled = false
     @AppStorage(AppBundleConfiguration.userWidgetsIncludeAgentTaskNamesDefaultsKey) private var widgetsIncludeAgentTaskNames = false
     @AppStorage(AppBundleConfiguration.userWidgetsIncludeMemorySnippetsDefaultsKey) private var widgetsIncludeMemorySnippets = false
     @AppStorage(AppBundleConfiguration.userWidgetsIncludeFocusedAppContextDefaultsKey) private var widgetsIncludeFocusedAppContext = false
-    @State private var selectedSection: OpenClickySettingsSection = .general
+    @AppStorage(AppBundleConfiguration.userBuddyFadeWhenIdleEnabledKey) private var buddyFadeWhenIdleEnabled = true
+    @AppStorage(AppBundleConfiguration.userBuddyFadeWhenIdleSecondsKey) private var buddyFadeWhenIdleSeconds = 15.0
+    @State private var selectedSection: OpenClickySettingsSection
 
-    init(companionManager: CompanionManager) {
+    init(companionManager: CompanionManager, initialSection: OpenClickySettingsSection = .general) {
         self.companionManager = companionManager
         self.session = companionManager.codexAgentSession
         self.nativeComputerUseController = companionManager.nativeComputerUseController
         self.backgroundComputerUseController = companionManager.backgroundComputerUseController
+        _selectedSection = State(initialValue: initialSection)
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            sidebar
-
-            Divider()
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    sectionHeader
-                    selectedPanel
-                }
-                .frame(maxWidth: 660, alignment: .leading)
-                .padding(.horizontal, 28)
-                .padding(.vertical, 24)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(nsColor: .windowBackgroundColor))
+        NavigationSplitView {
+            sidebarListColumn
+                .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
+        } detail: {
+            detailPane
+                .navigationTitle("")
         }
-        .frame(minWidth: 760, minHeight: 500)
+        .frame(minWidth: 780, minHeight: 520)
     }
 
-    private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("OpenClicky")
-                .font(.system(size: 18, weight: .semibold))
-                .padding(.horizontal, 14)
-                .padding(.top, 18)
-                .padding(.bottom, 12)
-
-            ForEach(OpenClickySettingsSection.allCases) { section in
-                Button {
-                    selectedSection = section
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: section.systemImageName)
-                            .font(.system(size: 14, weight: .medium))
-                            .frame(width: 20)
-                        Text(section.title)
-                            .font(.system(size: 13, weight: .medium))
-                        Spacer()
-                    }
-                    .foregroundColor(selectedSection == section ? .primary : .secondary)
-                    .padding(.horizontal, 12)
-                    .frame(height: 32)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(selectedSection == section ? Color.accentColor.opacity(0.18) : Color.clear)
-                    )
+    private var sidebarListColumn: some View {
+        List(selection: $selectedSection) {
+            Section {
+                ForEach(OpenClickySettingsSection.allCases) { section in
+                    Label(section.title, systemImage: section.systemImageName)
+                        .tag(section)
                 }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 8)
+            } header: {
+                Text("OpenClicky")
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .padding(.bottom, 2)
+                    .textCase(nil)
             }
-
-            Spacer()
         }
-        .frame(width: 190)
-        .background(.regularMaterial)
+        .listStyle(.sidebar)
+        .scrollContentBackground(.hidden)
+    }
+
+    private var detailPane: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                sectionHeader
+                selectedPanel
+            }
+            .frame(maxWidth: 640, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 36)
+            .padding(.vertical, 28)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     private var sectionHeader: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(selectedSection.title)
-                .font(.system(size: 26, weight: .semibold))
+                .font(.largeTitle.weight(.semibold))
             Text(sectionSubtitle)
-                .font(.system(size: 13))
-                .foregroundColor(.secondary)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+                .lineSpacing(2)
         }
+        .accessibilityElement(children: .combine)
+        .padding(.bottom, 2)
     }
 
     private var sectionSubtitle: String {
@@ -187,7 +184,7 @@ struct OpenClickySettingsView: View {
         case .general:
             return "Core behavior, cursor appearance, and everyday companion controls."
         case .voice:
-            return "Speech input, spoken response model, playback voice, and provider keys."
+            return "Recognition, response model, text-to-speech playback, and shared API credentials."
         case .pointing:
             return "Screen capture permissions and the model used for cursor pointing."
         case .computerUse:
@@ -253,161 +250,345 @@ struct OpenClickySettingsView: View {
                         set: { companionManager.setAdvancedModeEnabled($0) }
                     )
                 )
+
+                toggleRow(
+                    title: "Fade buddy after inactivity",
+                    subtitle: "Fades OpenClicky’s arrow when keyboard and mouse are idle — similar to the system cursor during video.",
+                    systemImageName: "moon.zzz.fill",
+                    isOn: Binding(
+                        get: { buddyFadeWhenIdleEnabled },
+                        set: { buddyFadeWhenIdleEnabled = $0 }
+                    )
+                )
+
+                if buddyFadeWhenIdleEnabled {
+                    HStack(spacing: 12) {
+                        rowIcon("timer").foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Inactive duration")
+                                .font(.body.weight(.medium))
+                            Text("Fade after no keyboard/mouse activity for this long.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 8)
+                        Picker("Seconds until fade", selection: $buddyFadeWhenIdleSeconds) {
+                            ForEach([5.0, 10, 15, 20, 30, 45, 60, 90, 120, 180], id: \.self) { s in
+                                Text(secondsLabel(for: s)).tag(s)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(width: 160)
+                        .pickerStyle(.menu)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 13)
+                }
             }
 
             settingsGroup("Cursor color") {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 4), spacing: 10) {
-                    ForEach([ClickyAccentTheme.rose, .blue, .amber, .mint]) { accentTheme in
-                        cursorColorButton(accentTheme)
+                VStack(spacing: 0) {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 4), spacing: 12) {
+                        ForEach([ClickyAccentTheme.rose, .blue, .amber, .mint]) { accentTheme in
+                            cursorColorButton(accentTheme)
+                        }
                     }
                 }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
             }
         }
     }
 
     private var voicePanel: some View {
         VStack(alignment: .leading, spacing: 14) {
-            settingsGroup("Voice response model") {
+            voiceReplySection
+            transcriptionSection
+            textToSpeechSection
+            speculativeSection
+        }
+    }
+
+    private var voiceReplySection: some View {
+        settingsGroup("Voice response model") {
+            VStack(spacing: 0) {
                 modelOptionGrid(
                     options: OpenClickyModelCatalog.voiceResponseModels,
                     selectedModelID: companionManager.selectedModel,
                     select: { companionManager.setSelectedModel($0) }
                 )
             }
+            .padding(.top, 10)
+        }
+    }
 
-            settingsGroup("Transcription") {
-                valueRow(
-                    title: "Current provider",
-                    subtitle: companionManager.buddyDictationManager.transcriptionProviderDisplayName,
-                    systemImageName: "waveform"
-                )
+    private var transcriptionSection: some View {
+        settingsGroup("Transcription") {
+            valueRow(
+                title: "Current provider",
+                subtitle: companionManager.buddyDictationManager.transcriptionProviderDisplayName,
+                systemImageName: "waveform"
+            )
 
-                if let transcriptionError = companionManager.buddyDictationManager.lastErrorMessage,
-                   !transcriptionError.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    warningRow(
-                        title: "Transcription error",
-                        subtitle: transcriptionError
-                    )
-                }
-
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
-                    ForEach(BuddyTranscriptionProviderID.allCases) { provider in
-                        optionButton(
-                            title: provider.label,
-                            subtitle: provider.subtitle,
-                            isSelected: companionManager.buddyDictationManager.transcriptionProviderID == provider.rawValue,
-                            action: { companionManager.setVoiceTranscriptionProvider(provider.rawValue) }
-                        )
-                    }
-                }
-
-                secureFieldRow(
-                    title: "AssemblyAI API key",
-                    subtitle: "Used by the AssemblyAI streaming transcription provider.",
-                    systemImageName: "key",
-                    placeholder: "AssemblyAI key",
-                    text: Binding(
-                        get: { userAssemblyAIAPIKey },
-                        set: { userAssemblyAIAPIKey = $0; companionManager.setAssemblyAIAPIKey($0) }
-                    )
-                )
-
-                secureFieldRow(
-                    title: "Deepgram API key",
-                    subtitle: "Used by the Deepgram streaming transcription provider.",
-                    systemImageName: "key",
-                    placeholder: "Deepgram key",
-                    text: Binding(
-                        get: { userDeepgramAPIKey },
-                        set: { userDeepgramAPIKey = $0; companionManager.setDeepgramAPIKey($0) }
-                    )
+            if let transcriptionError = companionManager.buddyDictationManager.lastErrorMessage,
+               !transcriptionError.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                warningRow(
+                    title: "Transcription error",
+                    subtitle: transcriptionError
                 )
             }
 
-            settingsGroup("Speculative pre-fire") {
-                toggleRow(
-                    title: "Pre-fire on stable speech",
-                    subtitle: "Starts the AI response while you're still talking when a partial is stable, no screen reference, and looks like a question. Saves up to 1s of TTFT but costs ~1.5–2× input tokens per turn for cancelled fires. Off by default.",
-                    systemImageName: "bolt.horizontal",
-                    isOn: Binding(
-                        get: { companionManager.speculativePreFireEnabled },
-                        set: { companionManager.setSpeculativePreFireEnabled($0) }
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+                ForEach(BuddyTranscriptionProviderID.allCases) { provider in
+                    optionButton(
+                        title: provider.label,
+                        subtitle: provider.subtitle,
+                        isSelected: companionManager.buddyDictationManager.transcriptionProviderID == provider.rawValue,
+                        action: { companionManager.setVoiceTranscriptionProvider(provider.rawValue) }
                     )
-                )
+                }
             }
 
-            settingsGroup("Playback") {
-                Picker("TTS provider", selection: Binding(
-                    get: { companionManager.selectedTTSProvider },
-                    set: { companionManager.setTTSProvider($0) }
-                )) {
-                    ForEach(OpenClickyTTSProvider.allCases) { provider in
-                        Text(provider.displayName).tag(provider)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 4)
+            secureFieldRow(
+                title: "AssemblyAI API key",
+                subtitle: "Used by the AssemblyAI streaming transcription provider.",
+                systemImageName: "key",
+                placeholder: "AssemblyAI key",
+                text: Binding(
+                    get: { userAssemblyAIAPIKey },
+                    set: { userAssemblyAIAPIKey = $0; companionManager.setAssemblyAIAPIKey($0) }
+                )
+            )
 
-                switch companionManager.selectedTTSProvider {
-                case .elevenLabs:
-                    secureFieldRow(
-                        title: "ElevenLabs API key",
-                        subtitle: "Used for spoken OpenClicky replies.",
-                        systemImageName: "speaker.wave.2",
-                        placeholder: "ElevenLabs key",
-                        text: Binding(
-                            get: { userElevenLabsAPIKey },
-                            set: { userElevenLabsAPIKey = $0; companionManager.setElevenLabsAPIKey($0) }
-                        )
-                    )
-                    textFieldRow(
-                        title: "ElevenLabs voice ID",
-                        subtitle: "Optional custom voice override.",
-                        systemImageName: "person.wave.2",
-                        placeholder: "Voice ID",
-                        text: Binding(
-                            get: { userElevenLabsVoiceID },
-                            set: { userElevenLabsVoiceID = $0; companionManager.setElevenLabsVoiceID($0) }
-                        )
-                    )
-                case .cartesia:
-                    secureFieldRow(
-                        title: "Cartesia API key",
-                        subtitle: "Used for spoken OpenClicky replies.",
-                        systemImageName: "speaker.wave.2",
-                        placeholder: "Cartesia key",
-                        text: Binding(
-                            get: { userCartesiaAPIKey },
-                            set: { userCartesiaAPIKey = $0; companionManager.setCartesiaAPIKey($0) }
-                        )
-                    )
-                    textFieldRow(
-                        title: "Cartesia voice ID",
-                        subtitle: "Optional custom voice override.",
-                        systemImageName: "person.wave.2",
-                        placeholder: "Voice ID",
-                        text: Binding(
-                            get: { userCartesiaVoiceID },
-                            set: { userCartesiaVoiceID = $0; companionManager.setCartesiaVoiceID($0) }
-                        )
-                    )
-                case .deepgram:
-                    Text("Deepgram TTS reuses the Deepgram API key set under Transcription.")
-                        .font(.subheadline)
+            secureFieldRow(
+                title: "Deepgram API key",
+                subtitle: "Used by the Deepgram streaming transcription provider.",
+                systemImageName: "key",
+                placeholder: "Deepgram key",
+                text: Binding(
+                    get: { userDeepgramAPIKey },
+                    set: { userDeepgramAPIKey = $0; companionManager.setDeepgramAPIKey($0) }
+                )
+            )
+        }
+    }
+
+    private var textToSpeechSection: some View {
+        let geminiModels = OpenClickyTTSSettingsCatalog.mergedGeminiModelRows(saved: userGeminiTTSModel)
+        let geminiVoices = OpenClickyTTSSettingsCatalog.mergedGeminiVoiceRows(saved: userGeminiTTSVoice)
+        let openAIVoices = OpenClickyTTSSettingsCatalog.mergedOpenAIVoiceRows(saved: userOpenAITTSVoice)
+        let openAIModels = OpenClickyTTSSettingsCatalog.mergedOpenAIModelRows(saved: userOpenAITTSModel)
+        let deepgramVoices = OpenClickyTTSSettingsCatalog.mergedDeepgramTTSVoiceRows(saved: userDeepgramTTSVoice)
+
+        return settingsGroup("Text to speech") {
+            Text(
+                "Choose how spoken replies are synthesized. Playback reuses transcription API keys where noted (for example Deepgram)."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 16)
+            .padding(.top, 14)
+            .padding(.bottom, 8)
+
+            secureFieldRow(
+                title: "OpenAI / Codex API key",
+                subtitle: "Shared with Codex/OpenAI Agent Mode and with OpenAI Speech presets. Secrets.env OPENAI_API_KEY overrides when present.",
+                systemImageName: "key",
+                placeholder: "sk-…",
+                text: Binding(
+                    get: { userCodexAgentAPIKey },
+                    set: { userCodexAgentAPIKey = $0; companionManager.setCodexAgentAPIKey($0) }
+                )
+            )
+
+            Group {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Playback provider")
+                        .font(.caption.weight(.medium))
                         .foregroundStyle(.secondary)
-                        .padding(.horizontal, 4)
-                    textFieldRow(
-                        title: "Deepgram TTS voice",
-                        subtitle: "Aura model identifier — e.g. aura-2-thalia-en, aura-2-orion-en, aura-2-luna-en.",
-                        systemImageName: "person.wave.2",
-                        placeholder: "aura-2-thalia-en",
-                        text: Binding(
-                            get: { userDeepgramTTSVoice },
-                            set: { userDeepgramTTSVoice = $0; companionManager.setDeepgramTTSVoice($0) }
-                        )
-                    )
+                    Picker("Playback provider", selection: Binding(
+                        get: { companionManager.selectedTTSProvider },
+                        set: { companionManager.setTTSProvider($0) }
+                    )) {
+                        ForEach(OpenClickyTTSProvider.allCases) { provider in
+                            Text(provider.displayName).tag(provider)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityLabel("Playback provider")
                 }
+                .padding(.horizontal, 16)
+                .padding(.top, 6)
+                .padding(.bottom, 12)
             }
+
+            switch companionManager.selectedTTSProvider {
+            case .elevenLabs:
+                secureFieldRow(
+                    title: "ElevenLabs API key",
+                    subtitle: "Used for spoken OpenClicky replies.",
+                    systemImageName: "speaker.wave.2",
+                    placeholder: "ElevenLabs key",
+                    text: Binding(
+                        get: { userElevenLabsAPIKey },
+                        set: { userElevenLabsAPIKey = $0; companionManager.setElevenLabsAPIKey($0) }
+                    )
+                )
+                textFieldRow(
+                    title: "ElevenLabs voice ID",
+                    subtitle: "Paste a voice ID from the ElevenLabs dashboard (voices are account-specific).",
+                    systemImageName: "person.wave.2",
+                    placeholder: "Voice ID",
+                    text: Binding(
+                        get: { userElevenLabsVoiceID },
+                        set: { userElevenLabsVoiceID = $0; companionManager.setElevenLabsVoiceID($0) }
+                    )
+                )
+                Text("Sentence-level Gemini fallback may retry after ElevenLabs failures when `GEMINI_API_KEY` / AI Studio keys exist or when Gemini presets are configured here.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 6)
+            case .cartesia:
+                secureFieldRow(
+                    title: "Cartesia API key",
+                    subtitle: "Used for spoken OpenClicky replies.",
+                    systemImageName: "speaker.wave.2",
+                    placeholder: "Cartesia key",
+                    text: Binding(
+                        get: { userCartesiaAPIKey },
+                        set: { userCartesiaAPIKey = $0; companionManager.setCartesiaAPIKey($0) }
+                    )
+                )
+                textFieldRow(
+                    title: "Cartesia voice ID",
+                    subtitle: "Paste a voice UUID from Sonic or your Cartesia project (voices are account-specific).",
+                    systemImageName: "person.wave.2",
+                    placeholder: "Voice ID",
+                    text: Binding(
+                        get: { userCartesiaVoiceID },
+                        set: { userCartesiaVoiceID = $0; companionManager.setCartesiaVoiceID($0) }
+                    )
+                )
+            case .deepgram:
+                Text("Deepgram TTS reuses the Deepgram API key under Transcription above.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 4)
+                    .padding(.bottom, 8)
+                catalogMenuPickerRow(
+                    title: "Deepgram TTS voice (Aura)",
+                    subtitle: "Preset Aura identifiers; unmatched saved voices appear as Current: ….",
+                    systemImageName: "person.wave.2",
+                    rows: deepgramVoices,
+                    selection: Binding(
+                        get: { userDeepgramTTSVoice },
+                        set: { userDeepgramTTSVoice = $0; companionManager.setDeepgramTTSVoice($0) }
+                    )
+                )
+            case .gemini:
+                Text(
+                    "Google AI Studio / Gemini keys drive native speech (generateContent + audio). Applies to Gemini playback; you can also set GEMINI_API_KEY in secrets.env."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 16)
+                .padding(.top, 4)
+                .padding(.bottom, 10)
+
+                secureFieldRow(
+                    title: "Gemini API key",
+                    subtitle: "From Google AI Studio (or Gemini API keys with speech generation enabled for your project).",
+                    systemImageName: "key",
+                    placeholder: "AI Studio API key",
+                    text: Binding(
+                        get: { userGeminiAPIKey },
+                        set: {
+                            userGeminiAPIKey = $0
+                            companionManager.setGeminiAPIKey($0)
+                        }
+                    )
+                )
+
+                catalogMenuPickerRow(
+                    title: "Gemini TTS model",
+                    subtitle: "Model id used at …/models/{model}:generateContent.",
+                    systemImageName: "cpu",
+                    rows: geminiModels,
+                    selection: Binding(
+                        get: { userGeminiTTSModel },
+                        set: {
+                            userGeminiTTSModel = $0
+                            companionManager.setGeminiTTSModel($0)
+                        }
+                    )
+                )
+
+                catalogMenuPickerRow(
+                    title: "Gemini TTS voice",
+                    subtitle: "Prebuilt Gemini voice name for speech-generation. Saved custom names appear as Current: ….",
+                    systemImageName: "person.wave.2",
+                    rows: geminiVoices,
+                    selection: Binding(
+                        get: { userGeminiTTSVoice },
+                        set: {
+                            userGeminiTTSVoice = $0
+                            companionManager.setGeminiTTSVoice($0)
+                        }
+                    )
+                )
+            case .openAI:
+                catalogMenuPickerRow(
+                    title: "OpenAI TTS voice",
+                    subtitle: "Speech presets (alloy, echo, fable, onyx, nova, shimmer); unknown saved IDs show as Current: ….",
+                    systemImageName: "person.wave.2",
+                    rows: openAIVoices,
+                    selection: Binding(
+                        get: { userOpenAITTSVoice },
+                        set: { userOpenAITTSVoice = $0; companionManager.setOpenAITTSVoice($0) }
+                    )
+                )
+                catalogMenuPickerRow(
+                    title: "OpenAI TTS model",
+                    subtitle: "Prefer gpt-4o-mini-tts; older `tts-*` tiers may be disabled per workspace.",
+                    systemImageName: "cpu",
+                    rows: openAIModels,
+                    selection: Binding(
+                        get: { userOpenAITTSModel },
+                        set: { userOpenAITTSModel = $0; companionManager.setOpenAITTSModel($0) }
+                    )
+                )
+            }
+
+            if companionManager.selectedTTSProvider != .gemini &&
+                companionManager.selectedTTSProvider != .elevenLabs {
+                Text("Sentence-level Gemini fallback uses `GEMINI_API_KEY`, Google AI Studio keys inside secrets.env, or the Gemini presets when Gemini playback is selected.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 6)
+                    .padding(.bottom, 14)
+            }
+        }
+    }
+
+    private var speculativeSection: some View {
+        settingsGroup("Speculative pre-fire") {
+            toggleRow(
+                title: "Pre-fire on stable speech",
+                subtitle: "Starts the AI response while you're still talking when a partial is stable, no screen reference, and looks like a question. Saves up to 1s of TTFT but costs ~1.5–2× input tokens per turn for cancelled fires. Off by default.",
+                systemImageName: "bolt.horizontal",
+                isOn: Binding(
+                    get: { companionManager.speculativePreFireEnabled },
+                    set: { companionManager.setSpeculativePreFireEnabled($0) }
+                )
+            )
         }
     }
 
@@ -622,16 +803,16 @@ struct OpenClickySettingsView: View {
             }
 
             settingsGroup("Agent authentication") {
-                secureFieldRow(
-                    title: "Codex/OpenAI API key",
-                    subtitle: "Optional override. Leave blank to use local Codex ChatGPT sign-in where available.",
-                    systemImageName: "terminal",
-                    placeholder: "OpenAI key",
-                    text: Binding(
-                        get: { userCodexAgentAPIKey },
-                        set: { userCodexAgentAPIKey = $0; companionManager.setCodexAgentAPIKey($0) }
-                    )
+                valueRow(
+                    title: "OpenAI / Codex API key",
+                    subtitle: userCodexAgentAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        ? "Not saved here. Configure Voice → Text to speech, or OPENAI_API_KEY in secrets.env, or Codex sign-in."
+                        : "Configured in Voice → Text to speech (same stored key). Manage it there alongside playback.",
+                    systemImageName: "terminal"
                 )
+                actionRow(title: "Open Voice → Text to speech", systemImageName: "arrow.turn.down.right") {
+                    companionManager.showSettingsWindow(initialSection: .voice)
+                }
 
                 secureFieldRow(
                     title: "Anthropic API key",
@@ -792,74 +973,100 @@ struct OpenClickySettingsView: View {
         }
     }
 
+    private func catalogMenuPickerRow(
+        title: String,
+        subtitle: String,
+        systemImageName: String,
+        rows: [(id: String, label: String)],
+        selection: Binding<String>
+    ) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            rowIcon(systemImageName).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title).font(.body.weight(.medium))
+                Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                Picker(title, selection: selection) {
+                    ForEach(rows, id: \.id) { row in
+                        Text(row.label).tag(row.id)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 13)
+    }
+
     private func settingsGroup<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             Text(title)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(.secondary)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
             VStack(spacing: 0) {
                 content()
             }
             .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(Color(nsColor: .controlBackgroundColor))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Color.primary.opacity(0.07), lineWidth: 1)
             )
         }
     }
 
     private func toggleRow(title: String, subtitle: String, systemImageName: String, isOn: Binding<Bool>) -> some View {
-        HStack(spacing: 12) {
-            rowIcon(systemImageName)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.system(size: 13, weight: .medium))
-                Text(subtitle).font(.system(size: 11)).foregroundColor(.secondary)
+        HStack(alignment: .center, spacing: 12) {
+            rowIcon(systemImageName).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.body.weight(.medium))
+                Text(subtitle).font(.caption).foregroundStyle(.secondary)
             }
-            Spacer()
+            Spacer(minLength: 12)
             Toggle("", isOn: isOn)
                 .labelsHidden()
                 .toggleStyle(.switch)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 13)
     }
 
     private func valueRow(title: String, subtitle: String, systemImageName: String) -> some View {
-        HStack(spacing: 12) {
-            rowIcon(systemImageName)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.system(size: 13, weight: .medium))
+        HStack(alignment: .top, spacing: 12) {
+            rowIcon(systemImageName).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.body.weight(.medium))
                 Text(subtitle)
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-                    .lineLimit(2)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
                     .truncationMode(.middle)
             }
-            Spacer()
+            Spacer(minLength: 8)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 13)
     }
 
     private func warningRow(title: String, subtitle: String) -> some View {
         HStack(alignment: .top, spacing: 12) {
             rowIcon("exclamationmark.triangle")
-                .foregroundColor(.orange)
-            VStack(alignment: .leading, spacing: 3) {
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.body.weight(.medium))
                 Text(subtitle)
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer()
+            Spacer(minLength: 8)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 13)
     }
 
     private func textFieldRow(title: String, subtitle: String, systemImageName: String, placeholder: String, text: Binding<String>) -> some View {
@@ -885,30 +1092,31 @@ struct OpenClickySettingsView: View {
         @ViewBuilder field: () -> Field
     ) -> some View {
         HStack(alignment: .top, spacing: 12) {
-            rowIcon(systemImageName)
+            rowIcon(systemImageName).foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 6) {
-                Text(title).font(.system(size: 13, weight: .medium))
-                Text(subtitle).font(.system(size: 11)).foregroundColor(.secondary)
+                Text(title).font(.body.weight(.medium))
+                Text(subtitle).font(.caption).foregroundStyle(.secondary)
                 field()
+                    .frame(maxWidth: .infinity)
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 13)
     }
 
     private func actionRow(title: String, systemImageName: String, role: ButtonRole? = nil, action: @escaping () -> Void) -> some View {
         Button(role: role, action: action) {
             HStack(spacing: 12) {
-                rowIcon(systemImageName)
+                rowIcon(systemImageName).foregroundStyle(.secondary)
                 Text(title)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.body.weight(.medium))
                 Spacer()
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.secondary)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 11)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 13)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -917,25 +1125,25 @@ struct OpenClickySettingsView: View {
     private func permissionRow(title: String, isGranted: Bool, settingsURL: URL) -> some View {
         HStack(spacing: 12) {
             rowIcon(isGranted ? "checkmark.circle" : "exclamationmark.triangle")
-                .foregroundColor(isGranted ? .green : .orange)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.system(size: 13, weight: .medium))
+                .foregroundStyle(isGranted ? .green : .orange)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.body.weight(.medium))
                 Text(isGranted ? "Granted" : "Needs permission")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            Spacer()
+            Spacer(minLength: 8)
             Button("Open Settings") {
                 NSWorkspace.shared.open(settingsURL)
             }
             .controlSize(.small)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 13)
     }
 
     private func modelOptionGrid(options: [OpenClickyModelOption], selectedModelID: String, select: @escaping (String) -> Void) -> some View {
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
             ForEach(options) { option in
                 optionButton(
                     title: option.label,
@@ -945,7 +1153,8 @@ struct OpenClickySettingsView: View {
                 )
             }
         }
-        .padding(14)
+        .padding(.horizontal, 17)
+        .padding(.vertical, 17)
     }
 
     private func optionButton(title: String, subtitle: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
@@ -1016,7 +1225,13 @@ struct OpenClickySettingsView: View {
 
     private func rowIcon(_ systemImageName: String) -> some View {
         Image(systemName: systemImageName)
-            .font(.system(size: 14, weight: .medium))
+            .font(.body.weight(.medium))
+            .frame(width: 22, alignment: .center)
+    }
+
+    private func secondsLabel(for seconds: Double) -> String {
+        let rounded = Int(seconds.rounded())
+        return "\(rounded) sec"
     }
 
     private func openFeedbackInbox() {
@@ -1057,10 +1272,7 @@ struct AgentParkingPositionPicker: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Where agents park")
-                .font(.headline)
-
-            Text("Pick the corner of the screen where the agent dock should appear.")
+            Text("Tap a corner or edge. The dock parks where you choose.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
@@ -1101,8 +1313,8 @@ struct AgentParkingPositionPicker: View {
             .frame(height: 160)
 
             Text(selection.label)
-                .font(.subheadline)
-                .foregroundStyle(.primary)
+                .font(.body.weight(.medium))
+                .foregroundStyle(.secondary)
         }
     }
 

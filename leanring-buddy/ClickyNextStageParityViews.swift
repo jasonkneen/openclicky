@@ -230,11 +230,29 @@ struct FlowLayout: Layout {
     }
 }
 
+/// Visual density for ``ClickyResponseCardCompactView`` (the “done” / completion surface).
+enum ClickyResponseCardPresentationStyle: Equatable {
+    /// Large gradient card — settings and other roomy contexts.
+    case standard
+    /// Compact strip aligned with the agent dashboard; minimal vertical space.
+    case inlineHUD
+}
+
 struct ClickyResponseCardCompactView: View {
     var card: ClickyResponseCard
+    var presentation: ClickyResponseCardPresentationStyle = .standard
     var actionHandlers = ClickyResponseCardActionHandlers()
 
     var body: some View {
+        switch presentation {
+        case .standard:
+            standardLayout
+        case .inlineHUD:
+            inlineHUDLayout
+        }
+    }
+
+    private var standardLayout: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top, spacing: 10) {
                 Text(card.displayTitle)
@@ -359,6 +377,149 @@ struct ClickyResponseCardCompactView: View {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .stroke(Color.white.opacity(0.10), lineWidth: 1)
         )
+    }
+
+    private var inlineHUDLayout: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .center, spacing: 8) {
+                Image(systemName: inlineHUDStatusIconName)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(inlineHUDStatusTint)
+
+                    Text(card.displayTitle)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(DS.Colors.textPrimary)
+                        .lineLimit(1)
+
+                Spacer(minLength: 6)
+
+                Text(card.completionLabel)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(DS.Colors.textTertiary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(DS.Colors.surface3))
+
+                if let dismiss = actionHandlers.dismiss {
+                    Button(action: dismiss) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 15, weight: .regular))
+                            .symbolRenderingMode(.hierarchical)
+                            .foregroundStyle(DS.Colors.textTertiary)
+                    }
+                    .buttonStyle(.plain)
+                    .pointerCursor()
+                    .help("Dismiss")
+                }
+            }
+
+            Text(card.displayText.isEmpty ? "No response text yet." : card.displayText)
+                .font(.system(size: 12, weight: .regular))
+                .foregroundColor(DS.Colors.textSecondary)
+                .lineSpacing(2)
+                .lineLimit(2)
+                .truncationMode(.tail)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if !card.suggestedNextActions.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Next")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(DS.Colors.textTertiary)
+
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(card.suggestedNextActions, id: \.self) { actionTitle in
+                                hudInlineChip(title: actionTitle) {
+                                    actionHandlers.runSuggestedNextAction?(actionTitle)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if actionHandlers.openTextFollowUp != nil || actionHandlers.openVoiceFollowUp != nil {
+                HStack(spacing: 8) {
+                    if let openVoice = actionHandlers.openVoiceFollowUp {
+                        Button(action: openVoice) {
+                            Label("Voice", systemImage: "mic.fill")
+                                .font(.system(size: 10, weight: .semibold))
+                                .labelStyle(.titleAndIcon)
+                                .foregroundColor(DS.Colors.textPrimary)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(Capsule().fill(DS.Colors.surface3))
+                                .overlay(
+                                    Capsule()
+                                        .stroke(DS.Colors.borderSubtle, lineWidth: 1)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .pointerCursor()
+                    }
+                    if let openText = actionHandlers.openTextFollowUp {
+                        Button(action: openText) {
+                            Label("Companion", systemImage: "bubble.left.and.bubble.right.fill")
+                                .font(.system(size: 10, weight: .semibold))
+                                .labelStyle(.titleAndIcon)
+                                .foregroundColor(DS.Colors.textPrimary)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(Capsule().fill(DS.Colors.surface3))
+                                .overlay(
+                                    Capsule()
+                                        .stroke(DS.Colors.borderSubtle, lineWidth: 1)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .pointerCursor()
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                .fill(DS.Colors.surface2)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                .stroke(DS.Colors.borderSubtle, lineWidth: 1)
+        )
+    }
+
+    private var inlineHUDStatusIconName: String {
+        switch card.source {
+        case .handoff: return "tray.and.arrow.down.fill"
+        case .agent, .voice: return "checkmark.circle.fill"
+        }
+    }
+
+    private var inlineHUDStatusTint: Color {
+        switch card.source {
+        case .handoff: return DS.Colors.warning
+        case .agent, .voice: return DS.Colors.success
+        }
+    }
+
+    private func hudInlineChip(title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 9, weight: .semibold))
+                .lineLimit(1)
+                .foregroundColor(DS.Colors.textPrimary)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 4)
+                .background(Capsule().fill(DS.Colors.surface3))
+                .overlay(
+                    Capsule()
+                        .stroke(DS.Colors.borderSubtle, lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+        .pointerCursor()
     }
 
     private func responseActionPill(

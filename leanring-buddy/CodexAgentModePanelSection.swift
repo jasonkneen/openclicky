@@ -34,182 +34,222 @@ struct CodexAgentModePanelSection: View {
     var prepareVoiceFollowUp: () -> Void
     var openFeedback: () -> Void
     var showSettings: () -> Void
+    var closeCurrentAgentSession: () -> Void
+    @AppStorage(OpenClickyAgentPreferences.followUpAttachScreenKey) private var agentFollowUpAttachScreen = true
     @State private var prompt = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(statusColor)
-                    .frame(width: 7, height: 7)
-                    .shadow(color: statusColor.opacity(0.55), radius: 4)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .center, spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Agent")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(DS.Colors.textPrimary)
+                    Text(session.model)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(DS.Colors.textTertiary)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                Text("Ask Agent")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(DS.Colors.textPrimary)
-
-                Spacer()
-
-                Text(session.status.label)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(DS.Colors.textTertiary)
-            }
-
-            Text(summaryText)
-                .font(.system(size: 11))
-                .foregroundColor(DS.Colors.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            TextField("Ask OpenClicky to do something...", text: $prompt, axis: .vertical)
-                .lineLimit(1...3)
-                .textFieldStyle(.plain)
-                .font(.system(size: 12))
-                .foregroundColor(DS.Colors.textPrimary)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-                .background(
-                    RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
-                        .fill(Color.white.opacity(0.07))
+                AgentStatusPill(
+                    title: session.status.label,
+                    subtitle: nil,
+                    indicatorColor: statusColor
                 )
-                .overlay(
-                    RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
-                        .stroke(DS.Colors.borderSubtle, lineWidth: 0.5)
-                )
-                .onSubmit(runPrompt)
 
-            if let error = visibleInlineErrorMessage {
-                Text(error)
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.Colors.destructiveText)
-                    .lineLimit(3)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            if shouldShowInlineAgentResponse {
-                inlineAgentResponse
-            }
-
-            HStack(spacing: 8) {
-                Button(action: openHUD) {
-                    Label("Dashboard", systemImage: "rectangle.grid.2x2")
-                        .font(.system(size: 11, weight: .semibold))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
+                Button(action: closeCurrentAgentSession) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(DS.Colors.textSecondary)
+                        .frame(width: 28, height: 28)
+                        .background(
+                            Circle()
+                                .fill(Color.white.opacity(0.06))
+                        )
                 }
                 .buttonStyle(.plain)
                 .pointerCursor()
-                .foregroundColor(DS.Colors.textSecondary)
-                .background(
-                    RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
-                        .fill(Color.white.opacity(0.07))
-                )
-
-                Button(action: runPrompt) {
-                    Image(systemName: "paperplane.fill")
-                        .font(.system(size: 12, weight: .bold))
-                        .frame(width: 42, height: 30)
-                }
-                .buttonStyle(.plain)
-                .pointerCursor(isEnabled: canRun)
-                .foregroundColor(DS.Colors.textOnAccent)
-                .background(
-                    RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
-                        .fill(canRun ? DS.Colors.accent : DS.Colors.accent.opacity(0.35))
-                )
-                .disabled(!canRun)
+                .help("Close this agent tab")
             }
-        }
-        .padding(9)
-        .background(
-            RoundedRectangle(cornerRadius: DS.CornerRadius.large, style: .continuous)
-                .fill(Color.white.opacity(0.045))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.CornerRadius.large, style: .continuous)
-                .stroke(DS.Colors.borderSubtle, lineWidth: 0.5)
-        )
-    }
+            .padding(.bottom, 8)
 
-    private var canRun: Bool {
-        !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
+            Rectangle()
+                .fill(DS.Colors.borderSubtle)
+                .frame(height: 1)
 
-    private var shouldShowInlineAgentResponse: Bool {
-        inlineAgentResponseText != nil || session.status == .starting || session.status == .running
-    }
-
-    private var inlineAgentResponseText: String? {
-        session.entries.last(where: { entry in
-            switch entry.role {
-            case .assistant, .plan, .command, .system:
-                return !entry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            case .user:
-                return false
-            }
-        })?.text.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private var inlineAgentResponse: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(inlineAgentResponseLabel)
-                .font(.system(size: 9, weight: .heavy))
+            Text("Conversation")
+                .font(.system(size: 10, weight: .semibold))
                 .foregroundColor(DS.Colors.textTertiary)
-                .kerning(0.45)
+                .padding(.top, 8)
+                .padding(.bottom, 4)
 
-            Text(inlineAgentResponseText ?? inlineAgentPlaceholder)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(DS.Colors.textPrimary)
-                .lineLimit(5)
-                .fixedSize(horizontal: false, vertical: true)
+            AgentSessionOutputsStrip(
+                workspaceDirectoryPath: session.sessionWorkspaceDirectoryURL.path,
+                fileURLs: session.sessionArtifactFileURLs,
+                showWorkspaceLink: session.hasVisibleActivity
+            )
+
+            agentChatTranscript
+
+            Rectangle()
+                .fill(DS.Colors.borderSubtle)
+                .frame(height: 1)
+                .padding(.top, 8)
+
+            VStack(alignment: .leading, spacing: 8) {
+                TextField("Write a message…", text: $prompt, axis: .vertical)
+                    .lineLimit(1...5)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .foregroundColor(DS.Colors.textPrimary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(DS.Colors.surface2)
+                    .clipShape(RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                            .stroke(DS.Colors.borderSubtle, lineWidth: 1)
+                    )
+                    .onSubmit(runPrompt)
+                    // Multiline fields do not call `onSubmit` on Return — Enter inserts a newline.
+                    // Return sends (starts Codex / `ensureThread` via the prompt path). Shift-Return adds a line.
+                    .onKeyPress(.return, phases: .down) { press in
+                        if press.modifiers.contains(.shift) {
+                            return .ignored
+                        }
+                        guard canRun else { return .ignored }
+                        runPrompt()
+                        return .handled
+                    }
+
+                if let error = visibleInlineErrorMessage {
+                    Text(error)
+                        .font(.system(size: 11))
+                        .foregroundColor(DS.Colors.destructiveText)
+                        .lineLimit(5)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if session.hasPriorUserTurnInTranscript {
+                    Toggle(isOn: $agentFollowUpAttachScreen) {
+                        Text("Attach screen on follow-ups")
+                            .font(.system(size: 11))
+                            .foregroundColor(DS.Colors.textSecondary)
+                    }
+                    .toggleStyle(.checkbox)
+                    .help("Turn off to send text only so the thread context is not mixed with a fresh desktop capture.")
+                }
+
+                HStack(spacing: 8) {
+                    Button(action: openHUD) {
+                        Label("Dashboard", systemImage: "rectangle.grid.2x2")
+                            .font(.system(size: 11, weight: .medium))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 7)
+                    }
+                    .buttonStyle(.plain)
+                    .pointerCursor()
+                    .foregroundColor(DS.Colors.textPrimary)
+                    .background(DS.Colors.surface2)
+                    .clipShape(RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                            .stroke(DS.Colors.borderSubtle, lineWidth: 1)
+                    )
+
+                    Button(action: runPrompt) {
+                        Text("Send")
+                            .font(.system(size: 11, weight: .semibold))
+                            .frame(minWidth: 76)
+                            .padding(.vertical, 7)
+                    }
+                    .buttonStyle(.plain)
+                    .pointerCursor(isEnabled: canRun)
+                    .foregroundColor(canRun ? DS.Colors.textOnAccent : DS.Colors.textTertiary)
+                    .background(canRun ? DS.Colors.accent : DS.Colors.surface3)
+                    .clipShape(RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                            .stroke(canRun ? Color.clear : DS.Colors.borderSubtle, lineWidth: 1)
+                    )
+                    .disabled(!canRun)
+                }
+            }
+            .padding(.top, 8)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 9)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
         .background(
-            RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
-                .fill(Color.white.opacity(0.055))
+            RoundedRectangle(cornerRadius: DS.CornerRadius.extraLarge, style: .continuous)
+                .fill(DS.Colors.surface1)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
-                .stroke(DS.Colors.borderSubtle.opacity(0.75), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: DS.CornerRadius.extraLarge, style: .continuous)
+                .stroke(DS.Colors.borderSubtle, lineWidth: 1)
         )
     }
 
-    private var inlineAgentResponseLabel: String {
-        switch session.status {
-        case .starting:
-            return "STARTING"
-        case .running:
-            return "WORKING"
-        case .failed:
-            return "NEEDS ATTENTION"
-        case .ready:
-            return "AGENT"
-        case .stopped:
-            return "OFFLINE"
+    private var agentChatTranscript: some View {
+        let entries = recentTranscriptEntries
+        return ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 6) {
+                    if entries.isEmpty {
+                        Text(agentEmptyChatHint)
+                            .font(.system(size: 11))
+                            .foregroundColor(DS.Colors.textTertiary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 8)
+                            .padding(.horizontal, 2)
+                    } else {
+                        ForEach(entries) { entry in
+                            AgentChatBubble(entry: entry, density: .panel)
+                                .id(entry.id)
+                        }
+                    }
+                }
+                .padding(6)
+            }
+            .frame(minHeight: 100, maxHeight: 220)
+            .background(DS.Colors.background)
+            .clipShape(RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                    .stroke(DS.Colors.borderSubtle, lineWidth: 1)
+            )
+            .onChange(of: session.entries.count) {
+                if let id = session.entries.last?.id {
+                    withAnimation(.easeOut(duration: 0.12)) {
+                        proxy.scrollTo(id, anchor: .bottom)
+                    }
+                }
+            }
         }
     }
 
-    private var inlineAgentPlaceholder: String {
+    private var recentTranscriptEntries: [CodexTranscriptEntry] {
+        session.entries.filter {
+            !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    private var agentEmptyChatHint: String {
         switch session.status {
         case .starting:
-            return "Starting the agent..."
+            return "Starting…"
         case .running:
-            return "Working through the task..."
+            return "Running…"
         case .failed:
-            return "Open the dashboard for details."
+            return "Something went wrong. Open the dashboard for details."
         case .ready:
-            return "Ready."
+            return "Code, research, and file tasks. Messages appear here."
         case .stopped:
             return "Agent is offline."
         }
     }
 
-    private var summaryText: String {
-        if visibleInlineErrorMessage != nil {
-            return "Agent needs attention. Open the dashboard for details."
-        }
-        return "Ask for coding, research, writing, or app tasks."
+    private var canRun: Bool {
+        !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var visibleInlineErrorMessage: String? {
@@ -228,8 +268,8 @@ struct CodexAgentModePanelSection: View {
 
     private var statusColor: Color {
         switch session.status {
-        case .ready: return DS.Colors.accentText
-        case .running, .starting: return Color.yellow
+        case .ready: return DS.Colors.success
+        case .running, .starting: return DS.Colors.warning
         case .failed: return DS.Colors.destructiveText
         case .stopped: return DS.Colors.textTertiary
         }

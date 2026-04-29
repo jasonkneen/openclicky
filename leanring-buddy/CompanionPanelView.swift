@@ -150,7 +150,8 @@ struct CompanionPanelView: View {
                     runSuggestedNextAction: { companionManager.runSuggestedNextAction($0) },
                     prepareVoiceFollowUp: { companionManager.prepareForVoiceFollowUp() },
                     openFeedback: onOpenFeedback,
-                    showSettings: onShowSettings
+                    showSettings: onShowSettings,
+                    closeCurrentAgentSession: { companionManager.closeCodexAgentSession(companionManager.codexAgentSession.id) }
                 )
                 .padding(.horizontal, 14)
             }

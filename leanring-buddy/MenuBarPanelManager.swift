@@ -543,6 +543,10 @@ final class AgentMenuBarStatusManager: NSObject {
             close: { [weak popover] in
                 popover?.performClose(nil)
             },
+            closeAgentFromDock: { [weak companionManager, weak popover] in
+                popover?.performClose(nil)
+                companionManager?.closeAgentFromDockItem(item.id)
+            },
             stop: { [weak companionManager, weak popover] in
                 popover?.performClose(nil)
                 companionManager?.stopAgentDockItem(item.id)
@@ -646,6 +650,8 @@ private struct AgentMenuBarStatusPopoverView: View {
     let text: () -> Void
     let dashboard: () -> Void
     let close: () -> Void
+    /// Stops and removes this agent session (and dock row), like the dock hover card ×.
+    let closeAgentFromDock: () -> Void
     let stop: () -> Void
     /// Called when the user taps "Close" on a terminal (`.done` / `.failed`)
     /// agent. Distinct from `stop` (which sends a cancel signal) — Close
@@ -712,6 +718,14 @@ private struct AgentMenuBarStatusPopoverView: View {
             }
             .buttonStyle(.borderless)
             .font(.system(size: 12, weight: .semibold))
+
+            Button(action: closeAgentFromDock) {
+                Text("Close this agent")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(Color.white.opacity(0.78))
+            }
+            .buttonStyle(.borderless)
+            .pointerCursor()
         }
         .overlay(alignment: .topTrailing) {
             Button(action: close) {
@@ -720,6 +734,7 @@ private struct AgentMenuBarStatusPopoverView: View {
             }
             .buttonStyle(.borderless)
             .foregroundColor(Color.white.opacity(0.72))
+            .help("Dismiss")
             .offset(x: 8, y: -8)
         }
         .padding(12)

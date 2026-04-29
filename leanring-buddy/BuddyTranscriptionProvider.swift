@@ -84,8 +84,7 @@ enum BuddyTranscriptionProviderFactory {
     }
 
     static func selectedProviderID() -> BuddyTranscriptionProviderID {
-        let rawValue = UserDefaults.standard.string(forKey: AppBundleConfiguration.userVoiceTranscriptionProviderDefaultsKey)
-            ?? AppBundleConfiguration.stringValue(forKey: "VoiceTranscriptionProvider")
+        let rawValue = AppBundleConfiguration.voiceTranscriptionProviderRaw()
             ?? BuddyTranscriptionProviderID.automatic.rawValue
         return BuddyTranscriptionProviderID(rawValue: rawValue.lowercased()) ?? .automatic
     }
@@ -95,9 +94,7 @@ enum BuddyTranscriptionProviderFactory {
     }
 
     private static func resolveProvider(preferredProvider: BuddyTranscriptionProviderID?) -> any BuddyTranscriptionProvider {
-        let preferredProviderRawValue = AppBundleConfiguration
-            .stringValue(forKey: "VoiceTranscriptionProvider")?
-            .lowercased()
+        let preferredProviderRawValue = AppBundleConfiguration.voiceTranscriptionProviderRaw()?.lowercased()
         let resolvedPreferredProvider = preferredProvider ?? preferredProviderRawValue.flatMap(BuddyTranscriptionProviderID.init(rawValue:))
 
         let assemblyAIProvider = AssemblyAIStreamingTranscriptionProvider()

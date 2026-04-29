@@ -3,9 +3,9 @@ import SwiftUI
 
 private enum OpenClickyHUDLayout {
     static let width: CGFloat = 594
-    static let height: CGFloat = 452
+    static let height: CGFloat = 440
     static let minimumWidth: CGFloat = 594
-    static let minimumHeight: CGFloat = 452
+    static let minimumHeight: CGFloat = 420
 }
 
 @MainActor
@@ -115,6 +115,7 @@ final class CodexHUDWindowManager {
 private struct CodexHUDView: View {
     @ObservedObject var companionManager: CompanionManager
     @AppStorage(ClickyAccentTheme.userDefaultsKey) private var selectedAccentThemeID = ClickyAccentTheme.blue.rawValue
+    @AppStorage(OpenClickyAgentPreferences.followUpAttachScreenKey) private var agentFollowUpAttachScreen = true
     var openMemory: () -> Void
     var prepareVoiceFollowUp: () -> Void
     var close: () -> Void
@@ -128,9 +129,34 @@ private struct CodexHUDView: View {
         VStack(spacing: 0) {
             header
             agentTeamStrip
+            if companionManager.agentVoiceFollowUpCapturePhase != .idle {
+                AgentVoiceFollowUpCaptureBanner(
+                    phase: companionManager.agentVoiceFollowUpCapturePhase,
+                    audioLevel: companionManager.currentAudioPowerLevel,
+                    onCancel: { companionManager.cancelAgentVoiceFollowUpCapture() }
+                )
+                .padding(.horizontal, 10)
+                .padding(.top, 6)
+            }
+            Rectangle()
+                .fill(DS.Colors.borderSubtle.opacity(0.7))
+                .frame(height: 0.5)
+
+            AgentSessionOutputsStrip(
+                workspaceDirectoryPath: session.sessionWorkspaceDirectoryURL.path,
+                fileURLs: session.sessionArtifactFileURLs,
+                showWorkspaceLink: session.hasVisibleActivity
+            )
+            .padding(.horizontal, 12)
+
+            transcript
+            Rectangle()
+                .fill(DS.Colors.borderSubtle.opacity(0.7))
+                .frame(height: 0.5)
             if let card = session.latestResponseCard {
                 ClickyResponseCardCompactView(
                     card: card,
+                    presentation: .inlineHUD,
                     actionHandlers: ClickyResponseCardActionHandlers(
                         dismiss: { companionManager.dismissLatestResponseCard() },
                         runSuggestedNextAction: { actionTitle in
@@ -145,16 +171,9 @@ private struct CodexHUDView: View {
                         }
                     )
                 )
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 8)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 4)
             }
-            Rectangle()
-                .fill(DS.Colors.borderSubtle.opacity(0.7))
-                .frame(height: 0.5)
-            transcript
-            Rectangle()
-                .fill(DS.Colors.borderSubtle.opacity(0.7))
-                .frame(height: 0.5)
             composer
         }
         .frame(
@@ -166,37 +185,50 @@ private struct CodexHUDView: View {
             maxHeight: .infinity
         )
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(red: 0.067, green: 0.075, blue: 0.071).opacity(0.98))
-                .shadow(color: .black.opacity(0.34), radius: 22, y: 14)
+            RoundedRectangle(cornerRadius: DS.CornerRadius.extraLarge, style: .continuous)
+                .fill(DS.Colors.surface1)
+                .shadow(color: .black.opacity(0.22), radius: 12, y: 6)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color.white.opacity(0.10), lineWidth: 1)
+            RoundedRectangle(cornerRadius: DS.CornerRadius.extraLarge, style: .continuous)
+                .stroke(DS.Colors.borderSubtle, lineWidth: 1)
         )
         .animation(.none, value: selectedAccentThemeID)
     }
 
     private var header: some View {
-        HStack(spacing: 9) {
-            Image(systemName: "cursorarrow.motionlines.click")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(DS.Colors.accentText)
-                .frame(width: 24, height: 24)
-                .background(Circle().fill(DS.Colors.accentText.opacity(0.12)))
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Agent")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(DS.Colors.textPrimary)
+                Text(session.model)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(DS.Colors.textTertiary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text("OpenClicky")
-                .font(.system(size: 13, weight: .heavy))
-                .foregroundColor(DS.Colors.textPrimary)
+            AgentStatusPill(
+                title: session.status.label,
+                subtitle: nil,
+                indicatorColor: statusColor
+            )
 
-            Spacer()
-
-            iconButton(systemName: "books.vertical", helpText: "Memory", action: openMemory)
-            iconButton(systemName: "bolt.fill", helpText: "Warm up", action: { session.warmUp() })
-            iconButton(systemName: "xmark", helpText: "Close", action: close)
+            HStack(spacing: 4) {
+                iconButton(systemName: "books.vertical", helpText: "Memory", action: openMemory)
+                iconButton(systemName: "bolt.fill", helpText: "Warm up", action: { session.warmUp() })
+                iconButton(
+                    systemName: "xmark.circle.fill",
+                    helpText: "Close this agent tab",
+                    action: { companionManager.closeCodexAgentSession(session.id) },
+                    isDestructiveOnHover: true
+                )
+                iconButton(systemName: "xmark", helpText: "Close dashboard", action: close)
+            }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 7)
+        .padding(.vertical, 8)
     }
 
     private var agentTeamStrip: some View {
@@ -208,6 +240,9 @@ private struct CodexHUDView: View {
                         isSelected: agentSession.id == companionManager.activeCodexAgentSessionID,
                         select: {
                             companionManager.selectCodexAgentSession(agentSession.id)
+                        },
+                        close: {
+                            companionManager.closeCodexAgentSession(agentSession.id)
                         }
                     )
                 }
@@ -216,13 +251,14 @@ private struct CodexHUDView: View {
                     companionManager.createAndSelectNewCodexAgentSession()
                 }) {
                     Image(systemName: "plus")
-                        .font(.system(size: 12, weight: .heavy))
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(DS.Colors.textSecondary)
-                        .frame(width: 30, height: 30)
-                        .background(Circle().fill(Color.white.opacity(0.07)))
+                        .frame(width: 28, height: 28)
+                        .background(DS.Colors.surface2)
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                         .overlay(
-                            Circle()
-                                .stroke(DS.Colors.borderSubtle.opacity(0.8), lineWidth: 1)
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .stroke(DS.Colors.borderSubtle, lineWidth: 1)
                         )
                 }
                 .buttonStyle(.plain)
@@ -230,28 +266,43 @@ private struct CodexHUDView: View {
                 .accessibilityLabel("Add agent")
             }
             .padding(.horizontal, 12)
-            .padding(.bottom, 7)
+            .padding(.vertical, 6)
         }
     }
 
     private var transcript: some View {
-        ScrollViewReader { proxy in
+        let entries = hudTranscriptEntries
+        return ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 10) {
-                    if session.entries.isEmpty {
-                        emptyState
+                LazyVStack(alignment: .leading, spacing: 6) {
+                    if entries.isEmpty {
+                        Text(hudEmptyChatHint)
+                            .font(.system(size: 11))
+                            .foregroundColor(DS.Colors.textTertiary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 8)
+                            .padding(.horizontal, 2)
                     } else {
-                        ForEach(session.entries) { entry in
-                            transcriptRow(entry)
+                        ForEach(entries) { entry in
+                            AgentChatBubble(entry: entry, density: .hud)
                                 .id(entry.id)
                         }
                     }
                 }
-                .padding(10)
+                .padding(6)
             }
+            .background(DS.Colors.background)
+            .clipShape(RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                    .stroke(DS.Colors.borderSubtle, lineWidth: 1)
+            )
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(maxHeight: .infinity)
             .onChange(of: session.entries.count) {
                 if let id = session.entries.last?.id {
-                    withAnimation(.easeOut(duration: 0.18)) {
+                    withAnimation(.easeOut(duration: 0.15)) {
                         proxy.scrollTo(id, anchor: .bottom)
                     }
                 }
@@ -259,65 +310,74 @@ private struct CodexHUDView: View {
         }
     }
 
-    private var emptyState: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Ask OpenClicky to inspect, edit, explain, or automate something.")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(DS.Colors.textPrimary)
-            Text("Agent tasks use the bundled Codex runtime and the coding/actions model selected in settings.")
-                .font(.system(size: 10))
-                .foregroundColor(DS.Colors.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
+    private var hudTranscriptEntries: [CodexTranscriptEntry] {
+        session.entries.filter {
+            !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.white.opacity(0.045)))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(DS.Colors.borderSubtle.opacity(0.75), lineWidth: 0.5)
-        )
     }
 
-    private func transcriptRow(_ entry: CodexTranscriptEntry) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(label(for: entry.role))
-                .font(.system(size: 9, weight: .bold))
-                .foregroundColor(color(for: entry.role))
-            Text(entry.text)
-                .font(.system(size: 11, design: entry.role == .command ? .monospaced : .default))
-                .foregroundColor(DS.Colors.textPrimary)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
+    private var hudEmptyChatHint: String {
+        switch session.status {
+        case .starting:
+            return "Starting…"
+        case .running:
+            return "Running…"
+        case .failed:
+            return "Something went wrong. Check Memory or warm up, then try again."
+        case .ready:
+            return "Describe a task or paste context. Output streams here as the agent runs."
+        case .stopped:
+            return "Agent is offline."
         }
-        .padding(9)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(background(for: entry.role))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(Color.white.opacity(0.055), lineWidth: 0.5)
-        )
+    }
+
+    private var statusColor: Color {
+        switch session.status {
+        case .ready: return DS.Colors.success
+        case .running, .starting: return DS.Colors.warning
+        case .failed: return DS.Colors.destructiveText
+        case .stopped: return DS.Colors.textTertiary
+        }
     }
 
     private var composer: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            TextField("Ask Agent HUD...", text: $prompt, axis: .vertical)
-                .lineLimit(1...4)
-                .textFieldStyle(.plain)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(DS.Colors.textPrimary)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 9)
-                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.white.opacity(0.07)))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(DS.Colors.borderSubtle.opacity(0.75), lineWidth: 0.5)
-                )
-                .onSubmit(send)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .bottom, spacing: 10) {
+                TextField("Write a message…", text: $prompt, axis: .vertical)
+                    .lineLimit(1...6)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .foregroundColor(DS.Colors.textPrimary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(DS.Colors.surface2)
+                    .clipShape(RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                            .stroke(DS.Colors.borderSubtle, lineWidth: 1)
+                    )
+                    .onSubmit(send)
+                    .onKeyPress(.return, phases: .down) { press in
+                        if press.modifiers.contains(.shift) {
+                            return .ignored
+                        }
+                        guard canSend else { return .ignored }
+                        send()
+                        return .handled
+                    }
 
-            HUDRunButton(canSend: canSend, action: send)
+                HUDRunButton(canSend: canSend, action: send)
+            }
+
+            if session.hasPriorUserTurnInTranscript {
+                Toggle(isOn: $agentFollowUpAttachScreen) {
+                    Text("Attach screen on follow-ups")
+                        .font(.system(size: 11))
+                        .foregroundColor(DS.Colors.textSecondary)
+                }
+                .toggleStyle(.checkbox)
+                .help("Turn off to send text only so the agent stays focused on the thread and current desktop context does not override the conversation.")
+            }
         }
         .padding(10)
     }
@@ -333,117 +393,78 @@ private struct CodexHUDView: View {
         companionManager.submitAgentPromptFromUI(submitted)
     }
 
-    private func iconButton(systemName: String, helpText: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+    private func iconButton(
+        systemName: String,
+        helpText: String,
+        action: @escaping () -> Void,
+        isDestructiveOnHover: Bool? = nil
+    ) -> some View {
+        let destructive = isDestructiveOnHover ?? (systemName == "xmark")
+        return Button(action: action) {
             Image(systemName: systemName)
         }
         .buttonStyle(
             DSIconButtonStyle(
                 size: 28,
-                isDestructiveOnHover: systemName == "xmark",
+                isDestructiveOnHover: destructive,
                 tooltipText: helpText,
                 tooltipAlignment: .trailing
             )
         )
     }
 
-    private func label(for role: CodexTranscriptEntry.Role) -> String {
-        switch role {
-        case .user: return "YOU"
-        case .assistant: return "CLICKY"
-        case .system: return "SYSTEM"
-        case .command: return "COMMAND"
-        case .plan: return "PLAN"
-        }
-    }
-
-    private func color(for role: CodexTranscriptEntry.Role) -> Color {
-        switch role {
-        case .user: return DS.Colors.accentText
-        case .assistant: return DS.Colors.textSecondary
-        case .system: return DS.Colors.destructiveText
-        case .command: return Color.yellow.opacity(0.9)
-        case .plan: return Color.purple.opacity(0.9)
-        }
-    }
-
-    private func background(for role: CodexTranscriptEntry.Role) -> Color {
-        switch role {
-        case .user: return DS.Colors.accentSubtle
-        case .assistant: return Color.white.opacity(0.05)
-        case .system: return DS.Colors.destructive.opacity(0.12)
-        case .command: return Color.yellow.opacity(0.08)
-        case .plan: return Color.purple.opacity(0.10)
-        }
-    }
 }
 
 private struct HUDFloatingAgentButton: View {
     @ObservedObject var session: CodexAgentSession
     var isSelected: Bool
     var select: () -> Void
-    @State private var isHovered = false
+    var close: () -> Void
 
     var body: some View {
-        Button(action: select) {
-            ZStack(alignment: .topTrailing) {
-                Circle()
-                    .fill(backgroundColor)
-                    .frame(width: 30, height: 30)
-                    .overlay(
-                        Circle()
-                            .stroke(borderColor, lineWidth: isSelected ? 1.4 : 0.8)
-                    )
-                    .shadow(
-                        color: session.accentTheme.cursorColor.opacity(isSelected ? 0.34 : 0.10),
-                        radius: isSelected ? 7 : 3,
-                        x: 0,
-                        y: 0
-                    )
-
-                Image(systemName: "cursorarrow")
-                    .font(.system(size: 13, weight: .heavy))
-                    .foregroundColor(session.accentTheme.cursorColor)
-                    .rotationEffect(.degrees(-18))
-                    .offset(x: -1, y: 1)
-
-                Circle()
-                    .fill(statusColor)
-                    .frame(width: 7, height: 7)
-                    .overlay(Circle().stroke(Color.black.opacity(0.55), lineWidth: 1))
-                    .offset(x: 1, y: -1)
+        HStack(spacing: 0) {
+            Button(action: select) {
+                HStack(spacing: 6) {
+                    Text(session.title)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(DS.Colors.textPrimary)
+                        .lineLimit(1)
+                    Circle()
+                        .fill(statusColor)
+                        .frame(width: 6, height: 6)
+                }
+                .padding(.leading, 10)
+                .padding(.trailing, 6)
+                .padding(.vertical, 6)
             }
-            .frame(width: 34, height: 34)
-            .scaleEffect(isHovered ? 1.04 : 1)
-            .animation(.easeOut(duration: DS.Animation.fast), value: isHovered)
-        }
-        .buttonStyle(.plain)
-        .pointerCursor()
-        .accessibilityLabel("Open \(session.title)")
-        .help(session.title)
-        .onHover { hovering in
-            isHovered = hovering
-        }
-    }
+            .buttonStyle(.plain)
+            .pointerCursor()
+            .accessibilityLabel("Select agent \(session.title)")
 
-    private var backgroundColor: Color {
-        if isSelected {
-            return session.accentTheme.cursorColor.opacity(0.18)
+            Button(action: close) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 12))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(DS.Colors.textTertiary)
+            }
+            .buttonStyle(.plain)
+            .pointerCursor()
+            .padding(.trailing, 8)
+            .help("Close this agent")
+            .accessibilityLabel("Close agent \(session.title)")
         }
-        return Color.white.opacity(isHovered ? 0.09 : 0.06)
-    }
-
-    private var borderColor: Color {
-        if isSelected {
-            return session.accentTheme.cursorColor.opacity(0.82)
-        }
-        return DS.Colors.borderSubtle.opacity(isHovered ? 0.9 : 0.55)
+        .background(isSelected ? DS.Colors.surface3 : DS.Colors.surface2)
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(isSelected ? DS.Colors.borderStrong : DS.Colors.borderSubtle, lineWidth: 1)
+        )
     }
 
     private var statusColor: Color {
         switch session.status {
         case .starting, .running:
-            return Color.yellow
+            return DS.Colors.warning
         case .ready:
             return DS.Colors.success
         case .failed:
@@ -461,24 +482,18 @@ private struct HUDRunButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 7) {
-                Image(systemName: "paperplane.fill")
-                    .font(.system(size: 10, weight: .bold))
-                Text("Run")
-                    .font(.system(size: 10, weight: .heavy))
-            }
-            .foregroundColor(canSend ? DS.Colors.textOnAccent : DS.Colors.disabledText)
-            .frame(width: 76, height: 32)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(backgroundColor)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(borderColor, lineWidth: 1)
-            )
-            .scaleEffect(isHovered && canSend ? 1.015 : 1)
-            .animation(.easeOut(duration: DS.Animation.fast), value: isHovered)
+            Text("Send")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(canSend ? DS.Colors.textOnAccent : DS.Colors.disabledText)
+                .frame(width: 72, height: 36)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(backgroundColor)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(borderColor, lineWidth: 1)
+                )
         }
         .buttonStyle(.plain)
         .disabled(!canSend)
@@ -501,6 +516,6 @@ private struct HUDRunButton: View {
             return DS.Colors.borderSubtle.opacity(0.45)
         }
 
-        return Color.white.opacity(isHovered ? 0.22 : 0.10)
+        return DS.Colors.borderStrong.opacity(isHovered ? 0.9 : 0.5)
     }
 }
