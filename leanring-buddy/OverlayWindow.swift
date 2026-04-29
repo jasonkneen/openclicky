@@ -8,6 +8,7 @@
 //
 
 import AppKit
+import CoreGraphics
 import SwiftUI
 
 // MARK: - AgentParkingPosition
@@ -187,6 +188,11 @@ struct BlueCursorView: View {
     let companionManager: CompanionManager
     @ObservedObject var cursorState: CursorOverlayState
     @AppStorage(ClickyAccentTheme.userDefaultsKey) private var selectedAccentThemeID = ClickyAccentTheme.blue.rawValue
+    @AppStorage(AppBundleConfiguration.userBuddyFadeWhenIdleEnabledKey) private var buddyFadeWhenIdleEnabled = true
+    @AppStorage(AppBundleConfiguration.userBuddyFadeWhenIdleSecondsKey) private var buddyFadeWhenIdleSeconds = 15.0
+
+    /// Extra multiplier when HID has been inactive (orthogonal to onboarding `cursorOpacity`).
+    @State private var buddyIdleSuppressionOpacity: Double = 1.0
 
     @State private var cursorPosition: CGPoint
     @State private var isCursorOnThisScreen: Bool
@@ -206,7 +212,9 @@ struct BlueCursorView: View {
         _isCursorOnThisScreen = State(initialValue: screenFrame.contains(mouseLocation))
     }
     @State private var timer: Timer?
-    /// High-priority background timer that drives cursor tracking. Held
+    /// Low-frequency timer: reads HID idle time (~2 Quartz calls/sec, no event taps).
+    @State private var idleFadeMonitoringTimer: DispatchSourceTimer?
+
     /// as a strong reference so the source isn't deallocated mid-tick.
     /// We sample on a `userInteractive` queue (not @MainActor) so the
     /// buddy stays smooth even when the main thread is busy with SwiftUI
@@ -292,7 +300,7 @@ struct BlueCursorView: View {
                                 .preference(key: SizePreferenceKey.self, value: geo.size)
                         }
                     )
-                    .opacity(bubbleOpacity)
+                    .opacity(bubbleOpacity * buddyIdleSuppressionOpacity)
                     .position(x: cursorPosition.x + 10 + (bubbleSize.width / 2), y: cursorPosition.y + 18)
                     .animation(.spring(response: 0.2, dampingFraction: 0.6, blendDuration: 0), value: cursorPosition)
                     .animation(.easeOut(duration: 0.5), value: bubbleOpacity)
@@ -327,7 +335,7 @@ struct BlueCursorView: View {
                         }
                     )
                     .scaleEffect(navigationBubbleScale)
-                    .opacity(navigationBubbleOpacity)
+                    .opacity(navigationBubbleOpacity * buddyIdleSuppressionOpacity)
                     .position(x: cursorPosition.x + 10 + (navigationBubbleSize.width / 2), y: cursorPosition.y + 18)
                     .animation(.spring(response: 0.2, dampingFraction: 0.6, blendDuration: 0), value: cursorPosition)
                     .animation(.spring(response: 0.4, dampingFraction: 0.6), value: navigationBubbleScale)
@@ -351,7 +359,7 @@ struct BlueCursorView: View {
                 .rotationEffect(.degrees(triangleRotationDegrees))
                 .shadow(color: overlayCursorColor, radius: 8 + (buddyFlightScale - 1.0) * 20, x: 0, y: 0)
                 .scaleEffect(buddyFlightScale)
-                .opacity(buddyIsVisibleOnThisScreen && (cursorState.voiceState == .idle || cursorState.voiceState == .responding) ? cursorOpacity : 0)
+                .opacity(buddyIsVisibleOnThisScreen && (cursorState.voiceState == .idle || cursorState.voiceState == .responding) ? cursorOpacity * buddyIdleSuppressionOpacity : 0)
                 .position(cursorPosition)
                 .animation(
                     buddyNavigationMode == .followingCursor
@@ -371,7 +379,7 @@ struct BlueCursorView: View {
                 cursorColor: overlayCursorColor,
                 isActive: buddyIsVisibleOnThisScreen && cursorState.voiceState == .listening
             )
-                .opacity(buddyIsVisibleOnThisScreen && cursorState.voiceState == .listening ? cursorOpacity : 0)
+                .opacity(buddyIsVisibleOnThisScreen && cursorState.voiceState == .listening ? cursorOpacity * buddyIdleSuppressionOpacity : 0)
                 .position(cursorPosition)
                 .animation(.spring(response: 0.2, dampingFraction: 0.6, blendDuration: 0), value: cursorPosition)
                 .animation(.easeIn(duration: 0.15), value: cursorState.voiceState)
@@ -381,7 +389,7 @@ struct BlueCursorView: View {
                 cursorColor: overlayCursorColor,
                 isActive: buddyIsVisibleOnThisScreen && cursorState.voiceState == .processing
             )
-                .opacity(buddyIsVisibleOnThisScreen && cursorState.voiceState == .processing ? cursorOpacity : 0)
+                .opacity(buddyIsVisibleOnThisScreen && cursorState.voiceState == .processing ? cursorOpacity * buddyIdleSuppressionOpacity : 0)
                 .position(cursorPosition)
                 .animation(.spring(response: 0.2, dampingFraction: 0.6, blendDuration: 0), value: cursorPosition)
                 .animation(.easeIn(duration: 0.15), value: cursorState.voiceState)
@@ -398,16 +406,22 @@ struct BlueCursorView: View {
             self.cursorPosition = CGPoint(x: swiftUIPosition.x + 35, y: swiftUIPosition.y + 25)
 
             startTrackingCursor()
+            scheduleIdleFadeMonitor()
+
             DispatchQueue.main.async {
                 startNavigatingToCurrentDetectedLocationIfNeeded()
+                evaluateBuddyHIDIdleFade()
             }
 
             self.cursorOpacity = 1.0
+            self.buddyIdleSuppressionOpacity = 1.0
         }
         .onDisappear {
             timer?.invalidate()
             cursorTrackingTimer?.cancel()
             cursorTrackingTimer = nil
+            idleFadeMonitoringTimer?.cancel()
+            idleFadeMonitoringTimer = nil
             navigationAnimationTimer?.invalidate()
             companionManager.tearDownOnboardingVideo()
         }
@@ -424,6 +438,21 @@ struct BlueCursorView: View {
                 return
             }
             startNavigatingToCurrentDetectedLocationIfNeeded()
+        }
+        .onChange(of: buddyFadeWhenIdleEnabled) { _, _ in
+            evaluateBuddyHIDIdleFade()
+        }
+        .onChange(of: buddyFadeWhenIdleSeconds) { _, _ in
+            evaluateBuddyHIDIdleFade()
+        }
+        .onChange(of: cursorState.voiceState) { _, _ in
+            evaluateBuddyHIDIdleFade()
+        }
+        .onChange(of: buddyNavigationMode) { _, _ in
+            evaluateBuddyHIDIdleFade()
+        }
+        .onChange(of: showWelcome) { _, _ in
+            evaluateBuddyHIDIdleFade()
         }
     }
 
@@ -461,6 +490,85 @@ struct BlueCursorView: View {
         case .navigatingToTarget, .pointingAtTarget:
             return true
         }
+    }
+
+    // MARK: - Buddy HID idle fade
+
+    /// System HID idle time (`CGEventSource`) in seconds — no CGEvent taps, ~500ms polling.
+    private func clippedBuddyFadeIdleThresholdSeconds() -> CGFloat {
+        CGFloat(max(5.0, min(180.0, buddyFadeWhenIdleSeconds)))
+    }
+
+    private func shortestHIDIdleSecondsAcrossInputs() -> CGFloat {
+        let types: [CGEventType] = [
+            CGEventType.mouseMoved,
+            .leftMouseDown,
+            .leftMouseUp,
+            .rightMouseDown,
+            .rightMouseUp,
+            .scrollWheel,
+            .keyDown,
+            .keyUp,
+            .flagsChanged,
+        ]
+        var shortest = CGFloat.greatestFiniteMagnitude
+        for eventType in types {
+            let s = CGFloat(CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: eventType))
+            if s.isFinite, s >= 0, s < shortest {
+                shortest = s
+            }
+        }
+        return shortest == .greatestFiniteMagnitude ? 0 : shortest
+    }
+
+    private var buddyEligibleForHIDIdleFade: Bool {
+        if showWelcome && !welcomeText.isEmpty { return false }
+        if buddyNavigationMode != .followingCursor { return false }
+        // Keep fully visible whenever voice UX is active (including TTS playback).
+        if cursorState.voiceState != .idle { return false }
+        return true
+    }
+
+    private func evaluateBuddyHIDIdleFade() {
+        guard buddyFadeWhenIdleEnabled else {
+            if buddyIdleSuppressionOpacity != 1 {
+                buddyIdleSuppressionOpacity = 1
+            }
+            return
+        }
+
+        guard buddyEligibleForHIDIdleFade else {
+            if buddyIdleSuppressionOpacity != 1 {
+                withAnimation(.easeOut(duration: 0.28)) {
+                    buddyIdleSuppressionOpacity = 1
+                }
+            }
+            return
+        }
+
+        let idle = shortestHIDIdleSecondsAcrossInputs()
+        let thresholdSeconds = clippedBuddyFadeIdleThresholdSeconds()
+        let shouldHide = idle >= thresholdSeconds
+        let targetOpacity: Double = shouldHide ? 0 : 1
+        guard abs(targetOpacity - buddyIdleSuppressionOpacity) > 0.02 else { return }
+
+        withAnimation(.easeOut(duration: 0.42)) {
+            buddyIdleSuppressionOpacity = targetOpacity
+        }
+    }
+
+    private func scheduleIdleFadeMonitor() {
+        idleFadeMonitoringTimer?.cancel()
+        let queue = DispatchQueue(label: "openclicky.buddy.hid.idlefade", qos: .utility)
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + 0.6, repeating: .milliseconds(500), leeway: .milliseconds(100))
+        timer.setEventHandler {
+            DispatchQueue.main.async {
+                evaluateBuddyHIDIdleFade()
+            }
+        }
+        timer.resume()
+        idleFadeMonitoringTimer = timer
     }
 
     // MARK: - Cursor Tracking

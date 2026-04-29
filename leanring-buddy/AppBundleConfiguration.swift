@@ -35,6 +35,10 @@ nonisolated enum AppBundleConfiguration {
     static let userWidgetsIncludeAgentTaskNamesDefaultsKey = "openClickyWidgetsIncludeAgentTaskNames"
     static let userWidgetsIncludeMemorySnippetsDefaultsKey = "openClickyWidgetsIncludeMemorySnippets"
     static let userWidgetsIncludeFocusedAppContextDefaultsKey = "openClickyWidgetsIncludeFocusedAppContext"
+    /// Fades out the buddy cursor after no HID activity (covers video/fullscreen passive viewing).
+    static let userBuddyFadeWhenIdleEnabledKey = "openClickyBuddyFadeWhenIdleEnabled"
+    /// Seconds of keyboard/mouse inactivity before fading (stored as Double).
+    static let userBuddyFadeWhenIdleSecondsKey = "openClickyBuddyFadeWhenIdleSeconds"
     static let appGroupIdentifier = "group.com.jkneen.openclicky"
 
     static func anthropicAPIKey() -> String? {

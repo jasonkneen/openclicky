@@ -819,8 +819,8 @@ final class CompanionManager: ObservableObject {
         }
     }
 
-    func showSettingsWindow() {
-        settingsWindowManager.show(companionManager: self)
+    func showSettingsWindow(initialSection: OpenClickySettingsSection = .general) {
+        settingsWindowManager.show(companionManager: self, initialSection: initialSection)
     }
 
     func showLogViewerWindow() {
