@@ -1329,7 +1329,7 @@ private struct ClickyAgentDockHoverCard: View {
     let voice: () -> Void
     let close: () -> Void
     let stop: () -> Void
-    /// Called when the user taps "Close" on a terminal (`.done`/`.failed`)
+    /// Called when the user taps "Dismiss" on a terminal (`.done`/`.failed`)
     /// agent. Distinct from `stop` (which sends a cancel signal) — this
     /// just removes the dock item visually.
     let dismiss: () -> Void
@@ -1470,17 +1470,26 @@ private struct ClickyAgentDockHoverCard: View {
 
     @ViewBuilder
     private var stopControls: some View {
-        // Once the agent is in a terminal state (.done / .failed), there's
-        // nothing to cancel — show a clean "Close" button that dismisses
-        // the dock item instead of the destructive Stop / Confirm-stop
-        // affordance.
+        // Close/hide should always be available without affecting the
+        // underlying task or menu-bar icon. For terminal states, expose a
+        // separate explicit "Dismiss" action that removes the dock item.
         switch item.status {
         case .done, .failed:
+            Button(action: close) {
+                Label("Close panel", systemImage: "xmark.circle")
+            }
+            .buttonStyle(ClickyAgentDockPillButtonStyle())
+
             Button(action: dismiss) {
-                Label("Close", systemImage: "xmark.circle")
+                Label("Dismiss", systemImage: "trash")
             }
             .buttonStyle(ClickyAgentDockPillButtonStyle())
         case .starting, .running:
+            Button(action: close) {
+                Label("Close panel", systemImage: "xmark.circle")
+            }
+            .buttonStyle(ClickyAgentDockPillButtonStyle())
+
             if isConfirmingStop {
                 Button {
                     isConfirmingStop = false

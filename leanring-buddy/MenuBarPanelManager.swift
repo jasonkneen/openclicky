@@ -647,8 +647,8 @@ private struct AgentMenuBarStatusPopoverView: View {
     let dashboard: () -> Void
     let close: () -> Void
     let stop: () -> Void
-    /// Called when the user taps "Close" on a terminal (`.done` / `.failed`)
-    /// agent. Distinct from `stop` (which sends a cancel signal) — Close
+    /// Called when the user taps "Dismiss" on a terminal (`.done` / `.failed`)
+    /// agent. Distinct from `stop` (which sends a cancel signal) — Dismiss
     /// dismisses the popover AND removes the finished item from the dock
     /// collection so it stops occupying the menu bar.
     let dismiss: () -> Void
@@ -738,15 +738,19 @@ private struct AgentMenuBarStatusPopoverView: View {
 
     @ViewBuilder
     private var stopControls: some View {
-        // Once the agent is in a terminal state (.done / .failed), there's
-        // nothing to cancel — show "Close" instead of the Stop / Confirm
-        // affordance. Mirrors the dock hover-card behavior in
-        // `OverlayWindow.swift` so both surfaces stay in sync.
+        // Closing the panel should never cancel/remove the task. Keep
+        // "Close panel" available for every state. For terminal sessions,
+        // provide a separate explicit "Dismiss" action to remove it.
         switch item.status {
         case .done, .failed:
-            Button("Close", action: dismiss)
+            Button("Close panel", action: close)
+                .foregroundColor(Color.white.opacity(0.82))
+            Button("Dismiss", action: dismiss)
                 .foregroundColor(Color.white.opacity(0.82))
         case .starting, .running:
+            Button("Close panel", action: close)
+                .foregroundColor(Color.white.opacity(0.82))
+
             if isConfirmingStop {
                 Button("Confirm stop") {
                     isConfirmingStop = false
