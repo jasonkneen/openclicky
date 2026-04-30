@@ -33,6 +33,7 @@ final class CursorOverlayState: ObservableObject {
     @Published var detectedElementScreenLocation: CGPoint?
     @Published var detectedElementDisplayFrame: CGRect?
     @Published var detectedElementBubbleText: String?
+    @Published var agentTaskBubbleText: String?
 }
 
 enum ClickyAgentDockStatus: Equatable {
@@ -6743,6 +6744,8 @@ final class CompanionManager: ObservableObject {
     }
 
     private func updateAgentDockItem(for sessionID: UUID, status: CodexAgentSessionStatus) {
+        defer { refreshCursorAgentTaskLabel() }
+
         guard let itemIndex = agentDockItems.lastIndex(where: { $0.sessionID == sessionID }) else { return }
         let session = codexAgentSessions.first(where: { $0.id == sessionID })
         let activitySummary = session?.latestActivitySummary
@@ -6831,6 +6834,46 @@ final class CompanionManager: ObservableObject {
             break
         }
         scheduleWidgetSnapshotPublish()
+    }
+
+    private func refreshCursorAgentTaskLabel() {
+        guard let item = agentDockItems.reversed().first(where: { dockItem in
+            dockItem.status == .starting || dockItem.status == .running
+        }) else {
+            cursorOverlayState.agentTaskBubbleText = nil
+            return
+        }
+
+        let session = item.sessionID.flatMap { sessionID in
+            codexAgentSessions.first(where: { $0.id == sessionID })
+        }
+        cursorOverlayState.agentTaskBubbleText = Self.cursorAgentTaskLabel(for: item, session: session)
+    }
+
+    private static func cursorAgentTaskLabel(for item: ClickyAgentDockItem, session: CodexAgentSession?) -> String {
+        let title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallbackTitle = title.isEmpty ? "Agent task" : title
+        let stageLabel = session?.progressStage.label ?? (item.status == .starting ? "Starting" : "Working")
+        let caption = item.caption?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let detail = caption?.isEmpty == false ? caption! : fallbackTitle
+
+        return shortCursorAgentTaskLabel("\(stageLabel): \(detail)")
+    }
+
+    private static func shortCursorAgentTaskLabel(_ text: String) -> String {
+        let flattened = text
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+
+        guard flattened.count > 76 else { return flattened }
+
+        let endIndex = flattened.index(flattened.startIndex, offsetBy: 76)
+        let prefix = String(flattened[..<endIndex])
+        if let lastSpace = prefix.lastIndex(of: " ") {
+            return "\(prefix[..<lastSpace])..."
+        }
+        return "\(prefix)..."
     }
 
     private func completeAgentRequestTimingIfNeeded(

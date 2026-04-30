@@ -164,6 +164,13 @@ struct NavigationBubbleSizePreferenceKey: PreferenceKey {
     }
 }
 
+struct AgentTaskBubbleSizePreferenceKey: PreferenceKey {
+    static let defaultValue: CGSize = .zero
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+        value = nextValue()
+    }
+}
+
 /// The buddy's behavioral mode. Controls whether it follows the cursor,
 /// is flying toward a detected UI element, or is pointing at an element.
 enum BuddyNavigationMode {
@@ -216,6 +223,7 @@ struct BlueCursorView: View {
     @State private var welcomeText: String = ""
     @State private var showWelcome: Bool = true
     @State private var bubbleSize: CGSize = .zero
+    @State private var agentTaskBubbleSize: CGSize = .zero
     @State private var bubbleOpacity: Double = 1.0
     @State private var cursorOpacity: Double = 0.0
 
@@ -334,6 +342,41 @@ struct BlueCursorView: View {
                     .animation(.easeOut(duration: 0.5), value: navigationBubbleOpacity)
                     .onPreferenceChange(NavigationBubbleSizePreferenceKey.self) { newSize in
                         navigationBubbleSize = newSize
+                    }
+            }
+
+            if shouldShowAgentTaskBubble,
+               let agentTaskBubbleText = cursorState.agentTaskBubbleText?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !agentTaskBubbleText.isEmpty {
+                Text(agentTaskBubbleText)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.white)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(overlayCursorColor.opacity(0.94))
+                            .shadow(color: overlayCursorColor.opacity(0.48), radius: 8, x: 0, y: 0)
+                    )
+                    .frame(maxWidth: 260, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .overlay(
+                        GeometryReader { geo in
+                            Color.clear
+                                .preference(key: AgentTaskBubbleSizePreferenceKey.self, value: geo.size)
+                        }
+                    )
+                    .position(
+                        x: cursorPosition.x + 12 + (agentTaskBubbleSize.width / 2),
+                        y: cursorPosition.y + 20 + (agentTaskBubbleSize.height / 2)
+                    )
+                    .opacity(cursorOpacity)
+                    .animation(.spring(response: 0.2, dampingFraction: 0.6, blendDuration: 0), value: cursorPosition)
+                    .animation(.easeOut(duration: 0.16), value: cursorState.agentTaskBubbleText)
+                    .onPreferenceChange(AgentTaskBubbleSizePreferenceKey.self) { newSize in
+                        agentTaskBubbleSize = newSize
                     }
             }
 
@@ -461,6 +504,14 @@ struct BlueCursorView: View {
         case .navigatingToTarget, .pointingAtTarget:
             return true
         }
+    }
+
+    private var shouldShowAgentTaskBubble: Bool {
+        buddyIsVisibleOnThisScreen
+            && buddyNavigationMode == .followingCursor
+            && !showWelcome
+            && cursorState.voiceState != .listening
+            && cursorState.voiceState != .processing
     }
 
     // MARK: - Cursor Tracking

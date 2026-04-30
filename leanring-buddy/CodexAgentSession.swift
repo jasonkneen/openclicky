@@ -1410,9 +1410,9 @@ final class CodexAgentSession: ObservableObject, Identifiable {
     private static func latestActivitySummary(from entries: [CodexTranscriptEntry]) -> String? {
         guard let latestEntry = entries.reversed().first(where: { entry in
             switch entry.role {
-            case .assistant, .plan, .system:
+            case .assistant, .plan, .command, .system:
                 return !entry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            case .command, .user:
+            case .user:
                 return false
             }
         }) else {
