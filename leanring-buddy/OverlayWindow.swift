@@ -944,6 +944,7 @@ private struct ClickyAgentDockStackView: View {
     @ObservedObject var companionManager: CompanionManager
     @State private var hoveredItemID: UUID?
     @State private var didDragDock = false
+    @State private var manuallyClosedExpandedItemIDs: Set<UUID> = []
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 14) {
@@ -960,7 +961,13 @@ private struct ClickyAgentDockStackView: View {
                             chat: { companionManager.openAgentDockItem(item.id) },
                             text: { companionManager.showTextFollowUpForAgentDockItem(item.id) },
                             voice: { companionManager.prepareVoiceFollowUpForAgentDockItem(item.id) },
-                            close: { companionManager.closeAgentDockPanel() },
+                            close: {
+                                // Close should collapse this expanded hover panel
+                                // immediately, even while the cursor is still
+                                // over the dock icon. Keep the dock icon/task.
+                                manuallyClosedExpandedItemIDs.insert(item.id)
+                                hoveredItemID = nil
+                            },
                             stop: { companionManager.stopAgentDockItem(item.id) },
                             dismiss: { companionManager.dismissAgentDockItem(item.id) },
                             runSuggestedAction: { actionTitle in
@@ -1009,6 +1016,11 @@ private struct ClickyAgentDockStackView: View {
                 .onHover { isHovering in
                     withAnimation(.easeOut(duration: 0.14)) {
                         hoveredItemID = isHovering ? item.id : nil
+                        if !isHovering {
+                            // Re-enable expansion after the pointer leaves, so a
+                            // later hover can open the panel again.
+                            manuallyClosedExpandedItemIDs.remove(item.id)
+                        }
                     }
                 }
             }
@@ -1024,7 +1036,7 @@ private struct ClickyAgentDockStackView: View {
         // expanded automatically so users could read the final summary,
         // but per UX request 2026-04-28 the dock should be icon-only by
         // default — hovering reveals the full card.
-        return hoveredItemID == item.id
+        return hoveredItemID == item.id && !manuallyClosedExpandedItemIDs.contains(item.id)
     }
 }
 
