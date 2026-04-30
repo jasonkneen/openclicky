@@ -483,6 +483,7 @@ final class CompanionManager: ObservableObject {
     private var speculativeStabilityDwellTask: Task<Void, Never>?
     private var lastAgentContextSessionID: UUID?
     private var announcedAgentFileURLs: Set<String> = []
+    private var pendingSystemAnnouncementTask: Task<Void, Never>?
     private var liveHandledComputerUseFingerprints: Set<String> = []
     private var lastAgentProgressNarrationAt: Date?
     /// The phrase last spoken for each running agent session, keyed by
@@ -6919,32 +6920,48 @@ final class CompanionManager: ObservableObject {
         _ line: String,
         withChime: Bool = false
     ) {
-        Task { @MainActor [weak self] in
+        let previousTask = pendingSystemAnnouncementTask
+        let task = Task { @MainActor [weak self] in
             guard let self else { return }
+            if let previousTask {
+                _ = await previousTask.result
+            }
+            await self.waitForVoicePlaybackToIdle()
             if withChime {
-                // Stop any in-flight TTS (acknowledgement, progress
-                // narration, anything) so the chime plays cleanly.
-                self.interruptCurrentVoiceResponse()
-                // Tiny gap to let the audio device settle after stop.
-                try? await Task.sleep(nanoseconds: 80_000_000)
-                if Task.isCancelled { return }
-                self.playAgentDoneChime()
-                // Chime length + breathing room before speech starts.
-                try? await Task.sleep(nanoseconds: 700_000_000)
+                let chimeDuration = self.playAgentDoneChime()
+                let settleSeconds = max(0.12, chimeDuration + 0.08)
+                try? await Task.sleep(nanoseconds: UInt64(settleSeconds * 1_000_000_000))
                 if Task.isCancelled { return }
             }
-            self.speakShortSystemResponse(line)
+            self.speakShortSystemResponse(line, interruptExisting: false)
+            await self.waitForVoicePlaybackToIdle()
+        }
+        pendingSystemAnnouncementTask = task
+    }
+
+    @MainActor
+    private func waitForVoicePlaybackToIdle(maxWaitSeconds: TimeInterval = 8.0) async {
+        let start = Date()
+        while voiceTTSClient.isPlaying {
+            if Task.isCancelled { return }
+            if Date().timeIntervalSince(start) >= maxWaitSeconds { return }
+            try? await Task.sleep(nanoseconds: 50_000_000)
         }
     }
 
     /// Play the bundled "agent-done" chime via NSSound on a system
     /// audio channel separate from TTS. Caller is responsible for
     /// timing this so it doesn't overlap in-flight TTS.
-    private func playAgentDoneChime() {
+    @discardableResult
+    private func playAgentDoneChime() -> TimeInterval {
         guard let url = Bundle.main.url(forResource: "agent-done", withExtension: "mp3") else {
-            return
+            return 0.55
         }
-        NSSound(contentsOf: url, byReference: false)?.play()
+        guard let sound = NSSound(contentsOf: url, byReference: false) else {
+            return 0.55
+        }
+        sound.play()
+        return sound.duration > 0 ? sound.duration : 0.55
     }
 
     /// Trims an agent activity summary to a sentence-length spoken line.
@@ -7500,12 +7517,15 @@ final class CompanionManager: ObservableObject {
 
     private func speakShortSystemResponse(
         _ text: String,
+        interruptExisting: Bool = true,
         route: String? = nil,
         timing: OpenClickyRequestTiming? = nil,
         executionStartedAt: Date? = nil,
         extra: [String: Any] = [:]
     ) {
-        interruptCurrentVoiceResponse()
+        if interruptExisting {
+            interruptCurrentVoiceResponse()
+        }
         currentResponseTask = Task {
             self.voiceState = .processing
             let ttsStartedAt = Date()
