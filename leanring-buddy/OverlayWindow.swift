@@ -1254,8 +1254,8 @@ private struct ClickyAgentDockConversationPreview: View {
                 ClickyThinkingDots(tint: item.accentTheme.cursorColor)
             case .done:
                 Text("Done.")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(DS.Colors.textPrimary)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(item.accentTheme.cursorColor)
             case .failed:
                 Text("Needs attention.")
                     .font(.system(size: 13, weight: .medium))
@@ -1444,8 +1444,8 @@ private struct ClickyAgentDockHoverCard: View {
                     ClickyThinkingDots(tint: item.accentTheme.cursorColor)
                 case .done:
                     Text("Done.")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(DS.Colors.textPrimary)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(item.accentTheme.cursorColor)
                 case .failed:
                     Text("Needs attention.")
                         .font(.system(size: 14, weight: .medium))
@@ -1565,7 +1565,7 @@ private struct ClickyAgentDockHoverCard: View {
         case .starting, .running:
             return Color(hex: "#93C5FD")
         case .done:
-            return Color(hex: "#FF7A9A")
+            return item.accentTheme.cursorColor
         case .failed:
             return Color(hex: "#FF6369")
         }
@@ -1576,7 +1576,7 @@ private struct ClickyAgentDockHoverCard: View {
         case .starting, .running:
             return Color(hex: "#1D4ED8").opacity(0.25)
         case .done:
-            return Color(hex: "#7F1D3A").opacity(0.72)
+            return item.accentTheme.cursorColor.opacity(0.24)
         case .failed:
             return DS.Colors.destructive.opacity(0.24)
         }
