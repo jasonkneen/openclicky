@@ -75,6 +75,73 @@ Do not use terminal `xcodebuild` for permission testing. macOS TCC permissions a
 
 For a lightweight syntax check that does not disturb macOS permissions, run `swiftc -parse` over the changed source files. Avoid launching unsigned or temporary build products for permission testing.
 
+The external-control bridge can be checked with:
+
+```sh
+scripts/test-external-control-bridge.sh
+```
+
+The script performs Swift parse/typecheck checks, verifies the local bridge, exercises MCP descriptors, screenshot capture, captions, secondary cursors, SSE events, and confirms that primary cursor guidance uses OpenClicky's native choreography without warping the real system pointer.
+
+## External Control Bridge
+
+OpenClicky exposes a local-only control bridge for agents and other trusted local apps:
+
+```text
+http://127.0.0.1:32123
+```
+
+The bridge is intentionally non-invasive. It drives OpenClicky's overlay, screenshots, and TTS, but does not start dictation, submit prompts, create new agent sessions, or mutate the normal OpenClicky conversation state.
+
+Useful endpoints:
+
+- `GET /health` checks bridge status.
+- `GET /mcp/tools` lists MCP-style tool descriptors.
+- `POST /cursor` points with the primary OpenClicky cursor, or creates one secondary marker with `mode: "secondary"`.
+- `POST /cursors` shows multiple temporary secondary markers at once.
+- `POST /caption` shows a short caption near a coordinate or the current cursor.
+- `POST /screenshot` captures local screenshots with display-frame metadata for locating UI.
+- `POST /speak` speaks through OpenClicky's TTS without entering voice mode.
+- `POST /clear` clears bridge-created overlay elements.
+- `GET /events` streams server-sent bridge events.
+
+Primary cursor behavior matters: default `/cursor` uses OpenClicky's existing smooth pointing choreography, the same behavior used by voice prompts like "show me the Apple menu". The OpenClicky triangle zips to the target, shows the caption, and returns to the real pointer. It should not warp the macOS pointer and should not draw a duplicate primary cursor.
+
+Secondary cursors are explicit temporary markers. Use them for multi-point explanations, alternatives, or screen-tour overlays. They automatically disappear after `durationMs` or can be cleared with `/clear`.
+
+Example primary pointer cue:
+
+```sh
+curl -s -X POST http://127.0.0.1:32123/cursor \
+  -H 'Content-Type: application/json' \
+  -d '{"x":640,"y":520,"caption":"Click this menu","durationMs":4500}'
+```
+
+Example simultaneous multi-marker cue:
+
+```sh
+curl -s -X POST http://127.0.0.1:32123/cursors \
+  -H 'Content-Type: application/json' \
+  -d '{"durationMs":4500,"cursors":[{"x":640,"y":520,"caption":"Editor","accentHex":"#60A5FA"},{"x":900,"y":520,"caption":"Logs","accentHex":"#F59E0B"}]}'
+```
+
+Example screenshot-to-pointer workflow:
+
+```sh
+curl -s -X POST http://127.0.0.1:32123/screenshot \
+  -H 'Content-Type: application/json' \
+  -d '{"focused":false}'
+
+curl -s -X POST http://127.0.0.1:32123/cursor \
+  -H 'Content-Type: application/json' \
+  -d '{"x":1180,"y":760,"caption":"Use this button"}'
+```
+
+Bundled agent skills for this bridge live in `AppResources/OpenClicky/OpenClickyBundledSkills/`:
+
+- `openclicky-screen-control`: quick point, caption, screenshot, speak, and clear commands.
+- `openclicky-screen-tour`: recordable visual tours with multiple simultaneous markers, area-focused overlays, speech, and primary cursor choreography.
+
 ## Swift SDK Embedding (Windowed)
 
 For Swift hosts that want an in-window OpenClicky instance that is separate from the OS-level menu-bar companion, use `OpenClickySDKSession` from `leanring-buddy/OpenClickySDK.swift`.

@@ -65,23 +65,40 @@ done
 pass 'tool descriptors include expected tools'
 
 printf '\n== Basic visual commands ==\n'
+cat > "$TMP_DIR/visual-points.swift" <<'SWIFT'
+import AppKit
+let p = NSEvent.mouseLocation
+let screen = NSScreen.screens.first { $0.frame.contains(p) } ?? NSScreen.main!
+let f = screen.visibleFrame
+func emit(_ name: String, _ x: CGFloat, _ y: CGFloat) {
+    print("\(name)_x=\(Int(x)); \(name)_y=\(Int(y))")
+}
+emit("caption", f.minX + f.width * 0.52, f.minY + f.height * 0.62)
+emit("secondary", f.minX + f.width * 0.38, f.minY + f.height * 0.50)
+emit("multi_a", f.minX + f.width * 0.48, f.minY + f.height * 0.42)
+emit("multi_b", f.minX + f.width * 0.62, f.minY + f.height * 0.42)
+SWIFT
+eval "$(swift "$TMP_DIR/visual-points.swift")"
+
 caption_resp=$(curl -sS --max-time 2 -X POST "$BASE_URL/caption" \
   -H 'Content-Type: application/json' \
-  -d '{"text":"Bridge caption test","durationMs":900}')
+  -d "{\"x\":$caption_x,\"y\":$caption_y,\"text\":\"Bridge caption test\",\"durationMs\":650}")
 printf 'caption: %s\n' "$caption_resp"
 [[ "$(json_get "$caption_resp" ok)" == "True" || "$(json_get "$caption_resp" ok)" == "true" ]] || fail '/caption failed'
 
 secondary_resp=$(curl -sS --max-time 2 -X POST "$BASE_URL/cursor" \
   -H 'Content-Type: application/json' \
-  -d '{"x":500,"y":500,"caption":"Secondary cursor test","mode":"secondary","durationMs":900,"accentHex":"#34D399"}')
+  -d "{\"x\":$secondary_x,\"y\":$secondary_y,\"caption\":\"Secondary\",\"mode\":\"secondary\",\"durationMs\":650,\"accentHex\":\"#34D399\"}")
 printf 'secondary cursor: %s\n' "$secondary_resp"
 [[ "$(json_get "$secondary_resp" ok)" == "True" || "$(json_get "$secondary_resp" ok)" == "true" ]] || fail '/cursor secondary failed'
 
 multi_resp=$(curl -sS --max-time 2 -X POST "$BASE_URL/cursors" \
   -H 'Content-Type: application/json' \
-  -d '{"durationMs":900,"cursors":[{"x":520,"y":520,"caption":"A","accentHex":"#60A5FA"},{"x":620,"y":520,"caption":"B","accentHex":"#F59E0B"}]}')
+  -d "{\"durationMs\":650,\"cursors\":[{\"x\":$multi_a_x,\"y\":$multi_a_y,\"caption\":\"A\",\"accentHex\":\"#60A5FA\"},{\"x\":$multi_b_x,\"y\":$multi_b_y,\"caption\":\"B\",\"accentHex\":\"#F59E0B\"}]}")
 printf 'multi cursor: %s\n' "$multi_resp"
 [[ "$(json_get "$multi_resp" ok)" == "True" || "$(json_get "$multi_resp" ok)" == "true" ]] || fail '/cursors failed'
+sleep 0.75
+curl -sS --max-time 2 -X POST "$BASE_URL/clear" -H 'Content-Type: application/json' -d '{}' >/dev/null
 pass 'caption/secondary/multi commands'
 
 printf '\n== Screenshot command ==\n'
