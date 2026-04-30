@@ -1401,6 +1401,8 @@ private struct ClickyAgentDockHoverCard: View {
     let dismiss: () -> Void
     let runSuggestedAction: (String) -> Void
     @State private var isConfirmingStop = false
+    @State private var statusLineCycleIndex = 0
+    @State private var statusLineCycleTask: Task<Void, Never>?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -1427,13 +1429,13 @@ private struct ClickyAgentDockHoverCard: View {
                     .foregroundColor(DS.Colors.textSecondary)
                     .lineLimit(1)
 
-                if let progressStep = item.progressStepText?.trimmingCharacters(in: .whitespacesAndNewlines),
-                   !progressStep.isEmpty {
-                    Text("Step: \(progressStep)")
+                if let statusLine = currentStatusLine {
+                    Text("\(statusLineLabel): \(statusLine)")
                         .font(.system(size: 11, weight: .regular))
                         .foregroundColor(DS.Colors.textTertiary)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
+                        .contentTransition(.opacity)
                 }
             }
             .padding(.top, 2)
@@ -1522,6 +1524,17 @@ private struct ClickyAgentDockHoverCard: View {
         )
         .shadow(color: item.accentTheme.cursorColor.opacity(0.24), radius: 18, x: 0, y: 8)
         .shadow(color: Color.black.opacity(0.42), radius: 10, x: 0, y: 6)
+        .onAppear { restartStatusLineCycle() }
+        .onDisappear {
+            statusLineCycleTask?.cancel()
+            statusLineCycleTask = nil
+        }
+        .onChange(of: item.activityStatusLines) { _, _ in
+            restartStatusLineCycle()
+        }
+        .onChange(of: item.progressStepText ?? "") { _, _ in
+            restartStatusLineCycle()
+        }
     }
 
     @ViewBuilder
@@ -1565,6 +1578,49 @@ private struct ClickyAgentDockHoverCard: View {
 
     private var trimmedCaption: String? {
         item.caption?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var statusLineLabel: String {
+        activityStatusLines.count > 1 ? "Update" : "Step"
+    }
+
+    private var currentStatusLine: String? {
+        let lines = activityStatusLines
+        guard !lines.isEmpty else { return nil }
+        let safeIndex = min(statusLineCycleIndex, lines.count - 1)
+        return lines[safeIndex]
+    }
+
+    private var activityStatusLines: [String] {
+        var lines: [String] = []
+        for candidate in item.activityStatusLines + [item.progressStepText ?? ""] {
+            let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            if lines.last != trimmed {
+                lines.append(trimmed)
+            }
+        }
+        return lines
+    }
+
+    private func restartStatusLineCycle() {
+        statusLineCycleTask?.cancel()
+        statusLineCycleTask = nil
+        let lines = activityStatusLines
+        statusLineCycleIndex = 0
+        guard lines.count > 1 else { return }
+
+        statusLineCycleTask = Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_900_000_000)
+                if Task.isCancelled { return }
+                let count = activityStatusLines.count
+                guard count > 1 else { continue }
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    statusLineCycleIndex = (statusLineCycleIndex + 1) % count
+                }
+            }
+        }
     }
 
     @ViewBuilder

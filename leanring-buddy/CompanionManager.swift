@@ -55,6 +55,7 @@ struct ClickyAgentDockItem: Identifiable, Equatable {
     var status: ClickyAgentDockStatus
     var progressStageLabel: String
     var progressStepText: String?
+    var activityStatusLines: [String]
     var caption: String?
     var suggestedNextActions: [String]
     var createdAt: Date
@@ -510,6 +511,7 @@ final class CompanionManager: ObservableObject {
     private var audioPowerCancellable: AnyCancellable?
     private var agentStatusCancellables: [UUID: AnyCancellable] = [:]
     private var agentActivityCancellables: [UUID: AnyCancellable] = [:]
+    private var agentLoopActivityCancellables: [UUID: AnyCancellable] = [:]
     private var agentTitleCancellables: [UUID: AnyCancellable] = [:]
     private var pendingAgentActivityRefreshTasks: [UUID: Task<Void, Never>] = [:]
     private var tutorIdleCancellable: AnyCancellable?
@@ -1387,6 +1389,12 @@ final class CompanionManager: ObservableObject {
             }
 
         agentActivityCancellables[session.id] = session.$entries
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self, sessionID = session.id] _ in
+                self?.scheduleAgentActivityRefresh(for: sessionID)
+            }
+
+        agentLoopActivityCancellables[session.id] = session.$activityStatusLines
             .receive(on: DispatchQueue.main)
             .sink { [weak self, sessionID = session.id] _ in
                 self?.scheduleAgentActivityRefresh(for: sessionID)
@@ -6597,6 +6605,7 @@ final class CompanionManager: ObservableObject {
                 status: .starting,
                 progressStageLabel: "Starting",
                 progressStepText: acknowledgement,
+                activityStatusLines: [acknowledgement],
                 caption: acknowledgement,
                 suggestedNextActions: [],
                 createdAt: Date()
@@ -6722,6 +6731,7 @@ final class CompanionManager: ObservableObject {
             status: .done,
             progressStageLabel: "Completed",
             progressStepText: caption,
+            activityStatusLines: [caption],
             caption: caption,
             suggestedNextActions: [],
             createdAt: Date()
@@ -6893,11 +6903,14 @@ final class CompanionManager: ObservableObject {
         let activitySummary = session?.latestActivitySummary
         let stageLabel = session?.progressStage.label ?? (status == .starting ? "Starting" : "Working")
         let suggestedNextActions = session?.latestResponseCard?.suggestedNextActions ?? []
-        let trimmedActivitySummary = activitySummary?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let activityStatusLines = Self.agentDockActivityStatusLines(for: session, fallback: activitySummary)
+        let displayActivity = activityStatusLines.last ?? activitySummary
+        let trimmedActivitySummary = displayActivity?.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasActivitySummary = trimmedActivitySummary?.isEmpty == false
 
         agentDockItems[itemIndex].progressStageLabel = stageLabel
         agentDockItems[itemIndex].progressStepText = hasActivitySummary ? trimmedActivitySummary : nil
+        agentDockItems[itemIndex].activityStatusLines = activityStatusLines
         agentDockItems[itemIndex].suggestedNextActions = suggestedNextActions
 
         switch status {
@@ -6991,6 +7004,24 @@ final class CompanionManager: ObservableObject {
         scheduleWidgetSnapshotPublish()
     }
 
+    private static func agentDockActivityStatusLines(for session: CodexAgentSession?, fallback: String?) -> [String] {
+        var lines: [String] = []
+        for line in session?.activityStatusLines ?? [] {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            if lines.last != trimmed {
+                lines.append(trimmed)
+            }
+        }
+        if let fallback {
+            let trimmedFallback = fallback.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedFallback.isEmpty, lines.last != trimmedFallback {
+                lines.append(trimmedFallback)
+            }
+        }
+        return Array(lines.suffix(8))
+    }
+
     private func refreshCursorAgentTaskLabel() {
         guard let item = agentDockItems.reversed().first(where: { dockItem in
             dockItem.status == .starting || dockItem.status == .running
@@ -7009,8 +7040,11 @@ final class CompanionManager: ObservableObject {
         let title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
         let fallbackTitle = title.isEmpty ? "Agent task" : title
         let stageLabel = session?.progressStage.label ?? (item.status == .starting ? "Starting" : "Working")
+        let latestStatusLine = item.activityStatusLines.last?.trimmingCharacters(in: .whitespacesAndNewlines)
         let caption = item.caption?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let detail = caption?.isEmpty == false ? caption! : fallbackTitle
+        let detail = latestStatusLine?.isEmpty == false
+            ? latestStatusLine!
+            : (caption?.isEmpty == false ? caption! : fallbackTitle)
 
         return shortCursorAgentTaskLabel("\(stageLabel): \(detail)")
     }

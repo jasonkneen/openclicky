@@ -118,6 +118,7 @@ final class CodexAgentSession: ObservableObject, Identifiable {
     @Published private(set) var stopReason: String?
     @Published private(set) var title: String
     @Published private(set) var progressStage: CodexAgentProgressStage = .idle
+    @Published private(set) var activityStatusLines: [String] = []
     @Published var model: String = OpenClickyModelCatalog.codexActionsModel(
         withID: UserDefaults.standard.string(forKey: "clickyCodexModel") ?? OpenClickyModelCatalog.defaultCodexActionsModelID
     ).id
@@ -225,6 +226,7 @@ final class CodexAgentSession: ObservableObject, Identifiable {
 
         lastSubmittedPrompt = trimmed
         entries.append(CodexTranscriptEntry(role: .user, text: trimmed))
+        appendActivityStatusLine("Queued request: \(Self.spokenSnippet(from: trimmed, maxLength: 90))")
         Task {
             await runPrompt(promptForModel(prompt: trimmed, screenContext: screenContext))
         }
@@ -496,20 +498,24 @@ final class CodexAgentSession: ObservableObject, Identifiable {
         case "turn/started":
             status = .running
             progressStage = .starting
+            appendActivityStatusLine("Starting the agent loop")
         case "item/agentMessage/delta":
             let itemID = CodexJSON.string(params["itemId"]) ?? UUID().uuidString
             let delta = CodexJSON.string(params["delta"]) ?? ""
             progressStage = .composing
+            appendActivityStatusLine("Writing the response")
             appendAssistantDelta(itemID: itemID, delta: delta)
         case "item/started":
             if blockForbiddenCommandIfNeeded(params["item"]) {
                 return
             }
+            handleStartedItem(params["item"])
         case "item/completed":
             handleCompletedItem(params["item"])
         case "turn/plan/updated":
             if let text = CodexJSON.string(params["text"]), !text.isEmpty {
                 progressStage = .planning
+                appendActivityStatusLine("Planning: \(Self.spokenSnippet(from: text, maxLength: 100))")
                 entries.append(CodexTranscriptEntry(role: .plan, text: text))
             }
         case "command/exec/outputDelta", "item/commandExecution/outputDelta":
@@ -524,16 +530,19 @@ final class CodexAgentSession: ObservableObject, Identifiable {
                 ?? CodexJSON.string(CodexJSON.dictionary(params["item"])?["outputDelta"])
                 ?? ""
             progressStage = .executing
+            let summary = Self.liveCommandProgressSummary(command: commandText, outputDelta: outputDelta)
+            appendActivityStatusLine(summary)
             upsertEntryIfChanged(
                 id: itemID,
                 role: .command,
-                text: Self.liveCommandProgressSummary(command: commandText, outputDelta: outputDelta)
+                text: summary
             )
         case "turn/completed":
             flushPendingAssistantDeltas()
             currentAssistantEntryID = nil
             status = .ready
             progressStage = .completed
+            appendActivityStatusLine("Finished the agent loop")
             // Chime intentionally NOT played here. CompanionManager owns
             // the audio choreography and plays the chime *after* any
             // in-flight TTS finishes, so the chime can't cut the
@@ -546,6 +555,7 @@ final class CodexAgentSession: ObservableObject, Identifiable {
             status = .failed(text)
             progressStage = .failed
             entries.append(CodexTranscriptEntry(role: .system, text: text))
+            appendActivityStatusLine("Needs attention: \(Self.spokenSnippet(from: text, maxLength: 100))")
         case "account/login/completed":
             if CodexJSON.bool(params["success"]) == true {
                 entries.append(CodexTranscriptEntry(role: .system, text: "Codex ChatGPT sign-in completed. Start the Agent task again."))
@@ -654,6 +664,35 @@ final class CodexAgentSession: ObservableObject, Identifiable {
             || foldedMessage.contains("please upgrade to the latest app or cli")
     }
 
+    private func handleStartedItem(_ itemValue: Any?) {
+        guard let item = CodexJSON.dictionary(itemValue), let type = CodexJSON.string(item["type"]) else { return }
+
+        switch type {
+        case "reasoning":
+            progressStage = .planning
+            appendActivityStatusLine("Thinking through the task")
+        case "plan":
+            progressStage = .planning
+            appendActivityStatusLine("Planning next steps")
+        case "commandExecution":
+            progressStage = .executing
+            appendActivityStatusLine(Self.commandStartedSummary(from: item))
+        case "webSearch":
+            progressStage = .executing
+            appendActivityStatusLine(Self.webSearchStartedSummary(from: item))
+        case "fileChange":
+            progressStage = .executing
+            appendActivityStatusLine(Self.fileChangeStartedSummary(from: item))
+        case "agentMessage":
+            progressStage = .composing
+            appendActivityStatusLine("Writing the response")
+        case "userMessage":
+            break
+        default:
+            appendActivityStatusLine("Using \(Self.humanReadableItemType(type))")
+        }
+    }
+
     private func handleCompletedItem(_ itemValue: Any?) {
         guard let item = CodexJSON.dictionary(itemValue), let type = CodexJSON.string(item["type"]) else { return }
         let id = CodexJSON.string(item["id"]) ?? UUID().uuidString
@@ -661,6 +700,7 @@ final class CodexAgentSession: ObservableObject, Identifiable {
         switch type {
         case "agentMessage":
             flushPendingAssistantDeltas(for: id)
+            appendActivityStatusLine("Finished writing the response")
             let text = CodexJSON.string(item["text"]) ?? ""
             if !text.isEmpty {
                 let parsed = Self.extractTaskTitleMetadata(from: text)
@@ -682,17 +722,24 @@ final class CodexAgentSession: ObservableObject, Identifiable {
             currentAssistantEntryID = nil
         case "plan":
             if let text = CodexJSON.string(item["text"]), !text.isEmpty {
+                appendActivityStatusLine("Planned: \(Self.spokenSnippet(from: text, maxLength: 100))")
                 upsertEntry(id: id, role: .plan, text: text)
             }
         case "commandExecution":
             let command = CodexJSON.string(item["command"]) ?? "Command"
             let output = CodexJSON.string(item["aggregatedOutput"]) ?? ""
             let exitCode = CodexJSON.int(item["exitCode"])
+            let summary = Self.plainEnglishCommandSummary(command: command, output: output, exitCode: exitCode)
+            appendActivityStatusLine(summary)
             upsertEntry(
                 id: id,
                 role: .command,
-                text: Self.plainEnglishCommandSummary(command: command, output: output, exitCode: exitCode)
+                text: summary
             )
+        case "webSearch":
+            appendActivityStatusLine("Finished web search")
+        case "fileChange":
+            appendActivityStatusLine(Self.fileChangeCompletedSummary(from: item))
         default:
             break
         }
@@ -752,6 +799,17 @@ final class CodexAgentSession: ObservableObject, Identifiable {
             entries[index].text = text
         } else {
             entries.append(CodexTranscriptEntry(id: id, role: role, text: text))
+        }
+    }
+
+    private func appendActivityStatusLine(_ text: String) {
+        let flattened = Self.spokenSnippet(from: text, maxLength: 120)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !flattened.isEmpty else { return }
+        if activityStatusLines.last == flattened { return }
+        activityStatusLines.append(flattened)
+        if activityStatusLines.count > 12 {
+            activityStatusLines.removeFirst(activityStatusLines.count - 12)
         }
     }
 
@@ -1504,6 +1562,65 @@ final class CodexAgentSession: ObservableObject, Identifiable {
         }
 
         return "Executing command…"
+    }
+
+    private static func commandStartedSummary(from item: [String: Any]) -> String {
+        if let command = CodexJSON.string(item["command"]),
+           !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Running command: \(spokenSnippet(from: command, maxLength: 90))"
+        }
+
+        if let commandActions = CodexJSON.array(item["commandActions"]) {
+            for actionValue in commandActions {
+                guard let action = CodexJSON.dictionary(actionValue),
+                      let command = CodexJSON.string(action["command"]),
+                      !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    continue
+                }
+                return "Running command: \(spokenSnippet(from: command, maxLength: 90))"
+            }
+        }
+
+        return "Running a command"
+    }
+
+    private static func webSearchStartedSummary(from item: [String: Any]) -> String {
+        let query = CodexJSON.string(item["query"])
+            ?? CodexJSON.string(item["searchQuery"])
+            ?? CodexJSON.string(item["text"])
+        if let query, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Searching web: \(spokenSnippet(from: query, maxLength: 90))"
+        }
+        return "Searching the web"
+    }
+
+    private static func fileChangeStartedSummary(from item: [String: Any]) -> String {
+        let path = CodexJSON.string(item["path"])
+            ?? CodexJSON.string(item["filePath"])
+            ?? CodexJSON.string(item["filename"])
+        if let path, !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Editing \(spokenSnippet(from: path, maxLength: 90))"
+        }
+        return "Editing files"
+    }
+
+    private static func fileChangeCompletedSummary(from item: [String: Any]) -> String {
+        let path = CodexJSON.string(item["path"])
+            ?? CodexJSON.string(item["filePath"])
+            ?? CodexJSON.string(item["filename"])
+        if let path, !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Updated \(spokenSnippet(from: path, maxLength: 90))"
+        }
+        return "Updated files"
+    }
+
+    private static func humanReadableItemType(_ type: String) -> String {
+        let spaced = type
+            .replacingOccurrences(of: #"([a-z0-9])([A-Z])"#, with: "$1 $2", options: .regularExpression)
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return spaced.isEmpty ? "tool" : spaced.lowercased()
     }
 
     private static func spokenSnippet(from text: String, maxLength: Int) -> String {
