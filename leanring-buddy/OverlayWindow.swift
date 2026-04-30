@@ -171,6 +171,13 @@ struct AgentTaskBubbleSizePreferenceKey: PreferenceKey {
     }
 }
 
+struct ExternalProxyBubbleSizePreferenceKey: PreferenceKey {
+    static let defaultValue: CGSize = .zero
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+        value = nextValue()
+    }
+}
+
 /// The buddy's behavioral mode. Controls whether it follows the cursor,
 /// is flying toward a detected UI element, or is pointing at an element.
 enum BuddyNavigationMode {
@@ -224,6 +231,7 @@ struct BlueCursorView: View {
     @State private var showWelcome: Bool = true
     @State private var bubbleSize: CGSize = .zero
     @State private var agentTaskBubbleSize: CGSize = .zero
+    @State private var externalProxyBubbleSize: CGSize = .zero
     @State private var bubbleOpacity: Double = 1.0
     @State private var cursorOpacity: Double = 0.0
 
@@ -343,6 +351,20 @@ struct BlueCursorView: View {
                     .onPreferenceChange(NavigationBubbleSizePreferenceKey.self) { newSize in
                         navigationBubbleSize = newSize
                     }
+            }
+
+            if let externalPrimaryCaption = cursorState.externalPrimaryCaptionText?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !externalPrimaryCaption.isEmpty,
+               buddyIsVisibleOnThisScreen {
+                externalCaption(
+                    externalPrimaryCaption,
+                    at: cursorPosition,
+                    color: externalPrimaryCaptionColor
+                )
+            }
+
+            ForEach(externalSecondaryCursorsOnThisScreen) { cursor in
+                externalSecondaryCursor(cursor)
             }
 
             if shouldShowAgentTaskBubble,
@@ -512,6 +534,76 @@ struct BlueCursorView: View {
             && !showWelcome
             && cursorState.voiceState != .listening
             && cursorState.voiceState != .processing
+    }
+
+    private var externalPrimaryCaptionColor: Color {
+        colorFromHex(cursorState.externalPrimaryCaptionAccentHex) ?? overlayCursorColor
+    }
+
+    private var externalSecondaryCursorsOnThisScreen: [OpenClickyExternalProxyCursor] {
+        cursorState.externalSecondaryCursors.filter { cursor in
+            screenFrame.contains(cursor.screenLocation)
+        }
+    }
+
+    @ViewBuilder
+    private func externalSecondaryCursor(_ cursor: OpenClickyExternalProxyCursor) -> some View {
+        let local = convertScreenPointToSwiftUICoordinates(cursor.screenLocation)
+        let position = CGPoint(x: local.x + 35, y: local.y + 25)
+        let color = colorFromHex(cursor.accentHex) ?? overlayCursorColor
+        ZStack {
+            Triangle()
+                .fill(color)
+                .frame(width: 17, height: 17)
+                .rotationEffect(.degrees(-35))
+                .shadow(color: color.opacity(0.90), radius: 10, x: 0, y: 0)
+                .position(position)
+                .transition(.opacity.combined(with: .scale(scale: 0.92)))
+
+            if let caption = cursor.caption?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !caption.isEmpty {
+                externalCaption(caption, at: position, color: color)
+            }
+        }
+        .animation(.spring(response: 0.16, dampingFraction: 0.72), value: cursor.screenLocation)
+    }
+
+    @ViewBuilder
+    private func externalCaption(_ caption: String, at position: CGPoint, color: Color) -> some View {
+        Text(caption)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundColor(.white)
+            .lineLimit(3)
+            .multilineTextAlignment(.leading)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(color.opacity(0.95))
+                    .shadow(color: color.opacity(0.48), radius: 8, x: 0, y: 0)
+            )
+            .frame(maxWidth: 280, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .overlay(
+                GeometryReader { geo in
+                    Color.clear
+                        .preference(key: ExternalProxyBubbleSizePreferenceKey.self, value: geo.size)
+                }
+            )
+            .position(
+                x: position.x + 12 + (externalProxyBubbleSize.width / 2),
+                y: position.y + 20 + (externalProxyBubbleSize.height / 2)
+            )
+            .onPreferenceChange(ExternalProxyBubbleSizePreferenceKey.self) { newSize in
+                externalProxyBubbleSize = newSize
+            }
+            .transition(.opacity.combined(with: .move(edge: .leading)))
+            .animation(.easeOut(duration: 0.12), value: caption)
+    }
+
+    private func colorFromHex(_ rawHex: String?) -> Color? {
+        guard let hex = rawHex?.trimmingCharacters(in: .whitespacesAndNewlines), !hex.isEmpty else { return nil }
+        return Color(hex: hex)
     }
 
     // MARK: - Cursor Tracking

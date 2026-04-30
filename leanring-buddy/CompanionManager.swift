@@ -26,6 +26,13 @@ enum OpenClickyCompanionRuntimeMode {
     case embeddedWindow
 }
 
+struct OpenClickyExternalProxyCursor: Identifiable {
+    let id: UUID
+    var screenLocation: CGPoint
+    var caption: String?
+    var accentHex: String?
+}
+
 @MainActor
 final class CursorOverlayState: ObservableObject {
     @Published var voiceState: CompanionVoiceState = .idle
@@ -34,6 +41,9 @@ final class CursorOverlayState: ObservableObject {
     @Published var detectedElementDisplayFrame: CGRect?
     @Published var detectedElementBubbleText: String?
     @Published var agentTaskBubbleText: String?
+    @Published var externalPrimaryCaptionText: String?
+    @Published var externalPrimaryCaptionAccentHex: String?
+    @Published var externalSecondaryCursors: [OpenClickyExternalProxyCursor] = []
 }
 
 enum ClickyAgentDockStatus: Equatable {
@@ -509,6 +519,10 @@ final class CompanionManager: ObservableObject {
     private var controlDoubleTapCancellable: AnyCancellable?
     private var voiceStateCancellable: AnyCancellable?
     private var audioPowerCancellable: AnyCancellable?
+    private var externalControlBridgeServer: OpenClickyExternalControlBridgeServer?
+    private var externalProxyClearTask: Task<Void, Never>?
+    private var externalPrimaryCursorMoveTask: Task<Void, Never>?
+    private var externalSecondaryCursorClearTasks: [UUID: Task<Void, Never>] = [:]
     private var agentStatusCancellables: [UUID: AnyCancellable] = [:]
     private var agentActivityCancellables: [UUID: AnyCancellable] = [:]
     private var agentLoopActivityCancellables: [UUID: AnyCancellable] = [:]
@@ -638,10 +652,12 @@ final class CompanionManager: ObservableObject {
         if shouldAutoFollowCursor {
             if agentDockFollowTimer == nil {
                 let timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
-                    guard let self else { return }
-                    guard !self.agentDockItems.isEmpty else { return }
-                    guard !self.agentDockWindowManager.hasUserPinnedFrame else { return }
-                    self.showAgentDockWindowNearCurrentScreen()
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        guard !self.agentDockItems.isEmpty else { return }
+                        guard !self.agentDockWindowManager.hasUserPinnedFrame else { return }
+                        self.showAgentDockWindowNearCurrentScreen()
+                    }
                 }
                 RunLoop.main.add(timer, forMode: .common)
                 agentDockFollowTimer = timer
@@ -1003,6 +1019,7 @@ final class CompanionManager: ObservableObject {
         bindAudioPowerLevel()
         bindShortcutTransitions()
         bindAgentSessionObservation()
+        startExternalControlBridgeIfNeeded()
         if runtimeMode == .menuBar && isTutorModeEnabled {
             startTutorIdleObservation()
         }
@@ -1141,6 +1158,211 @@ final class CompanionManager: ObservableObject {
         detectedElementBubbleText = nil
     }
 
+    private func startExternalControlBridgeIfNeeded() {
+        guard externalControlBridgeServer == nil else { return }
+        let server = OpenClickyExternalControlBridgeServer { [weak self] command in
+            guard let self else {
+                return .error(503, "OpenClicky is not ready")
+            }
+            return await self.handleExternalControlCommand(command)
+        }
+        externalControlBridgeServer = server
+        server.start()
+    }
+
+    private func handleExternalControlCommand(_ command: OpenClickyExternalControlCommand) async -> OpenClickyExternalControlResponse {
+        switch command {
+        case .showCursor(let point, let caption, let duration, let accentHex, let mode, let travelDuration):
+            switch mode {
+            case .primary:
+                showExternalPrimaryCursor(at: point, caption: caption, duration: duration, accentHex: accentHex, travelDuration: travelDuration)
+                return .ok(["displayed": "primary_cursor", "durationMs": Int(duration * 1000), "travelMs": Int(travelDuration * 1000)])
+            case .secondary:
+                showExternalSecondaryCursor(at: point, caption: caption, duration: duration, accentHex: accentHex)
+                return .ok(["displayed": "secondary_cursor", "durationMs": Int(duration * 1000)])
+            }
+        case .showCursors(let specs):
+            for spec in specs {
+                showExternalSecondaryCursor(at: spec.point, caption: spec.caption, duration: spec.duration, accentHex: spec.accentHex)
+            }
+            return .ok(["displayed": "secondary_cursors", "count": specs.count])
+        case .showCaption(let text, let point, let duration, let accentHex):
+            let resolvedPoint = point ?? NSEvent.mouseLocation
+            showExternalPrimaryCursor(at: resolvedPoint, caption: text, duration: duration, accentHex: accentHex, travelDuration: 0.35)
+            return .ok(["displayed": "primary_caption", "durationMs": Int(duration * 1000)])
+        case .captureScreenshot(let focused):
+            return await captureExternalControlScreenshots(focused: focused)
+        case .clear:
+            clearExternalProxyOverlay()
+            return .ok(["cleared": true])
+        case .speak(let text, let interrupt):
+            return speakExternalProxyText(text, interrupt: interrupt)
+        }
+    }
+
+    private func showExternalPrimaryCursor(at point: CGPoint, caption: String?, duration: TimeInterval, accentHex: String?, travelDuration: TimeInterval) {
+        let targetPoint = Self.clampedExternalCursorPoint(point)
+        // Use OpenClicky's existing smooth pointing choreography — the same
+        // path used when voice asks "show me the Apple menu". This makes the
+        // little OpenClicky triangle detach, zip to the target, caption it, and
+        // fly back to the user's real pointer. Do not warp the system pointer
+        // here and do not draw a duplicate primary cursor icon.
+        detectedElementScreenLocation = targetPoint
+        detectedElementDisplayFrame = NSScreen.screens.first { $0.frame.contains(targetPoint) }?.frame
+            ?? NSScreen.main?.frame
+            ?? CGRect(origin: targetPoint, size: .zero)
+        detectedElementBubbleText = caption?.trimmingCharacters(in: .whitespacesAndNewlines)
+        cursorOverlayState.externalPrimaryCaptionText = nil
+        cursorOverlayState.externalPrimaryCaptionAccentHex = nil
+        showCursorOverlayIfAvailable()
+    }
+
+    private func showExternalSecondaryCursor(at point: CGPoint, caption: String?, duration: TimeInterval, accentHex: String?) {
+        let targetPoint = Self.clampedExternalCursorPoint(point)
+        let id = UUID()
+        let cursor = OpenClickyExternalProxyCursor(
+            id: id,
+            screenLocation: targetPoint,
+            caption: caption?.trimmingCharacters(in: .whitespacesAndNewlines),
+            accentHex: accentHex
+        )
+        cursorOverlayState.externalSecondaryCursors.append(cursor)
+        showCursorOverlayIfAvailable()
+
+        externalSecondaryCursorClearTasks[id]?.cancel()
+        externalSecondaryCursorClearTasks[id] = Task { [weak self] in
+            let nanoseconds = UInt64(max(0.2, duration) * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: nanoseconds)
+            await MainActor.run {
+                self?.removeExternalSecondaryCursor(id)
+            }
+        }
+    }
+
+    private static func clampedExternalCursorPoint(_ point: CGPoint) -> CGPoint {
+        guard !NSScreen.screens.isEmpty else { return point }
+        let unionFrame = NSScreen.screens.reduce(CGRect.null) { partial, screen in
+            partial.union(screen.frame)
+        }
+        guard !unionFrame.isNull else { return point }
+        return CGPoint(
+            x: min(max(point.x, unionFrame.minX), unionFrame.maxX - 1),
+            y: min(max(point.y, unionFrame.minY), unionFrame.maxY - 1)
+        )
+    }
+
+    private static func quartzCursorPoint(fromAppKitScreenPoint point: CGPoint) -> CGPoint {
+        let targetScreen = NSScreen.screens.first { $0.frame.contains(point) }
+            ?? NSScreen.screens.min { lhs, rhs in
+                distanceSquared(from: point, to: lhs.frame) < distanceSquared(from: point, to: rhs.frame)
+            }
+        guard let frame = targetScreen?.frame else { return point }
+
+        // Public bridge coordinates use AppKit/NSEvent space (global desktop,
+        // origin at bottom-left). CGWarpMouseCursorPosition expects Quartz
+        // display coordinates for the target display (Y axis flipped). Convert
+        // here so /cursor x/y matches what agents read from screenshots/AppKit.
+        let localY = point.y - frame.minY
+        let quartzY = frame.minY + (frame.height - localY)
+        return CGPoint(x: point.x, y: quartzY)
+    }
+
+    private static func distanceSquared(from point: CGPoint, to rect: CGRect) -> CGFloat {
+        let clampedX = min(max(point.x, rect.minX), rect.maxX)
+        let clampedY = min(max(point.y, rect.minY), rect.maxY)
+        let dx = point.x - clampedX
+        let dy = point.y - clampedY
+        return dx * dx + dy * dy
+    }
+
+    private func clearExternalPrimaryCaption() {
+        externalProxyClearTask?.cancel()
+        externalProxyClearTask = nil
+        externalPrimaryCursorMoveTask?.cancel()
+        externalPrimaryCursorMoveTask = nil
+        cursorOverlayState.externalPrimaryCaptionText = nil
+        cursorOverlayState.externalPrimaryCaptionAccentHex = nil
+    }
+
+    private func removeExternalSecondaryCursor(_ id: UUID) {
+        externalSecondaryCursorClearTasks[id]?.cancel()
+        externalSecondaryCursorClearTasks[id] = nil
+        cursorOverlayState.externalSecondaryCursors.removeAll { $0.id == id }
+    }
+
+    private func clearExternalProxyOverlay() {
+        clearExternalPrimaryCaption()
+        externalSecondaryCursorClearTasks.values.forEach { $0.cancel() }
+        externalSecondaryCursorClearTasks.removeAll()
+        cursorOverlayState.externalSecondaryCursors.removeAll()
+    }
+
+    private func captureExternalControlScreenshots(focused: Bool) async -> OpenClickyExternalControlResponse {
+        do {
+            let captures = try await (focused
+                ? CompanionScreenCaptureUtility.captureFocusedWindowAsJPEG()
+                : CompanionScreenCaptureUtility.captureAllScreensAsJPEG())
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("OpenClickyExternalControlScreenshots", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+            let timestamp = Int(Date().timeIntervalSince1970 * 1000)
+            let screens: [[String: Any]] = try captures.enumerated().map { index, capture in
+                let fileURL = directory.appendingPathComponent("screen-\(timestamp)-\(index + 1).jpg")
+                try capture.imageData.write(to: fileURL, options: .atomic)
+                return [
+                    "label": capture.label,
+                    "path": fileURL.path,
+                    "isCursorScreen": capture.isCursorScreen,
+                    "displayFrame": [
+                        "x": capture.displayFrame.origin.x,
+                        "y": capture.displayFrame.origin.y,
+                        "width": capture.displayFrame.width,
+                        "height": capture.displayFrame.height
+                    ],
+                    "displayWidthInPoints": capture.displayWidthInPoints,
+                    "displayHeightInPoints": capture.displayHeightInPoints,
+                    "screenshotWidthInPixels": capture.screenshotWidthInPixels,
+                    "screenshotHeightInPixels": capture.screenshotHeightInPixels
+                ]
+            }
+            return .ok(["screens": screens, "count": screens.count, "focused": focused])
+        } catch {
+            return .error(500, error.localizedDescription)
+        }
+    }
+
+    private func speakExternalProxyText(_ text: String, interrupt: Bool) -> OpenClickyExternalControlResponse {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .error(400, "Missing text") }
+        if voiceTTSClient.isPlaying {
+            guard interrupt else {
+                return .error(409, "OpenClicky voice is already playing; retry or pass interrupt=true")
+            }
+            voiceTTSClient.stopPlayback()
+        }
+
+        Task { @MainActor [weak self] in
+            OpenClickyMessageLogStore.shared.append(
+                lane: "voice",
+                direction: "outgoing",
+                event: "external_control.speak.started",
+                fields: ["textLength": trimmed.count]
+            )
+            do {
+                try await self?.voiceTTSClient.speakText(trimmed)
+            } catch {
+                OpenClickyMessageLogStore.shared.append(
+                    lane: "voice",
+                    direction: "error",
+                    event: "external_control.speak.failed",
+                    fields: ["error": error.localizedDescription]
+                )
+            }
+        }
+        return .accepted(["speaking": true, "textLength": trimmed.count])
+    }
+
     func stop() {
         globalPushToTalkShortcutMonitor.stop()
         buddyDictationManager.cancelCurrentDictation()
@@ -1151,6 +1373,14 @@ final class CompanionManager: ObservableObject {
         currentResponseTask = nil
         claudeAgentSDKAPI?.stop()
         codexVoiceSession.stop()
+        externalControlBridgeServer?.stop()
+        externalControlBridgeServer = nil
+        externalProxyClearTask?.cancel()
+        externalProxyClearTask = nil
+        externalPrimaryCursorMoveTask?.cancel()
+        externalPrimaryCursorMoveTask = nil
+        externalSecondaryCursorClearTasks.values.forEach { $0.cancel() }
+        externalSecondaryCursorClearTasks.removeAll()
         pendingAgentActivityRefreshTasks.values.forEach { $0.cancel() }
         pendingAgentActivityRefreshTasks.removeAll()
         pendingAgentDockItemRemovalTasks.values.forEach { $0.cancel() }
