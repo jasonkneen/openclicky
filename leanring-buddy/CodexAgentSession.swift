@@ -345,9 +345,12 @@ final class CodexAgentSession: ObservableObject, Identifiable {
         - When working on the OpenClicky app repo, do not run terminal `xcodebuild`. Use Xcode for app builds and permission testing, and use `swiftc -parse <relevant Swift source files>` for lightweight Swift syntax checks.
         - Proceed autonomously. Choose sensible defaults and keep working without asking the user unless critical information is truly missing or the action would be destructive, credential-related, or permission-sensitive.
         - Voice is the primary interaction path. Keep user-facing progress and final answers concise enough to be spoken aloud, and put detailed logs or code context in the transcript when needed.
+        - Final user-facing answers should sound like a capable coworker over the user's shoulder: one or two plain sentences, no bullets, no markdown, no headings, and no code blocks unless the user explicitly asks for them.
         - When you find a local document, image, or other user file, include its exact local path in your final answer so OpenClicky can show it.
         - If blocked, report the exact blocker and the smallest user action needed. If not blocked, finish the task and summarize what changed or what you found.
-        - At the end of your final response, include one metadata line exactly like `TASK_TITLE: Short task title` using 2-5 words. OpenClicky strips this line and uses it to rename the agent task.
+        - After the final user-facing answer, include a `<NEXT_ACTIONS>` block with one or two overlay button suggestions. Each suggestion must be a `- ` bullet, under about 40 characters, self-contained, and executable without more user input. Prefer concrete follow-ups like "Review the Swift diff" or "Test the cursor label". Omit weak suggestions instead of padding.
+        - The `<NEXT_ACTIONS>` block is machine-readable metadata. Do not mention it in prose, and do not put anything after the closing `</NEXT_ACTIONS>` tag except the `TASK_TITLE:` metadata line below.
+        - At the end of your final response, include one metadata line exactly like `TASK_TITLE: Short task title` using 2-5 words. Make it a compact noun-based action label with filler removed, such as `Voice Response Naturalization` or `Task Subject Cleanup`. OpenClicky strips this line and uses it to rename the agent task.
         """
 
         guard let context = screenContext, !context.isEmpty else {
@@ -1336,21 +1339,89 @@ final class CodexAgentSession: ObservableObject, Identifiable {
         .union(CharacterSet(charactersIn: "`'\".,;:)]}>"))
 
     private static func shortTitle(from prompt: String) -> String {
-        let flattenedPrompt = prompt
+        nounBasedTaskTitle(from: prompt, maximumCharacters: 44, maximumWords: 5)
+    }
+
+    private static func nounBasedTaskTitle(
+        from prompt: String,
+        maximumCharacters: Int,
+        maximumWords: Int
+    ) -> String {
+        var title = prompt
             .components(separatedBy: .whitespacesAndNewlines)
             .filter { !$0.isEmpty }
             .joined(separator: " ")
+            .trimmingCharacters(in: CharacterSet(charactersIn: " `\"'.,:;!?-–—[](){}<>"))
 
-        guard flattenedPrompt.count > 28 else {
-            return flattenedPrompt
+        let fillerPatterns = [
+            #"(?i)^hey\s+(?:clicky\s+)?agent[,\s]+"#,
+            #"(?i)^clicky\s+agent[,\s]+"#,
+            #"(?i)^(?:can|could|would)\s+you\s+"#,
+            #"(?i)^(?:please\s+)?(?:help\s+me\s+)?(?:do|make|handle|sort|take\s+care\s+of)\s+"#,
+            #"(?i)^the\s+(?:updates?|changes?)\s+(?:we(?:'|’)ve|we\s+have|we\s+were)\s+(?:just\s+)?(?:been\s+)?talking\s+about[,\s]+"#,
+            #"(?i)^(?:we(?:'|’)ve|we\s+have|we\s+were)\s+(?:just\s+)?(?:been\s+)?talking\s+about[,\s]+"#,
+            #"(?i)^(?:to|for|about)\s+"#
+        ]
+        for pattern in fillerPatterns {
+            title = title.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
         }
 
-        let endIndex = flattenedPrompt.index(flattenedPrompt.startIndex, offsetBy: 28)
-        let prefix = String(flattenedPrompt[..<endIndex])
-        if let lastSpace = prefix.lastIndex(of: " ") {
-            return String(prefix[..<lastSpace])
+        title = title.replacingOccurrences(
+            of: #"(?i)\b(?:please|just|maybe|basically|actually|kind\s+of|sort\s+of|you\s+know|everything\s+else)\b"#,
+            with: " ",
+            options: .regularExpression
+        )
+        title = title.replacingOccurrences(
+            of: #"(?i)\b(?:can\s+you|could\s+you|would\s+you|we(?:'|’)ve|we\s+have|we\s+were|talking\s+about)\b"#,
+            with: " ",
+            options: .regularExpression
+        )
+        title = title.replacingOccurrences(
+            of: #"(?i)\b(?:so\s+that|and\s+then|which\s+is\s+to|that\s+you)\b"#,
+            with: " ",
+            options: .regularExpression
+        )
+        title = title.replacingOccurrences(
+            of: #"(?i)\b(?:shorten|remove|make|making|sound|sounding|turn|change|update|fix|clean\s+up)\b"#,
+            with: " ",
+            options: .regularExpression
+        )
+        title = title.replacingOccurrences(
+            of: #"(?i)\b(?:the|a|an|this|that|it|them|you|your|then|also|with|from|into|and|or|but|for|of|to|in|on|as|is|are|be)\b"#,
+            with: " ",
+            options: .regularExpression
+        )
+        title = title.replacingOccurrences(
+            of: #"(?i)\b(?:words?|thing|stuff|phrases?|responses?)\b"#,
+            with: " ",
+            options: .regularExpression
+        )
+
+        let words = title
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { word in
+                guard !word.isEmpty else { return false }
+                return word.count > 1 || word.rangeOfCharacter(from: .decimalDigits) != nil
+            }
+            .prefix(maximumWords)
+
+        var cleaned = words
+            .map { word in word.prefix(1).uppercased() + word.dropFirst().lowercased() }
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if cleaned.isEmpty {
+            cleaned = "Agent Task"
         }
-        return prefix
+
+        guard cleaned.count > maximumCharacters else { return cleaned }
+        let endIndex = cleaned.index(cleaned.startIndex, offsetBy: maximumCharacters)
+        let prefix = String(cleaned[..<endIndex])
+        if let lastSpace = prefix.lastIndex(of: " "), lastSpace > prefix.startIndex {
+            return String(prefix[..<lastSpace]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return prefix.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func extractTaskTitleMetadata(from text: String) -> (visibleText: String, taskTitle: String?) {
@@ -1391,20 +1462,8 @@ final class CodexAgentSession: ObservableObject, Identifiable {
     }
 
     private static func sanitizedReturnedTaskTitle(_ value: String) -> String? {
-        let cleaned = value
-            .trimmingCharacters(in: CharacterSet(charactersIn: " `\"'.,:;!?-–—[](){}<>"))
-            .components(separatedBy: .whitespacesAndNewlines)
-            .filter { !$0.isEmpty }
-            .prefix(6)
-            .joined(separator: " ")
-        guard !cleaned.isEmpty else { return nil }
-        guard cleaned.count > 44 else { return cleaned }
-        let endIndex = cleaned.index(cleaned.startIndex, offsetBy: 44)
-        let prefix = String(cleaned[..<endIndex])
-        if let lastSpace = prefix.lastIndex(of: " ") {
-            return String(prefix[..<lastSpace])
-        }
-        return prefix
+        let cleaned = nounBasedTaskTitle(from: value, maximumCharacters: 44, maximumWords: 5)
+        return cleaned.isEmpty ? nil : cleaned
     }
 
     private static func latestActivitySummary(from entries: [CodexTranscriptEntry]) -> String? {

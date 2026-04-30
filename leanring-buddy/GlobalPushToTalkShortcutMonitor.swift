@@ -16,6 +16,8 @@ final class GlobalPushToTalkShortcutMonitor: ObservableObject {
     let shortcutTransitionPublisher = PassthroughSubject<BuddyPushToTalkShortcut.ShortcutTransition, Never>()
     let controlDoubleTapPublisher = PassthroughSubject<Void, Never>()
 
+    @Published private(set) var isActivationShortcutEnabled = true
+
     private var globalEventTap: CFMachPort?
     private var globalEventTapRunLoopSource: CFRunLoopSource?
     private var isControlCurrentlyPressed = false
@@ -107,6 +109,16 @@ final class GlobalPushToTalkShortcutMonitor: ObservableObject {
         }
     }
 
+    func setActivationShortcutEnabled(_ enabled: Bool) {
+        guard isActivationShortcutEnabled != enabled else { return }
+
+        isActivationShortcutEnabled = enabled
+        if !enabled && isShortcutCurrentlyPressed {
+            isShortcutCurrentlyPressed = false
+            shortcutTransitionPublisher.send(.released)
+        }
+    }
+
     private func handleGlobalEventTap(
         eventType: CGEventType,
         event: CGEvent
@@ -115,6 +127,11 @@ final class GlobalPushToTalkShortcutMonitor: ObservableObject {
             if let globalEventTap {
                 CGEvent.tapEnable(tap: globalEventTap, enable: true)
             }
+            return Unmanaged.passUnretained(event)
+        }
+
+        guard isActivationShortcutEnabled else {
+            handleStandaloneControlTapIfNeeded(eventType: eventType, event: event)
             return Unmanaged.passUnretained(event)
         }
 

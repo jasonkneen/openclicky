@@ -933,6 +933,8 @@ final class CompanionManager: ObservableObject {
         ? true
         : UserDefaults.standard.bool(forKey: "isClickyCursorEnabled")
 
+    @Published var isActivationShortcutEnabled: Bool = true
+
     func setClickyCursorEnabled(_ enabled: Bool) {
         isClickyCursorEnabled = enabled
         UserDefaults.standard.set(enabled, forKey: "isClickyCursorEnabled")
@@ -945,6 +947,11 @@ final class CompanionManager: ObservableObject {
             overlayWindowManager.hideOverlay()
             isOverlayVisible = false
         }
+    }
+
+    func setActivationShortcutEnabled(_ enabled: Bool) {
+        isActivationShortcutEnabled = enabled
+        globalPushToTalkShortcutMonitor.setActivationShortcutEnabled(enabled)
     }
 
     /// Whether the user has completed onboarding at least once. Persisted
@@ -6684,21 +6691,78 @@ final class CompanionManager: ObservableObject {
     }
 
     private static func shortAgentInstructionSummary(_ instruction: String) -> String {
-        let flattenedInstruction = instruction
+        var title = instruction
             .components(separatedBy: .whitespacesAndNewlines)
             .filter { !$0.isEmpty }
             .joined(separator: " ")
+            .trimmingCharacters(in: CharacterSet(charactersIn: " `\"'.,:;!?-–—[](){}<>"))
 
-        guard flattenedInstruction.count > 44 else {
-            return flattenedInstruction
+        let fillerPatterns = [
+            #"(?i)^hey\s+(?:clicky\s+)?agent[,\s]+"#,
+            #"(?i)^clicky\s+agent[,\s]+"#,
+            #"(?i)^(?:can|could|would)\s+you\s+"#,
+            #"(?i)^(?:please\s+)?(?:help\s+me\s+)?(?:do|make|handle|sort|take\s+care\s+of)\s+"#,
+            #"(?i)^the\s+(?:updates?|changes?)\s+(?:we(?:'|’)ve|we\s+have|we\s+were)\s+(?:just\s+)?(?:been\s+)?talking\s+about[,\s]+"#,
+            #"(?i)^(?:we(?:'|’)ve|we\s+have|we\s+were)\s+(?:just\s+)?(?:been\s+)?talking\s+about[,\s]+"#,
+            #"(?i)^(?:to|for|about)\s+"#
+        ]
+        for pattern in fillerPatterns {
+            title = title.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
         }
 
-        let endIndex = flattenedInstruction.index(flattenedInstruction.startIndex, offsetBy: 44)
-        let prefix = String(flattenedInstruction[..<endIndex])
-        if let lastSpace = prefix.lastIndex(of: " ") {
-            return String(prefix[..<lastSpace])
+        title = title.replacingOccurrences(
+            of: #"(?i)\b(?:please|just|maybe|basically|actually|kind\s+of|sort\s+of|you\s+know|everything\s+else)\b"#,
+            with: " ",
+            options: .regularExpression
+        )
+        title = title.replacingOccurrences(
+            of: #"(?i)\b(?:can\s+you|could\s+you|would\s+you|we(?:'|’)ve|we\s+have|we\s+were|talking\s+about)\b"#,
+            with: " ",
+            options: .regularExpression
+        )
+        title = title.replacingOccurrences(
+            of: #"(?i)\b(?:so\s+that|and\s+then|which\s+is\s+to|that\s+you)\b"#,
+            with: " ",
+            options: .regularExpression
+        )
+        title = title.replacingOccurrences(
+            of: #"(?i)\b(?:shorten|remove|make|making|sound|sounding|turn|change|update|fix|clean\s+up)\b"#,
+            with: " ",
+            options: .regularExpression
+        )
+        title = title.replacingOccurrences(
+            of: #"(?i)\b(?:the|a|an|this|that|it|them|you|your|then|also|with|from|into|and|or|but|for|of|to|in|on|as|is|are|be)\b"#,
+            with: " ",
+            options: .regularExpression
+        )
+        title = title.replacingOccurrences(
+            of: #"(?i)\b(?:words?|thing|stuff|phrases?|responses?)\b"#,
+            with: " ",
+            options: .regularExpression
+        )
+
+        let words = title
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { word in
+                guard !word.isEmpty else { return false }
+                return word.count > 1 || word.rangeOfCharacter(from: .decimalDigits) != nil
+            }
+            .prefix(5)
+
+        let cleaned = words
+            .map { word in word.prefix(1).uppercased() + word.dropFirst().lowercased() }
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !cleaned.isEmpty else { return "Agent Task" }
+        guard cleaned.count > 44 else { return cleaned }
+        let endIndex = cleaned.index(cleaned.startIndex, offsetBy: 44)
+        let prefix = String(cleaned[..<endIndex])
+        if let lastSpace = prefix.lastIndex(of: " "), lastSpace > prefix.startIndex {
+            return String(prefix[..<lastSpace]).trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        return prefix
+        return prefix.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Build the spoken/displayed acknowledgement for a freshly invoked
@@ -7722,9 +7786,9 @@ final class CompanionManager: ObservableObject {
     when the user clearly mentions "agent" / "start an agent" / "spin up an agent" / "ask an agent", the app spawns the agent before you see the request — your job in that case is just to confirm briefly: "on it, starting an agent for that."
 
     response style:
-    - default to one or two sentences. be direct and dense. if the user asks you to explain more or go deeper, give a thorough explanation with no length cap — but still no file edits, no commands, just words.
+    - default to one or two sentences. be direct and dense. sound like a capable coworker over the user's shoulder, not a formal report. if the user asks you to explain more or go deeper, give a thorough explanation with no length cap — but still no file edits, no commands, just words.
     - all lowercase, casual, warm. no emojis.
-    - write for the ear, not the eye. short sentences. no lists, bullets, markdown, or code blocks.
+    - write for the ear, not the eye. short sentences. no lists, bullets, markdown, headings, tables, or code blocks.
     - don't use abbreviations or symbols that sound weird read aloud. write "for example" not "e.g.", spell out small numbers.
     - never say "simply" or "just".
     - don't read out code verbatim. describe what code does conversationally.

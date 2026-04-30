@@ -934,6 +934,9 @@ struct CompanionPanelView: View {
             } else {
                 VStack(alignment: .leading, spacing: 6) {
                     cursorColorSection
+                    #if DEBUG
+                    activationShortcutDebugButton
+                    #endif
                     compactFooterSection
                 }
                 .padding(.horizontal, 14)
@@ -1009,6 +1012,44 @@ struct CompanionPanelView: View {
         .pointerCursor()
         .help(accentTheme.title)
     }
+
+    #if DEBUG
+    private var activationShortcutDebugButton: some View {
+        Button(action: {
+            companionManager.setActivationShortcutEnabled(!companionManager.isActivationShortcutEnabled)
+        }) {
+            HStack(spacing: 8) {
+                Image(systemName: companionManager.isActivationShortcutEnabled ? "keyboard.badge.eye" : "keyboard.badge.ellipsis")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(companionManager.isActivationShortcutEnabled ? DS.Colors.textOnAccent : DS.Colors.textTertiary)
+                    .frame(width: 18, height: 18)
+                    .background(
+                        Circle()
+                            .fill(companionManager.isActivationShortcutEnabled ? DS.Colors.accent : Color.white.opacity(0.08))
+                    )
+
+                Text(companionManager.isActivationShortcutEnabled ? "Activation key on" : "Activation key off")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(DS.Colors.textSecondary)
+
+                Spacer()
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.white.opacity(0.055))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(DS.Colors.borderSubtle, lineWidth: 0.6)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .pointerCursor()
+        .help(companionManager.isActivationShortcutEnabled ? "Disable the local debug activation key" : "Enable the local debug activation key")
+    }
+    #endif
 
     private var compactFooterSection: some View {
         VStack(spacing: 9) {
