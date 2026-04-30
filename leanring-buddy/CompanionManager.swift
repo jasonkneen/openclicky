@@ -1993,15 +1993,12 @@ final class CompanionManager: ObservableObject {
 
         let partialAge = Date().timeIntervalSince(partialAt)
         guard partialAge <= Self.deferredLiveAgentRoutePartialTTL,
-              Self.shouldRecoverDeferredLiveAgentRoute(
+              let instruction = Self.deferredLiveAgentRouteInstruction(
                 partialTranscript: partialTranscript,
                 finalTranscript: trimmedTranscript
               ) else {
             return false
         }
-
-        let instruction = Self.normalizedAgentTaskInstruction(from: trimmedTranscript)
-        guard !instruction.isEmpty else { return false }
 
         OpenClickyMessageLogStore.shared.append(
             lane: "computer-use",
@@ -3637,11 +3634,14 @@ final class CompanionManager: ObservableObject {
 
     /// Detects whether Haiku's response offered to spin up an agent.
     /// Triggers on phrases like "want me to spin up an agent", "should I
-    /// start an agent", "i'd need to spin up an agent". Used to arm the
-    /// pending-offer slot so the user's next "yes" / "okay then" can
-    /// actually launch the agent.
+    /// start an agent", "i'd need to spin up an agent", or "I can hand that
+    /// to an agent". Used to arm the pending-offer slot so the user's next
+    /// "yes" / "okay then" can actually launch the agent.
     private static func responseOffersAgentSpawn(_ spokenText: String) -> Bool {
-        let normalized = spokenText.lowercased()
+        let normalized = spokenText
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased()
+
         let offerPatterns = [
             "spin up an agent",
             "spin one up",
@@ -3650,12 +3650,18 @@ final class CompanionManager: ObservableObject {
             "launch an agent",
             "spawn an agent",
             "have an agent",
+            "agent mode",
             "want me to spin",
             "want me to start",
             "should i spin",
             "should i start"
         ]
-        return offerPatterns.contains { normalized.contains($0) }
+        if offerPatterns.contains(where: { normalized.contains($0) }) {
+            return true
+        }
+
+        let handoffPattern = #"\b(?:hand|send|route|pass|delegate|give)\b.{0,48}\b(?:agent|codex)\b"#
+        return normalized.range(of: handoffPattern, options: .regularExpression) != nil
     }
 
     /// If Haiku's last reply offered an agent and the current transcript
@@ -5019,6 +5025,23 @@ final class CompanionManager: ObservableObject {
                 return cleanedInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
             }
 
+            // Apple Speech often hears "Clicky agent" as "click the agent".
+            // Treat that exact token sequence as the product wake phrase so
+            // long-form live partials can still be deferred to Agent Mode.
+            if tokens[scanningIndex].normalizedText == "click" {
+                let theTokenIndex = scanningIndex + 1
+                let agentTokenIndex = scanningIndex + 2
+                if theTokenIndex < tokens.count,
+                   agentTokenIndex < tokens.count,
+                   tokens[theTokenIndex].normalizedText == "the",
+                   tokens[agentTokenIndex].normalizedText == "agent" {
+                    let rawInstruction = String(transcript[tokens[agentTokenIndex].originalRange.upperBound...])
+                    let trimmedInstruction = rawInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let cleanedInstruction = trimmedInstruction.trimmingCharacters(in: CharacterSet(charactersIn: ".,:;!?- "))
+                    return cleanedInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+            }
+
             guard isClickyInvocationToken(tokens[scanningIndex].normalizedText) else { continue }
 
             let agentTokenIndex = scanningIndex + 1
@@ -5036,7 +5059,7 @@ final class CompanionManager: ObservableObject {
 
     private static func isClickyInvocationToken(_ normalizedText: String) -> Bool {
         switch normalizedText {
-        case "clicky", "klicky", "openclicky":
+        case "clicky", "klicky", "openclicky", "cookie", "quick":
             return true
         default:
             return false
@@ -5905,14 +5928,14 @@ final class CompanionManager: ObservableObject {
             || isReferentialAgentWorkFollowUp(transcript)
     }
 
-    private static func shouldRecoverDeferredLiveAgentRoute(
+    private static func deferredLiveAgentRouteInstruction(
         partialTranscript: String,
         finalTranscript: String
-    ) -> Bool {
-        guard isAgentRoutingCandidate(partialTranscript) else { return false }
+    ) -> String? {
+        guard isAgentRoutingCandidate(partialTranscript) else { return nil }
 
         let normalizedFinal = normalizedSpokenCommandText(finalTranscript)
-        guard !normalizedFinal.isEmpty else { return false }
+        guard !normalizedFinal.isEmpty else { return nil }
 
         let cancellationSignals = [
             "never mind",
@@ -5923,21 +5946,67 @@ final class CompanionManager: ObservableObject {
             "stop that"
         ]
         if cancellationSignals.contains(where: { normalizedFinal.contains($0) }) {
-            return false
+            return nil
         }
 
-        if isLikelyAgentFollowUpPhrasing(finalTranscript) {
-            return true
+        let partialInstruction = explicitAgentRouteInstruction(from: partialTranscript)
+            .map { normalizedAgentTaskInstruction(from: $0) }
+            .map(cleanedAgentTaskInstruction)
+        let finalInstruction = normalizedAgentTaskInstruction(from: finalTranscript)
+            .trimmingCharacters(in: CharacterSet(charactersIn: " \n\t.,:;!?-"))
+
+        let finalLooksRecoverable = isLikelyAgentFollowUpPhrasing(finalTranscript)
+            || isLikelyAgentToolWorkInstruction(finalTranscript)
+            || hasAgentWorkVerbAndArtifact(finalTranscript)
+
+        if finalLooksRecoverable,
+           !finalInstruction.isEmpty,
+           !isAgentTaskPlaceholderInstruction(finalInstruction),
+           isLikelySpecificAgentInstruction(finalInstruction) {
+            return finalInstruction
         }
 
-        if isLikelyAgentToolWorkInstruction(finalTranscript) {
-            return true
+        // If Apple Speech's final result drops the wake phrase or rewrites the
+        // beginning of a long utterance, keep the last live partial that was
+        // confidently classified as an agent request. This is the path for
+        // "Clicky agent ..." being heard live as "click the agent ..." while
+        // the final transcript only contains the trailing correction/noise.
+        if let partialInstruction,
+           !partialInstruction.isEmpty,
+           !isAgentTaskPlaceholderInstruction(partialInstruction),
+           isLikelySpecificAgentInstruction(partialInstruction) {
+            return partialInstruction
         }
 
-        let workVerbPattern = #"\b(?:create|make|build|update|change|edit|fix|design|redesign|open|show|preview|pull\s+up|find|save|export|write|review|test|run)\b"#
-        let artifactPattern = #"\b(?:form|page|site|website|app|file|document|report|code|repo|repository|folder|version|style|design)\b"#
-        return normalizedFinal.range(of: workVerbPattern, options: .regularExpression) != nil
-            && normalizedFinal.range(of: artifactPattern, options: .regularExpression) != nil
+        return finalLooksRecoverable && !finalInstruction.isEmpty ? finalInstruction : nil
+    }
+
+    private static func explicitAgentRouteInstruction(from transcript: String) -> String? {
+        if let instruction = explicitNewTaskInstruction(from: transcript) { return instruction }
+        if let instruction = agentTaskCreationInstruction(from: transcript) { return instruction }
+        if let instruction = clickyAgentInstruction(from: transcript) { return instruction }
+        if let instruction = permissiveAgentInstruction(from: transcript) { return instruction }
+        return nil
+    }
+
+    private static func hasAgentWorkVerbAndArtifact(_ transcript: String) -> Bool {
+        let normalized = normalizedSpokenCommandText(transcript)
+        let workVerbPattern = #"\b(?:create|make|build|update|change|edit|fix|design|redesign|open|show|preview|pull\s+up|find|save|export|write|review|test|run|stop)\b"#
+        let artifactPattern = #"\b(?:form|page|site|website|app|file|document|report|code|repo|repository|folder|version|style|design|panel|overlay|status|progress|comments|thinking|calls)\b"#
+        return normalized.range(of: workVerbPattern, options: .regularExpression) != nil
+            && normalized.range(of: artifactPattern, options: .regularExpression) != nil
+    }
+
+    private static func isLikelySpecificAgentInstruction(_ instruction: String) -> Bool {
+        let normalized = normalizedSpokenCommandText(instruction)
+        guard wordCount(in: normalized) >= 3 else { return false }
+        return isLikelyAgentToolWorkInstruction(instruction)
+            || isReferentialAgentWorkFollowUp(instruction)
+            || hasAgentWorkVerbAndArtifact(instruction)
+            || normalized.contains("overlay")
+            || normalized.contains("panel")
+            || normalized.contains("progress")
+            || normalized.contains("status")
     }
 
     private static func isPotentialDirectComputerUseTranscript(_ transcript: String) -> Bool {
