@@ -5263,6 +5263,19 @@ final class CompanionManager: ObservableObject {
                 return cleanedInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
             }
 
+            // Apple Speech can also insert "the" into the wake phrase:
+            // "Hey, the agent ..." should be treated like "Hey agent ...".
+            if tokens[scanningIndex].normalizedText == "the", sawHeyPrefix {
+                let agentTokenIndex = scanningIndex + 1
+                if agentTokenIndex < tokens.count,
+                   tokens[agentTokenIndex].normalizedText == "agent" {
+                    let rawInstruction = String(transcript[tokens[agentTokenIndex].originalRange.upperBound...])
+                    let trimmedInstruction = rawInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let cleanedInstruction = trimmedInstruction.trimmingCharacters(in: CharacterSet(charactersIn: ".,:;!?- "))
+                    return cleanedInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+            }
+
             // Apple Speech often hears "Clicky agent" as "click the agent".
             // Treat that exact token sequence as the product wake phrase so
             // long-form live partials can still be deferred to Agent Mode.

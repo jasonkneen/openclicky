@@ -42,6 +42,8 @@ ELEVENLABS_VOICE_ID=your_elevenlabs_voice_id
 OPENAI_API_KEY=your_openai_or_codex_key
 ```
 
+Google Workspace access is intentionally handled through local tooling, not OpenClicky-hosted Google login or key sync. See [Google Workspace via gogcli](#google-workspace-via-gogcli).
+
 Recommended local setup:
 
 ```sh
@@ -139,8 +141,67 @@ curl -s -X POST http://127.0.0.1:32123/cursor \
 
 Bundled agent skills for this bridge live in `AppResources/OpenClicky/OpenClickyBundledSkills/`:
 
+- `google-workspace-gogcli`: local Google Workspace access through `gogcli` for Gmail, Calendar, Drive, Docs, Sheets, Slides, Chat, Contacts, Tasks, Admin, Groups, and related Google services.
 - `openclicky-screen-control`: quick point, caption, screenshot, speak, and clear commands.
 - `openclicky-screen-tour`: recordable visual tours with multiple simultaneous markers, area-focused overlays, speech, and primary cursor choreography.
+
+## Google Workspace via gogcli
+
+OpenClicky can connect agents to Google Workspace through the local [`gogcli`](https://github.com/steipete/gogcli) command, installed as `gog`. This keeps Google authentication local to the user's machine and avoids adding hosted OAuth, Google login, or cloud key sync to OpenClicky.
+
+Install on macOS:
+
+```sh
+brew install gogcli
+```
+
+Check status from OpenClicky Settings → Google, or from the terminal:
+
+```sh
+scripts/check-gogcli-workspace.sh
+```
+
+Or manually:
+
+```sh
+gog --version
+gog auth status --json
+gog auth list
+```
+
+Initial setup requires a Google Cloud Desktop OAuth client JSON owned by the user or their Workspace organization. Store it in gogcli, not in this repository:
+
+```sh
+gog auth credentials ~/Downloads/client_secret_....json
+```
+
+Authorize with least-privilege scopes for the services needed:
+
+```sh
+# Read-only Gmail + Drive example
+gog auth add you@example.com --services gmail,drive --gmail-scope readonly --drive-scope readonly
+
+# Calendar + Tasks read-only example
+gog auth add you@example.com --services calendar,tasks --readonly
+```
+
+For Workspace-specific clients/domains:
+
+```sh
+gog --client work auth credentials ~/Downloads/work-client.json --domain example.com
+gog auth alias set work you@example.com
+```
+
+Common read commands:
+
+```sh
+gog gmail search 'newer_than:7d' --account work --json
+gog calendar events --account work --json
+gog drive search "name contains 'proposal'" --account work --json
+gog contacts search 'Jane Doe' --account work --json
+```
+
+Write actions such as sending email, posting Chat messages, modifying Drive files, changing calendar events, contacts, groups, or admin state should only run after explicit user intent. The bundled `google-workspace-gogcli` skill documents safe usage patterns for agents.
 
 ## Swift SDK Embedding (Windowed)
 

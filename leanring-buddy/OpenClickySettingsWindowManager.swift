@@ -54,6 +54,7 @@ private enum OpenClickySettingsSection: String, CaseIterable, Identifiable {
     case pointing
     case computerUse
     case agentMode
+    case googleWorkspace
     case memory
     case app
 
@@ -66,6 +67,7 @@ private enum OpenClickySettingsSection: String, CaseIterable, Identifiable {
         case .pointing: return "Pointing"
         case .computerUse: return "Computer Use"
         case .agentMode: return "Agent Mode"
+        case .googleWorkspace: return "Google"
         case .memory: return "Memory"
         case .app: return "App"
         }
@@ -78,6 +80,7 @@ private enum OpenClickySettingsSection: String, CaseIterable, Identifiable {
         case .pointing: return "cursorarrow.rays"
         case .computerUse: return "macwindow.and.cursorarrow"
         case .agentMode: return "terminal"
+        case .googleWorkspace: return "globe.americas.fill"
         case .memory: return "books.vertical"
         case .app: return "app.badge"
         }
@@ -104,6 +107,8 @@ struct OpenClickySettingsView: View {
     @AppStorage(AppBundleConfiguration.userWidgetsIncludeMemorySnippetsDefaultsKey) private var widgetsIncludeMemorySnippets = false
     @AppStorage(AppBundleConfiguration.userWidgetsIncludeFocusedAppContextDefaultsKey) private var widgetsIncludeFocusedAppContext = false
     @State private var selectedSection: OpenClickySettingsSection = .general
+    @State private var gogCLIStatus = OpenClickyGogCLIStatus.unknown
+    @State private var isRefreshingGogCLIStatus = false
 
     init(companionManager: CompanionManager) {
         self.companionManager = companionManager
@@ -131,6 +136,11 @@ struct OpenClickySettingsView: View {
             .background(Color(nsColor: .windowBackgroundColor))
         }
         .frame(minWidth: 760, minHeight: 500)
+        .onChange(of: selectedSection) { _, newSection in
+            if newSection == .googleWorkspace, !gogCLIStatus.isInstalled, !isRefreshingGogCLIStatus {
+                refreshGogCLIStatus()
+            }
+        }
     }
 
     private var sidebar: some View {
@@ -194,6 +204,8 @@ struct OpenClickySettingsView: View {
             return "Choose the computer-use backend for focused-window context and targeted actions."
         case .agentMode:
             return "Background agents, Codex configuration, model, working directory, and dashboard access."
+        case .googleWorkspace:
+            return "Local Google Workspace connection through gogcli. No hosted Google login or key sync."
         case .memory:
             return "Persistent memory, learned workflow skills, and local knowledge tools."
         case .app:
@@ -214,6 +226,8 @@ struct OpenClickySettingsView: View {
             computerUsePanel
         case .agentMode:
             agentModePanel
+        case .googleWorkspace:
+            googleWorkspacePanel
         case .memory:
             memoryPanel
         case .app:
@@ -658,6 +672,96 @@ struct OpenClickySettingsView: View {
         }
     }
 
+    private var googleWorkspacePanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            settingsGroup("Google Workspace") {
+                googleConnectionHeader
+
+                valueRow(
+                    title: "gogcli",
+                    subtitle: gogCLIStatus.isInstalled
+                        ? "\(gogCLIStatus.version ?? "Installed") — \(gogCLIStatus.executablePath ?? "gog")"
+                        : "Not installed. Install with Homebrew: brew install gogcli",
+                    systemImageName: gogCLIStatus.isInstalled ? "checkmark.circle" : "exclamationmark.triangle"
+                )
+
+                valueRow(
+                    title: "OAuth credentials",
+                    subtitle: gogCLIStatus.credentialsExist
+                        ? "Desktop OAuth client is stored locally in gogcli."
+                        : "Add a Google Cloud Desktop OAuth client JSON with gog auth credentials.",
+                    systemImageName: gogCLIStatus.credentialsExist ? "checkmark.seal" : "key"
+                )
+
+                valueRow(
+                    title: "Account",
+                    subtitle: gogCLIStatus.accountEmail ?? "No default Google account authorized yet.",
+                    systemImageName: gogCLIStatus.isReadyForUserAccount ? "person.crop.circle.badge.checkmark" : "person.crop.circle.badge.exclamationmark"
+                )
+
+                valueRow(
+                    title: "Storage",
+                    subtitle: gogCLIStatus.configPath ?? "gogcli manages its own local config and keyring.",
+                    systemImageName: "externaldrive.badge.person.crop"
+                )
+            }
+
+            settingsGroup("Action") {
+                actionRow(title: isRefreshingGogCLIStatus ? "Refreshing…" : "Refresh", systemImageName: "arrow.clockwise") {
+                    refreshGogCLIStatus()
+                }
+                if !gogCLIStatus.isInstalled || !gogCLIStatus.credentialsExist {
+                    actionRow(title: "Copy setup commands", systemImageName: "doc.on.doc") {
+                        copyGoogleWorkspaceSetupCommands()
+                    }
+                }
+            }
+
+            settingsGroup("Privacy") {
+                valueRow(
+                    title: "Local connector",
+                    subtitle: "Agents use gogcli on this Mac. OpenClicky does not host Google login or sync Google keys.",
+                    systemImageName: "lock.shield"
+                )
+            }
+        }
+    }
+
+    private var googleConnectionHeader: some View {
+        HStack(alignment: .top, spacing: 13) {
+            ZStack {
+                Circle()
+                    .fill(Color(nsColor: .windowBackgroundColor))
+                    .overlay(
+                        Circle()
+                            .stroke(
+                                AngularGradient(
+                                    colors: [.blue, .red, .yellow, .green, .blue],
+                                    center: .center
+                                ),
+                                lineWidth: 3
+                            )
+                    )
+                Text("G")
+                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .foregroundStyle(.primary)
+            }
+            .frame(width: 38, height: 38)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(gogCLIStatus.readinessTitle)
+                    .font(.system(size: 14, weight: .semibold))
+                Text(gogCLIStatus.readinessDetail)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+    }
+
     private var memoryPanel: some View {
         VStack(alignment: .leading, spacing: 14) {
             settingsGroup("Persistent memory") {
@@ -790,6 +894,41 @@ struct OpenClickySettingsView: View {
                 }
             }
         }
+    }
+
+    private func refreshGogCLIStatus() {
+        guard !isRefreshingGogCLIStatus else { return }
+        isRefreshingGogCLIStatus = true
+        Task {
+            let status = await OpenClickyGogCLIStatusResolver.refresh()
+            gogCLIStatus = status
+            isRefreshingGogCLIStatus = false
+        }
+    }
+
+    private func copyGoogleWorkspaceSetupCommands() {
+        let commands = """
+        # Install gogcli if needed
+        brew install gogcli
+
+        # Store a Google Cloud Desktop OAuth client JSON locally in gogcli
+        gog auth credentials ~/Downloads/client_secret_....json
+
+        # Authorize least-privilege scopes for common agent reads
+        gog auth add you@example.com --services gmail,drive --gmail-scope readonly --drive-scope readonly
+        gog auth add you@example.com --services calendar,tasks --readonly
+
+        # Optional Workspace alias
+        gog auth alias set work you@example.com
+        gog auth status --json
+        """
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(commands, forType: .string)
+    }
+
+    private func openURL(_ rawURL: String) {
+        guard let url = URL(string: rawURL) else { return }
+        NSWorkspace.shared.open(url)
     }
 
     private func settingsGroup<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
