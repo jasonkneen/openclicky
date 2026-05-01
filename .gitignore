@@ -3,6 +3,8 @@
 .DS_Store
 .env
 .env.local
+secrets.env
+*.secrets
 xcuserdata/
 DerivedData/
 *.xcuserstate

@@ -34,10 +34,13 @@ nonisolated final class CodexProcessManager: @unchecked Sendable {
 
         var environment = ProcessInfo.processInfo.environment
         environment["CODEX_HOME"] = codexHome.path
-        environment["PATH"] = CodexRuntimeLocator.pathByPrependingBundledRuntimePaths(
-            existingPath: environment["PATH"],
-            runtimeExecutableURL: executableURL
+        environment["PATH"] = Self.pathForAgentProcess(
+            CodexRuntimeLocator.pathByPrependingBundledRuntimePaths(
+                existingPath: environment["PATH"],
+                runtimeExecutableURL: executableURL
+            )
         )
+        Self.applyGogCLIEnvironment(to: &environment)
 
         let codexAuthFile = codexHome.appendingPathComponent("auth.json", isDirectory: false)
         let configFile = codexHome.appendingPathComponent("config.toml", isDirectory: false)
@@ -78,6 +81,41 @@ nonisolated final class CodexProcessManager: @unchecked Sendable {
         }
 
         try process.run()
+    }
+
+    private static func pathForAgentProcess(_ path: String) -> String {
+        let requiredPaths = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
+        var components = path.split(separator: ":").map(String.init)
+        for requiredPath in requiredPaths where !components.contains(requiredPath) {
+            components.append(requiredPath)
+        }
+        return components.joined(separator: ":")
+    }
+
+    private static func applyGogCLIEnvironment(to environment: inout [String: String]) {
+        environment["GOG_COLOR"] = "never"
+        environment["GOG_GMAIL_NO_SEND"] = environment["GOG_GMAIL_NO_SEND"] ?? "1"
+
+        if environment["OPENCLICKY_GOG_PATH"]?.isEmpty != false,
+           let gogExecutablePath = AppBundleConfiguration.gogExecutablePath() {
+            environment["OPENCLICKY_GOG_PATH"] = gogExecutablePath
+        }
+
+        if environment["GOG_KEYRING_PASSWORD"]?.isEmpty != false,
+           let gogKeyringPassword = AppBundleConfiguration.gogKeyringPassword() {
+            environment["GOG_KEYRING_PASSWORD"] = gogKeyringPassword
+            environment["GOG_KEYRING_BACKEND"] = environment["GOG_KEYRING_BACKEND"] ?? "file"
+        }
+
+        if environment["GOG_ACCOUNT"]?.isEmpty != false,
+           let gogAccount = AppBundleConfiguration.gogAccount() {
+            environment["GOG_ACCOUNT"] = gogAccount
+        }
+
+        if environment["GOG_CLIENT"]?.isEmpty != false,
+           let gogClient = AppBundleConfiguration.gogClient() {
+            environment["GOG_CLIENT"] = gogClient
+        }
     }
 
     @discardableResult

@@ -31,7 +31,7 @@ gog --json auth status
 gog --json auth list --check
 ```
 
-If the file-keyring backend asks for a passphrase, stop and report that gogcli needs its local keyring passphrase or `GOG_KEYRING_PASSWORD` in the environment. Do not spin or keep retrying.
+If the file-keyring backend asks for a passphrase, stop and report that gogcli needs its local keyring passphrase available to OpenClicky as `GOG_KEYRING_PASSWORD`, usually in `~/.config/openclicky/secrets.env`, or the user should migrate gogcli to the macOS Keychain backend. Do not spin or keep retrying.
 
 If no usable account is authenticated, stop the `gog` route. Do not run `gog auth add`, `gog auth credentials`, or OAuth setup from an agent task unless the user explicitly asks for setup help. Google sign-in/setup belongs in OpenClicky Settings -> Google.
 
@@ -41,6 +41,8 @@ Do not claim OAuth client credentials are missing until you have checked both:
 gog auth status --json
 gog auth credentials list --json
 ```
+
+If Google OAuth says the app is "Clicky", that comes from the local gogcli OAuth client stored at `~/Library/Application Support/gogcli/credentials.json`. OpenClicky is using the same local gogcli store, not a separate hosted login. The fix is to replace gogcli's OAuth client with an OpenClicky-owned Desktop OAuth client, then re-auth when the user explicitly wants setup.
 
 `gog auth status` may not report credentials correctly in every local state; `credentials list` is the more direct check.
 

@@ -7144,6 +7144,7 @@ final class CompanionManager: ObservableObject {
         guard let itemIndex = agentDockItems.lastIndex(where: { $0.sessionID == sessionID }) else { return }
         let session = codexAgentSessions.first(where: { $0.id == sessionID })
         let activitySummary = session?.latestActivitySummary
+        let completionSpeechSummary = Self.completionSpeechSummary(for: session, fallback: activitySummary)
         let stageLabel = session?.progressStage.label ?? (status == .starting ? "Starting" : "Working")
         let suggestedNextActions = session?.latestResponseCard?.suggestedNextActions ?? []
         let activityStatusLines = Self.agentDockActivityStatusLines(for: session, fallback: activitySummary)
@@ -7193,7 +7194,7 @@ final class CompanionManager: ObservableObject {
                 agentDockItems[itemIndex].progressStepText = activitySummary
             }
             completeAgentRequestTimingIfNeeded(sessionID: sessionID, status: "success")
-            announceAgentCompletionIfNeeded(sessionID: sessionID, outcome: "success", summary: activitySummary)
+            announceAgentCompletionIfNeeded(sessionID: sessionID, outcome: "success", summary: completionSpeechSummary)
         case .failed:
             agentDockItems[itemIndex].status = .failed
             agentDockItems[itemIndex].caption = activitySummary ?? "The agent needs attention. Ask for status to hear the error."
@@ -7206,7 +7207,7 @@ final class CompanionManager: ObservableObject {
                     "activitySummary": activitySummary ?? ""
                 ]
             )
-            announceAgentCompletionIfNeeded(sessionID: sessionID, outcome: "failed", summary: activitySummary)
+            announceAgentCompletionIfNeeded(sessionID: sessionID, outcome: "failed", summary: completionSpeechSummary)
         case .stopped:
             if session?.status != .stopped {
                 break
@@ -7541,6 +7542,31 @@ final class CompanionManager: ObservableObject {
             return String(prefix[..<lastSpace])
         }
         return prefix
+    }
+
+    /// For completion TTS, prefer the full final response body instead of
+    /// the dock/activity snippet so spoken output does not stop at the same
+    /// truncation point used by compact overlay UI.
+    private static func completionSpeechSummary(
+        for session: CodexAgentSession?,
+        fallback: String?
+    ) -> String? {
+        if let raw = session?.latestResponseCard?.rawText {
+            var text = ClickyResponseCard.sanitizedDisplayText(from: raw, maximumCharacters: 10_000)
+            text = text.replacingOccurrences(
+                of: #"(?im)^\s*TASK_TITLE\s*:\s*.*$"#,
+                with: " ",
+                options: .regularExpression
+            )
+            text = text.components(separatedBy: .whitespacesAndNewlines)
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty {
+                return text
+            }
+        }
+        return fallback?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     func openAgentDockItem(_ itemID: UUID) {

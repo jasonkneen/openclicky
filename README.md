@@ -149,6 +149,8 @@ Bundled agent skills for this bridge live in `AppResources/OpenClicky/OpenClicky
 
 OpenClicky can connect agents to Google Workspace through the local [`gogcli`](https://github.com/steipete/gogcli) command, installed as `gog`. This keeps Google authentication local to the user's machine and avoids adding hosted OAuth, Google login, or cloud key sync to OpenClicky.
 
+If gogcli uses the encrypted file keyring, OpenClicky agents need the same keyring password non-interactively. Put it in `~/.config/openclicky/secrets.env` as `GOG_KEYRING_PASSWORD=...`, or migrate gogcli to the macOS Keychain backend. If Google's OAuth screen says "Clicky", that branding comes from the local OAuth client stored in `~/Library/Application Support/gogcli/credentials.json`; replace it with an OpenClicky-owned Desktop OAuth client to change the consent-screen app name.
+
 Install on macOS:
 
 ```sh

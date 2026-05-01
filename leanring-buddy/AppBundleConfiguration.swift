@@ -49,6 +49,34 @@ nonisolated enum AppBundleConfiguration {
         ) ?? localDevelopmentEnvironmentValue(forKey: "OPENAI_API_KEY")
     }
 
+    static func gogKeyringPassword() -> String? {
+        stringValue(
+            forKey: "GogKeyringPassword",
+            environmentKeys: ["GOG_KEYRING_PASSWORD"]
+        ) ?? localDevelopmentEnvironmentValue(forKey: "GOG_KEYRING_PASSWORD")
+    }
+
+    static func gogAccount() -> String? {
+        stringValue(
+            forKey: "GogAccount",
+            environmentKeys: ["GOG_ACCOUNT"]
+        ) ?? localDevelopmentEnvironmentValue(forKey: "GOG_ACCOUNT")
+    }
+
+    static func gogClient() -> String? {
+        stringValue(
+            forKey: "GogClient",
+            environmentKeys: ["GOG_CLIENT"]
+        ) ?? localDevelopmentEnvironmentValue(forKey: "GOG_CLIENT")
+    }
+
+    static func gogExecutablePath() -> String? {
+        stringValue(
+            forKey: "OpenClickyGogPath",
+            environmentKeys: ["OPENCLICKY_GOG_PATH"]
+        ) ?? localDevelopmentEnvironmentValue(forKey: "OPENCLICKY_GOG_PATH")
+    }
+
     static func assemblyAIAPIKey() -> String? {
         userDefaultsValue(forKey: userAssemblyAIAPIKeyDefaultsKey) ?? stringValue(
             forKey: "AssemblyAIAPIKey",

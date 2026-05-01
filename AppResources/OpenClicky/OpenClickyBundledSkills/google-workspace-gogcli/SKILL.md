@@ -19,7 +19,7 @@ gog auth credentials list --json
 gog --json auth list --check
 ```
 
-If `gog auth list` reports that the file keyring needs a passphrase, stop and tell the user gogcli needs its local keyring passphrase or `GOG_KEYRING_PASSWORD`. Do not keep retrying.
+If `gog auth list` reports that the file keyring needs a passphrase, stop and tell the user gogcli needs its local keyring passphrase available to OpenClicky as `GOG_KEYRING_PASSWORD`, usually in `~/.config/openclicky/secrets.env`, or they should migrate gogcli to the macOS Keychain backend. Do not keep retrying.
 
 If `gog` is not installed on macOS:
 
@@ -30,6 +30,8 @@ brew install gogcli
 ## Setup flow
 
 For normal Gmail/Calendar/Drive tasks, do not run OAuth setup from the agent. Google setup belongs in OpenClicky Settings → Google unless the user explicitly asks for setup help.
+
+If Google OAuth says the app is "Clicky", that branding comes from the local gogcli OAuth client stored in `~/Library/Application Support/gogcli/credentials.json`. OpenClicky is reusing the local gogcli store. To make OAuth say OpenClicky, replace that gogcli credential file with an OpenClicky-owned Desktop OAuth client and re-auth.
 
 The user must provide or create a Google Cloud Desktop OAuth client JSON. Do not create or store secrets in the repository.
 
