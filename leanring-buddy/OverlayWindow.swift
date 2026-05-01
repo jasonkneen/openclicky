@@ -1549,6 +1549,7 @@ private struct ClickyAgentDockHoverCard: View {
                     .padding(.vertical, 5)
                     .background(Capsule().fill(statusBackgroundColor))
             }
+            .padding(.trailing, 30)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text("Stage: \(item.progressStageLabel)")

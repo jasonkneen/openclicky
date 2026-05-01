@@ -547,6 +547,10 @@ final class AgentMenuBarStatusManager: NSObject {
                 popover?.performClose(nil)
                 companionManager?.stopAgentDockItem(item.id)
             },
+            runSuggestedAction: { [weak companionManager, weak popover] actionTitle in
+                popover?.performClose(nil)
+                companionManager?.runSuggestedNextAction(actionTitle)
+            },
             dismiss: { [weak companionManager, weak popover] in
                 // Close == dismiss the finished item: hide the popover
                 // and remove the dock entry. dismissAgentDockItem is
@@ -647,12 +651,15 @@ private struct AgentMenuBarStatusPopoverView: View {
     let dashboard: () -> Void
     let close: () -> Void
     let stop: () -> Void
+    let runSuggestedAction: (String) -> Void
     /// Called when the user taps "Dismiss" on a terminal (`.done` / `.failed`)
     /// agent. Distinct from `stop` (which sends a cancel signal) — Dismiss
     /// dismisses the popover AND removes the finished item from the dock
     /// collection so it stops occupying the menu bar.
     let dismiss: () -> Void
     @State private var isConfirmingStop = false
+    @State private var statusLineCycleIndex = 0
+    @State private var statusLineCycleTask: Task<Void, Never>?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -669,12 +676,29 @@ private struct AgentMenuBarStatusPopoverView: View {
                     .padding(.vertical, 5)
                     .background(Capsule().fill(statusColor.opacity(0.18)))
             }
+            .padding(.trailing, 24)
 
             Text(titleText)
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundColor(.white)
                 .lineLimit(2)
                 .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Stage: \(item.progressStageLabel)")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(Color.white.opacity(0.70))
+                    .lineLimit(1)
+
+                if let statusLine = currentStatusLine {
+                    Text("\(statusLineLabel): \(statusLine)")
+                        .font(.system(size: 11, weight: .regular))
+                        .foregroundColor(Color.white.opacity(0.58))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .contentTransition(.opacity)
+                }
+            }
 
             VStack(alignment: .leading, spacing: 8) {
                 if let liveProgressText, !liveProgressText.isEmpty {
@@ -699,6 +723,19 @@ private struct AgentMenuBarStatusPopoverView: View {
                     .buttonStyle(.borderless)
                     .font(.system(size: 12, weight: .semibold))
                 }
+            }
+
+            if !item.suggestedNextActions.isEmpty {
+                HStack(spacing: 8) {
+                    ForEach(item.suggestedNextActions, id: \.self) { actionTitle in
+                        Button(actionTitle) {
+                            runSuggestedAction(actionTitle)
+                        }
+                        .lineLimit(1)
+                    }
+                }
+                .buttonStyle(.borderless)
+                .font(.system(size: 12, weight: .semibold))
             }
 
             HStack(spacing: 8) {
@@ -734,6 +771,17 @@ private struct AgentMenuBarStatusPopoverView: View {
                     )
                 )
         )
+        .onAppear { restartStatusLineCycle() }
+        .onDisappear {
+            statusLineCycleTask?.cancel()
+            statusLineCycleTask = nil
+        }
+        .onChange(of: item.activityStatusLines) { _, _ in
+            restartStatusLineCycle()
+        }
+        .onChange(of: item.progressStepText ?? "") { _, _ in
+            restartStatusLineCycle()
+        }
     }
 
     @ViewBuilder
@@ -771,6 +819,29 @@ private struct AgentMenuBarStatusPopoverView: View {
 
     private var linkTarget: URL? {
         Self.firstOpenableURL(in: liveProgressText ?? "")
+    }
+
+    private var statusLineLabel: String {
+        activityStatusLines.count > 1 ? "Update" : "Step"
+    }
+
+    private var currentStatusLine: String? {
+        let lines = activityStatusLines
+        guard !lines.isEmpty else { return nil }
+        let safeIndex = min(statusLineCycleIndex, lines.count - 1)
+        return lines[safeIndex]
+    }
+
+    private var activityStatusLines: [String] {
+        var lines: [String] = []
+        for candidate in item.activityStatusLines + [item.progressStepText ?? ""] {
+            let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            if !lines.contains(trimmed) {
+                lines.append(trimmed)
+            }
+        }
+        return lines
     }
 
     /// Caption text — only the actual streamed agent activity. nil when the
@@ -835,6 +906,23 @@ private struct AgentMenuBarStatusPopoverView: View {
         case .running: return item.accentTheme.cursorColor
         case .done: return Color(hex: "#34D399")
         case .failed: return Color(hex: "#FF6369")
+        }
+    }
+
+    private func restartStatusLineCycle() {
+        statusLineCycleTask?.cancel()
+        statusLineCycleTask = nil
+        statusLineCycleIndex = 0
+        let count = activityStatusLines.count
+        guard count > 1 else { return }
+        statusLineCycleTask = Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_800_000_000)
+                if Task.isCancelled { return }
+                let lineCount = activityStatusLines.count
+                guard lineCount > 1 else { return }
+                statusLineCycleIndex = (statusLineCycleIndex + 1) % lineCount
+            }
         }
     }
 }
