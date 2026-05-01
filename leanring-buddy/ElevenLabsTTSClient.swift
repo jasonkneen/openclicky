@@ -954,7 +954,6 @@ final class FillerPhraseLibrary {
     static let defaultPhrases: [String] = [
         "one moment.",
         "give me a second.",
-        "working on it.",
         "checking now."
     ]
 

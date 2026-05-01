@@ -1588,7 +1588,7 @@ private struct ClickyAgentDockHoverCard: View {
                 DSIconButtonStyle(
                     size: 28,
                     isDestructiveOnHover: false,
-                    tooltipText: "Close panel",
+                    tooltipText: "Close",
                     tooltipAlignment: .trailing
                 )
             )
@@ -1723,7 +1723,7 @@ private struct ClickyAgentDockHoverCard: View {
         switch item.status {
         case .done, .failed:
             Button(action: close) {
-                Label("Close panel", systemImage: "xmark.circle")
+                Label("Close", systemImage: "xmark.circle")
             }
             .buttonStyle(ClickyAgentDockPillButtonStyle())
 
@@ -1733,7 +1733,7 @@ private struct ClickyAgentDockHoverCard: View {
             .buttonStyle(ClickyAgentDockPillButtonStyle())
         case .starting, .running:
             Button(action: close) {
-                Label("Close panel", systemImage: "xmark.circle")
+                Label("Close", systemImage: "xmark.circle")
             }
             .buttonStyle(ClickyAgentDockPillButtonStyle())
 

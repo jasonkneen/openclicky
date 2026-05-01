@@ -739,16 +739,16 @@ private struct AgentMenuBarStatusPopoverView: View {
     @ViewBuilder
     private var stopControls: some View {
         // Closing the panel should never cancel/remove the task. Keep
-        // "Close panel" available for every state. For terminal sessions,
+        // "Close" available for every state. For terminal sessions,
         // provide a separate explicit "Dismiss" action to remove it.
         switch item.status {
         case .done, .failed:
-            Button("Close panel", action: close)
+            Button("Close", action: close)
                 .foregroundColor(Color.white.opacity(0.82))
             Button("Dismiss", action: dismiss)
                 .foregroundColor(Color.white.opacity(0.82))
         case .starting, .running:
-            Button("Close panel", action: close)
+            Button("Close", action: close)
                 .foregroundColor(Color.white.opacity(0.82))
 
             if isConfirmingStop {

@@ -506,6 +506,7 @@ final class CompanionManager: ObservableObject {
     /// only speak when the *content* of the activity changed, never just
     /// because a polling tick fired.
     private var lastAgentProgressNarrationSignatures: [UUID: String] = [:]
+    private static let agentProgressVoiceUpdatesDefaultsKey = "agentProgressVoiceUpdatesEnabled"
     private var currentFolderContextURL: URL?
     private var activeRequestTiming: OpenClickyRequestTiming?
     private var agentRequestTimingsBySessionID: [UUID: OpenClickyRequestTiming] = [:]
@@ -5111,6 +5112,11 @@ final class CompanionManager: ObservableObject {
     }
 
     private func speakAgentProgressUpdateIfAppropriate(now: Date = Date()) {
+        // Default OFF: users asked to stop automatic "working on it"
+        // style voice updates while agents are still in flight.
+        let progressVoiceEnabled = UserDefaults.standard.object(forKey: Self.agentProgressVoiceUpdatesDefaultsKey) as? Bool ?? false
+        guard progressVoiceEnabled else { return }
+
         let runningSessions = codexAgentSessions.filter { session in
             switch session.status {
             case .starting, .running:
