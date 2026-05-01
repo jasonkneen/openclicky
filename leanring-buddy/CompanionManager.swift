@@ -7388,16 +7388,16 @@ final class CompanionManager: ObservableObject {
         switch outcome {
         case "cancelled":
             line = trimmedSummary.isEmpty
-                ? "The agent was cancelled."
-                : "The agent was cancelled — \(Self.briefCompletionSummary(trimmedSummary))."
+                ? "the agent was cancelled"
+                : "the agent was cancelled \(Self.briefCompletionSummary(trimmedSummary))"
         case "failed":
             line = trimmedSummary.isEmpty
-                ? "The agent needs attention."
-                : "The agent needs attention — \(Self.briefCompletionSummary(trimmedSummary))."
+                ? "the agent needs attention"
+                : "the agent needs attention \(Self.briefCompletionSummary(trimmedSummary))"
         default:
             line = trimmedSummary.isEmpty
-                ? "The agent has completed the task."
-                : "The agent has completed the task — \(Self.briefCompletionSummary(trimmedSummary))."
+                ? "the agent has completed the task"
+                : "the agent has completed the task \(Self.briefCompletionSummary(trimmedSummary))"
         }
 
         // Sequence behind any in-flight TTS instead of cutting it.
@@ -7532,22 +7532,7 @@ final class CompanionManager: ObservableObject {
     }
 
     private static func briefCompletionSummary(_ summary: String) -> String {
-        let firstLine = summary
-            .split(whereSeparator: { $0.isNewline })
-            .first
-            .map(String.init) ?? summary
-        let cleaned = firstLine
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .trimmingCharacters(in: CharacterSet(charactersIn: ".!?"))
-
-        let limit = 120
-        guard cleaned.count > limit else { return cleaned }
-        let endIndex = cleaned.index(cleaned.startIndex, offsetBy: limit)
-        let prefix = String(cleaned[..<endIndex])
-        if let lastSpace = prefix.lastIndex(of: " ") {
-            return String(prefix[..<lastSpace])
-        }
-        return prefix
+        cleanedNaturalSpeech(summary, maxLength: 120)
     }
 
     /// For completion TTS, prefer the full final response body instead of
@@ -7569,10 +7554,40 @@ final class CompanionManager: ObservableObject {
                 .joined(separator: " ")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             if !text.isEmpty {
-                return text
+                let cleaned = cleanedNaturalSpeech(text, maxLength: 220)
+                return cleaned.isEmpty ? nil : cleaned
             }
         }
-        return fallback?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let fallback {
+            let cleaned = cleanedNaturalSpeech(fallback, maxLength: 220)
+            return cleaned.isEmpty ? nil : cleaned
+        }
+        return nil
+    }
+
+    /// Sanitizes assistant text into short, natural spoken English for TTS.
+    /// Removes paths/filenames and punctuation-heavy fragments that sound
+    /// robotic when read aloud.
+    private static func cleanedNaturalSpeech(_ text: String, maxLength: Int) -> String {
+        var value = text
+        value = value.replacingOccurrences(of: #"(?i)\b(?:/Users|/Volumes|~)/[^\s,;:()\[\]{}<>"]+"#, with: " ", options: .regularExpression)
+        value = value.replacingOccurrences(of: #"(?i)\b\S+\.(swift|md|json|jsonl|toml|yaml|yml|txt|csv|ts|tsx|js|jsx|py|sh)\b"#, with: " ", options: .regularExpression)
+        value = value.replacingOccurrences(of: #"`[^`]*`"#, with: " ", options: .regularExpression)
+        value = value.replacingOccurrences(of: #"[#*_>\[\]\(\)\{\}:;|\\/]+"#, with: " ", options: .regularExpression)
+        value = value.replacingOccurrences(of: #"[-–—]+"#, with: " ", options: .regularExpression)
+        value = value.replacingOccurrences(of: #"[.!?,]+"#, with: " ", options: .regularExpression)
+        value = value.components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard value.count > maxLength else { return value }
+        let endIndex = value.index(value.startIndex, offsetBy: maxLength)
+        let prefix = String(value[..<endIndex])
+        if let lastSpace = prefix.lastIndex(of: " "), lastSpace > prefix.startIndex {
+            return String(prefix[..<lastSpace]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return prefix.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     func openAgentDockItem(_ itemID: UUID) {

@@ -280,61 +280,51 @@ struct ClickyResponseCardCompactView: View {
                 }
             }
 
-            Text(card.displayText.isEmpty ? "No response text yet." : card.displayText)
-                .font(.system(size: 15, weight: .medium))
-                .foregroundColor(DS.Colors.textPrimary)
-                .lineSpacing(4)
-                .lineLimit(4)
-                .minimumScaleFactor(0.82)
-                .fixedSize(horizontal: false, vertical: true)
+            if let displayText = sanitizedDisplayText(card.displayText) {
+                Text(displayText)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(DS.Colors.textPrimary)
+                    .lineSpacing(4)
+                    .lineLimit(4)
+                    .minimumScaleFactor(0.82)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             if !card.suggestedNextActions.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Suggested next:")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(DS.Colors.textTertiary)
-
-                    FlowLayout(spacing: 8, rowSpacing: 8) {
-                        ForEach(card.suggestedNextActions, id: \.self) { actionTitle in
-                            responseActionPill(
-                                title: actionTitle,
-                                systemImageName: nil,
-                                foregroundColor: DS.Colors.textPrimary,
-                                backgroundColor: Color.white.opacity(0.08)
-                            ) {
-                                actionHandlers.runSuggestedNextAction?(actionTitle)
-                            }
+                FlowLayout(spacing: 8, rowSpacing: 8) {
+                    ForEach(card.suggestedNextActions, id: \.self) { actionTitle in
+                        responseActionPill(
+                            title: actionTitle,
+                            systemImageName: nil,
+                            foregroundColor: DS.Colors.textPrimary,
+                            backgroundColor: Color.white.opacity(0.08)
+                        ) {
+                            actionHandlers.runSuggestedNextAction?(actionTitle)
                         }
                     }
                 }
             }
 
             if actionHandlers.openTextFollowUp != nil || actionHandlers.openVoiceFollowUp != nil {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Follow up")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(DS.Colors.textTertiary)
+                FlowLayout(spacing: 8, rowSpacing: 8) {
+                    if let openTextFollowUp = actionHandlers.openTextFollowUp {
+                        responseActionPill(
+                            title: "AI Text",
+                            systemImageName: "character.cursor.ibeam",
+                            foregroundColor: DS.Colors.textPrimary,
+                            backgroundColor: Color.white.opacity(0.08),
+                            action: openTextFollowUp
+                        )
+                    }
 
-                    FlowLayout(spacing: 8, rowSpacing: 8) {
-                        if let openTextFollowUp = actionHandlers.openTextFollowUp {
-                            responseActionPill(
-                                title: "AI Text",
-                                systemImageName: "character.cursor.ibeam",
-                                foregroundColor: DS.Colors.textPrimary,
-                                backgroundColor: Color.white.opacity(0.08),
-                                action: openTextFollowUp
-                            )
-                        }
-
-                        if let openVoiceFollowUp = actionHandlers.openVoiceFollowUp {
-                            responseActionPill(
-                                title: "Voice",
-                                systemImageName: "mic",
-                                foregroundColor: DS.Colors.textPrimary,
-                                backgroundColor: Color.white.opacity(0.08),
-                                action: openVoiceFollowUp
-                            )
-                        }
+                    if let openVoiceFollowUp = actionHandlers.openVoiceFollowUp {
+                        responseActionPill(
+                            title: "Voice",
+                            systemImageName: "mic",
+                            foregroundColor: DS.Colors.textPrimary,
+                            backgroundColor: Color.white.opacity(0.08),
+                            action: openVoiceFollowUp
+                        )
                     }
                 }
             }
@@ -359,6 +349,17 @@ struct ClickyResponseCardCompactView: View {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .stroke(Color.white.opacity(0.10), lineWidth: 1)
         )
+    }
+
+
+    private func sanitizedDisplayText(_ text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "No response text yet." }
+        let lowered = trimmed.lowercased()
+        if lowered == "checking the work" || lowered == "check the work" {
+            return nil
+        }
+        return trimmed
     }
 
     private func responseActionPill(

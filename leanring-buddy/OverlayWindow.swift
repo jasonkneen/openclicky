@@ -370,6 +370,13 @@ struct BlueCursorView: View {
             if shouldShowAgentTaskBubble,
                let agentTaskBubbleText = cursorState.agentTaskBubbleText?.trimmingCharacters(in: .whitespacesAndNewlines),
                !agentTaskBubbleText.isEmpty {
+                let bubblePosition = anchoredBubblePosition(
+                    for: cursorPosition,
+                    bubbleSize: agentTaskBubbleSize,
+                    horizontalOffset: 12,
+                    verticalOffset: 20
+                )
+
                 Text(agentTaskBubbleText)
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(.white)
@@ -390,10 +397,7 @@ struct BlueCursorView: View {
                                 .preference(key: AgentTaskBubbleSizePreferenceKey.self, value: geo.size)
                         }
                     )
-                    .position(
-                        x: cursorPosition.x + 12 + (agentTaskBubbleSize.width / 2),
-                        y: cursorPosition.y + 20 + (agentTaskBubbleSize.height / 2)
-                    )
+                    .position(x: bubblePosition.x, y: bubblePosition.y)
                     .opacity(cursorOpacity)
                     .animation(.spring(response: 0.2, dampingFraction: 0.6, blendDuration: 0), value: cursorPosition)
                     .animation(.easeOut(duration: 0.16), value: cursorState.agentTaskBubbleText)
@@ -570,6 +574,13 @@ struct BlueCursorView: View {
 
     @ViewBuilder
     private func externalCaption(_ caption: String, at position: CGPoint, color: Color) -> some View {
+        let bubblePosition = anchoredBubblePosition(
+            for: position,
+            bubbleSize: externalProxyBubbleSize,
+            horizontalOffset: 12,
+            verticalOffset: 20
+        )
+
         Text(caption)
             .font(.system(size: 11, weight: .semibold))
             .foregroundColor(.white)
@@ -590,10 +601,7 @@ struct BlueCursorView: View {
                         .preference(key: ExternalProxyBubbleSizePreferenceKey.self, value: geo.size)
                 }
             )
-            .position(
-                x: position.x + 12 + (externalProxyBubbleSize.width / 2),
-                y: position.y + 20 + (externalProxyBubbleSize.height / 2)
-            )
+            .position(x: bubblePosition.x, y: bubblePosition.y)
             .onPreferenceChange(ExternalProxyBubbleSizePreferenceKey.self) { newSize in
                 externalProxyBubbleSize = newSize
             }
@@ -604,6 +612,33 @@ struct BlueCursorView: View {
     private func colorFromHex(_ rawHex: String?) -> Color? {
         guard let hex = rawHex?.trimmingCharacters(in: .whitespacesAndNewlines), !hex.isEmpty else { return nil }
         return Color(hex: hex)
+    }
+
+    private func anchoredBubblePosition(
+        for cursorPosition: CGPoint,
+        bubbleSize: CGSize,
+        horizontalOffset: CGFloat,
+        verticalOffset: CGFloat
+    ) -> CGPoint {
+        let halfWidth = bubbleSize.width / 2
+        let halfHeight = bubbleSize.height / 2
+        let minMargin: CGFloat = 8
+
+        var x = cursorPosition.x + horizontalOffset + halfWidth
+        let maxX = screenFrame.width - halfWidth - minMargin
+        let minX = halfWidth + minMargin
+
+        if x > maxX {
+            x = cursorPosition.x - horizontalOffset - halfWidth
+        }
+        x = min(max(x, minX), maxX)
+
+        var y = cursorPosition.y + verticalOffset + halfHeight
+        let maxY = screenFrame.height - halfHeight - minMargin
+        let minY = halfHeight + minMargin
+        y = min(max(y, minY), maxY)
+
+        return CGPoint(x: x, y: y)
     }
 
     // MARK: - Cursor Tracking
@@ -1535,46 +1570,40 @@ private struct ClickyAgentDockHoverCard: View {
             agentProgressContent
                 .padding(.top, 4)
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Follow up")
-                    .font(.system(size: 10, weight: .heavy))
-                    .foregroundColor(DS.Colors.textTertiary)
-
-                VStack(alignment: .leading, spacing: 8) {
-                    if !item.suggestedNextActions.isEmpty {
-                        HStack(spacing: 8) {
-                            ForEach(item.suggestedNextActions, id: \.self) { actionTitle in
-                                Button(action: {
-                                    runSuggestedAction(actionTitle)
-                                }) {
-                                    Text(actionTitle)
-                                }
-                                .buttonStyle(ClickyAgentDockPillButtonStyle())
-                            }
-                        }
-                    }
-
+            VStack(alignment: .leading, spacing: 8) {
+                if !item.suggestedNextActions.isEmpty {
                     HStack(spacing: 8) {
-                        stopControls
-
-                        Spacer(minLength: 10)
-
-                        Button(action: voice) {
-                            Label("Voice", systemImage: "mic")
-                        }
-                        .buttonStyle(ClickyAgentDockPillButtonStyle())
-
-                        Button(action: text) {
-                            Label("Text", systemImage: "text.cursor")
-                        }
-                        .buttonStyle(ClickyAgentDockPillButtonStyle())
-
-                        if canOpenDashboard {
-                            Button(action: chat) {
-                                Label("Dashboard", systemImage: "rectangle.grid.2x2")
+                        ForEach(item.suggestedNextActions, id: \.self) { actionTitle in
+                            Button(action: {
+                                runSuggestedAction(actionTitle)
+                            }) {
+                                Text(actionTitle)
                             }
                             .buttonStyle(ClickyAgentDockPillButtonStyle())
                         }
+                    }
+                }
+
+                HStack(spacing: 8) {
+                    stopControls
+
+                    Spacer(minLength: 10)
+
+                    Button(action: voice) {
+                        Label("Voice", systemImage: "mic")
+                    }
+                    .buttonStyle(ClickyAgentDockPillButtonStyle())
+
+                    Button(action: text) {
+                        Label("Text", systemImage: "text.cursor")
+                    }
+                    .buttonStyle(ClickyAgentDockPillButtonStyle())
+
+                    if canOpenDashboard {
+                        Button(action: chat) {
+                            Label("Dashboard", systemImage: "rectangle.grid.2x2")
+                        }
+                        .buttonStyle(ClickyAgentDockPillButtonStyle())
                     }
                 }
             }
@@ -1669,7 +1698,13 @@ private struct ClickyAgentDockHoverCard: View {
     }
 
     private var trimmedCaption: String? {
-        item.caption?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let trimmed = item.caption?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else { return nil }
+        let lowered = trimmed.lowercased()
+        if lowered == "checking the work" || lowered == "check the work" {
+            return nil
+        }
+        return trimmed
     }
 
     private var statusLineLabel: String {
@@ -2049,7 +2084,13 @@ final class ClickyAgentDockWindowManager {
         default:
             edgeInset = 16
         }
-        let origin = position.originForWindow(size: dockSize, on: screen, edgeInset: edgeInset)
+        var origin = position.originForWindow(size: dockSize, on: screen, edgeInset: edgeInset)
+        // UX tweak (2026-05-01): move the default top-right parked dock
+        // closer into the corner by nudging it up/right.
+        if position == .topRight {
+            origin.x += 70
+            origin.y += 70
+        }
         let targetFrame = NSRect(origin: origin, size: dockSize)
         guard panel.frame.integral != targetFrame.integral else { return }
         panel.setFrame(targetFrame, display: true)
