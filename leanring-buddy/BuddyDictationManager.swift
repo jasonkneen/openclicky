@@ -219,7 +219,7 @@ final class BuddyDictationManager: NSObject, ObservableObject {
     private static let defaultFinalTranscriptFallbackDelaySeconds: TimeInterval = 2.4
     private static let recordedAudioPowerHistoryLength = 44
     private static let recordedAudioPowerHistoryBaselineLevel: CGFloat = 0.02
-    private static let recordedAudioPowerHistorySampleIntervalSeconds: TimeInterval = 0.07
+    private static let recordedAudioPowerHistorySampleIntervalSeconds: TimeInterval = 0.03
 
     @Published private(set) var isRecordingFromMicrophoneButton = false
     @Published private(set) var isRecordingFromKeyboardShortcut = false
@@ -743,7 +743,7 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         let inputFormat = inputNode.outputFormat(forBus: 0)
 
         removeInputTapIfNeeded()
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
+        inputNode.installTap(onBus: 0, bufferSize: 512, format: inputFormat) { [weak self] buffer, _ in
             self?.activeTranscriptionSession?.appendAudioBuffer(buffer)
             self?.updateAudioPowerLevel(from: buffer)
         }
@@ -979,7 +979,7 @@ final class BuddyDictationManager: NSObject, ObservableObject {
 
             let smoothedAudioPowerLevel = max(
                 CGFloat(boostedLevel),
-                self.currentAudioPowerLevel * 0.72
+                self.currentAudioPowerLevel * 0.5
             )
             self.currentAudioPowerLevel = smoothedAudioPowerLevel
 

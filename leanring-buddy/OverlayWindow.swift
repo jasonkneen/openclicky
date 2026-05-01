@@ -984,7 +984,7 @@ private struct BlueCursorWaveformView: View {
     @ViewBuilder
     var body: some View {
         if isActive {
-            TimelineView(.animation(minimumInterval: 1.0 / 36.0)) { timelineContext in
+            TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { timelineContext in
                 bars(timelineDate: timelineContext.date)
             }
         } else {
@@ -1007,7 +1007,7 @@ private struct BlueCursorWaveformView: View {
             }
         }
         .shadow(color: cursorColor.opacity(0.6), radius: 6, x: 0, y: 0)
-        .animation(.linear(duration: 0.08), value: audioPowerLevel)
+        .animation(.linear(duration: 0.04), value: audioPowerLevel)
     }
 
     private func barHeight(for barIndex: Int, timelineDate: Date) -> CGFloat {
