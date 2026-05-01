@@ -1128,7 +1128,7 @@ final class CartesiaTTSClient {
     // shape (`{"voice": {"mode": "id", ...}}`) is the supported format
     // on this version; voice embeddings will stop working June 2026.
     nonisolated private static let cartesiaVersionHeader = "2026-03-01"
-    nonisolated private static let modelID = "sonic-2"
+    nonisolated private static let modelID = "sonic-turbo"
 
     private var audioEngine: AVAudioEngine?
     private var playerNode: AVAudioPlayerNode?
