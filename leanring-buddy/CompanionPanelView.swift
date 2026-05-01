@@ -120,6 +120,7 @@ struct CompanionPanelView: View {
 
                 CodexAgentModePanelSection(
                     session: companionManager.codexAgentSession,
+                    activeDockItem: companionManager.agentDockItems.first(where: { $0.sessionID == companionManager.codexAgentSession.id }),
                     knowledgeIndex: companionManager.bundledKnowledgeIndex,
                     responseCard: companionManager.latestResponseCard,
                     transcriptionProviderDisplayName: companionManager.buddyDictationManager.transcriptionProviderDisplayName,

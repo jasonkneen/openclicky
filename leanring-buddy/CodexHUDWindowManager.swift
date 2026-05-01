@@ -75,7 +75,7 @@ final class CodexHUDWindowManager {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.backgroundColor = .clear
         panel.isOpaque = false
-        panel.hasShadow = true
+        panel.hasShadow = false
         panel.minSize = NSSize(width: OpenClickyHUDLayout.minimumWidth, height: OpenClickyHUDLayout.minimumHeight)
         panel.contentMinSize = NSSize(width: OpenClickyHUDLayout.minimumWidth, height: OpenClickyHUDLayout.minimumHeight)
         panel.contentView = hostingView
@@ -168,7 +168,6 @@ private struct CodexHUDView: View {
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(Color(red: 0.067, green: 0.075, blue: 0.071).opacity(0.98))
-                .shadow(color: .black.opacity(0.34), radius: 22, y: 14)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)

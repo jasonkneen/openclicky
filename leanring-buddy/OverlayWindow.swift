@@ -1528,28 +1528,29 @@ private struct ClickyAgentDockHoverCard: View {
     let dismiss: () -> Void
     let runSuggestedAction: (String) -> Void
     @State private var isConfirmingStop = false
+    @State private var hoveredQuickAction: QuickAction? = nil
     @State private var statusLineCycleIndex = 0
     @State private var statusLineCycleTask: Task<Void, Never>?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .center, spacing: 8) {
-                Text(displayTitle)
-                    .font(.system(size: 10, weight: .heavy, design: .rounded))
-                    .foregroundColor(item.accentTheme.cursorColor.opacity(0.95))
-                    .kerning(1.4)
-                    .lineLimit(1)
-
-                Spacer()
-
                 Text(statusText)
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundColor(statusTextColor)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(Capsule().fill(statusBackgroundColor))
+
+                Text(displayTitle)
+                    .font(.system(size: 10, weight: .heavy, design: .rounded))
+                    .foregroundColor(item.accentTheme.cursorColor.opacity(0.95))
+                    .kerning(1.4)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Spacer()
             }
-            .padding(.trailing, 30)
+            .padding(.trailing, 42)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text("Stage: \(item.progressStageLabel)")
@@ -1586,26 +1587,8 @@ private struct ClickyAgentDockHoverCard: View {
                 }
 
                 HStack(spacing: 8) {
-                    stopControls
-
                     Spacer(minLength: 10)
-
-                    Button(action: voice) {
-                        Label("Voice", systemImage: "mic")
-                    }
-                    .buttonStyle(ClickyAgentDockPillButtonStyle())
-
-                    Button(action: text) {
-                        Label("Text", systemImage: "text.cursor")
-                    }
-                    .buttonStyle(ClickyAgentDockPillButtonStyle())
-
-                    if canOpenDashboard {
-                        Button(action: chat) {
-                            Label("Dashboard", systemImage: "rectangle.grid.2x2")
-                        }
-                        .buttonStyle(ClickyAgentDockPillButtonStyle())
-                    }
+                    actionButtons
                 }
             }
         }
@@ -1687,13 +1670,30 @@ private struct ClickyAgentDockHoverCard: View {
                 }
             }
 
-            if let linkTarget {
-                Button {
-                    NSWorkspace.shared.open(linkTarget)
-                } label: {
-                    Label(linkButtonTitle(for: linkTarget), systemImage: "arrow.up.right.square")
+            HStack(spacing: 8) {
+                if let linkTarget {
+                    Button {
+                        NSWorkspace.shared.open(linkTarget)
+                    } label: {
+                        Label(linkButtonTitle(for: linkTarget), systemImage: "arrow.up.right.square")
+                    }
+                    .buttonStyle(ClickyAgentDockPillButtonStyle())
                 }
-                .buttonStyle(ClickyAgentDockPillButtonStyle())
+
+                Spacer(minLength: 0)
+
+                if item.status == .starting || item.status == .running {
+                    Button {
+                        isConfirmingStop = true
+                    } label: {
+                        Label("Stop", systemImage: "stop.circle")
+                    }
+                    .buttonStyle(ClickyAgentDockStopButtonStyle(isConfirming: false))
+                    .confirmationDialog("Stop this agent?", isPresented: $isConfirmingStop, titleVisibility: .visible) {
+                        Button("Stop", role: .destructive, action: stop)
+                        Button("Keep running", role: .cancel) {}
+                    }
+                }
             }
         }
     }
@@ -1751,51 +1751,24 @@ private struct ClickyAgentDockHoverCard: View {
         }
     }
 
-    @ViewBuilder
-    private var stopControls: some View {
-        // Close/hide should always be available without affecting the
-        // underlying task or menu-bar icon. For terminal states, expose a
-        // separate explicit "Dismiss" action that removes the dock item.
-        switch item.status {
-        case .done, .failed:
-            Button(action: close) {
-                Label("Close", systemImage: "xmark.circle")
+    private var actionButtons: some View {
+        HStack(spacing: 8) {
+            HoverExpandIconActionButton(icon: "mic", label: "Voice", isExpanded: hoveredQuickAction == .voice, action: voice)
+                .onHover { hoveredQuickAction = $0 ? .voice : nil }
+            HoverExpandIconActionButton(icon: "text.cursor", label: "Text", isExpanded: hoveredQuickAction == .text, action: text)
+                .onHover { hoveredQuickAction = $0 ? .text : nil }
+            if canOpenDashboard {
+                HoverExpandIconActionButton(icon: "rectangle.grid.2x2", label: "Dashboard", isExpanded: hoveredQuickAction == .dashboard, action: chat)
+                    .onHover { hoveredQuickAction = $0 ? .dashboard : nil }
             }
-            .buttonStyle(ClickyAgentDockPillButtonStyle())
-
-            Button(action: dismiss) {
-                Label("Dismiss", systemImage: "trash")
-            }
-            .buttonStyle(ClickyAgentDockPillButtonStyle())
-        case .starting, .running:
-            Button(action: close) {
-                Label("Close", systemImage: "xmark.circle")
-            }
-            .buttonStyle(ClickyAgentDockPillButtonStyle())
-
-            if isConfirmingStop {
-                Button {
-                    isConfirmingStop = false
-                    stop()
-                } label: {
-                    Label("Confirm stop", systemImage: "stop.circle.fill")
-                }
-                .buttonStyle(ClickyAgentDockStopButtonStyle(isConfirming: true))
-
-                Button("Keep running") {
-                    isConfirmingStop = false
-                }
-                .buttonStyle(ClickyAgentDockPillButtonStyle())
-            } else {
-                Button {
-                    isConfirmingStop = true
-                } label: {
-                    Label("Stop", systemImage: "stop.circle")
-                }
-                .buttonStyle(ClickyAgentDockStopButtonStyle(isConfirming: false))
+            if item.status == .done || item.status == .failed {
+                Button(action: dismiss) { Label("Dismiss", systemImage: "trash") }
+                    .buttonStyle(ClickyAgentDockPillButtonStyle())
             }
         }
     }
+
+    private enum QuickAction { case voice, text, dashboard }
 
     private var linkTarget: URL? {
         // Only scan the live caption — the previous version scanned the
@@ -1874,6 +1847,23 @@ private struct ClickyAgentDockHoverCard: View {
         }
     }
 
+}
+
+private struct HoverExpandIconActionButton: View {
+    let icon: String
+    let label: String
+    let isExpanded: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                if isExpanded { Text(label) }
+            }
+        }
+        .buttonStyle(ClickyAgentDockPillButtonStyle())
+    }
 }
 
 private struct ClickyAgentDockStopButtonStyle: ButtonStyle {

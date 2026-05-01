@@ -3,6 +3,7 @@ import SwiftUI
 
 struct CodexAgentModePanelSection: View {
     @ObservedObject var session: CodexAgentSession
+    var activeDockItem: ClickyAgentDockItem?
     var knowledgeIndex: WikiManager.Index
     var responseCard: ClickyResponseCard?
     var transcriptionProviderDisplayName: String
@@ -141,7 +142,7 @@ struct CodexAgentModePanelSection: View {
     }
 
     private var shouldShowInlineAgentResponse: Bool {
-        inlineAgentResponseText != nil || session.status == .starting || session.status == .running
+        activeDockItem != nil || inlineAgentResponseText != nil || session.status == .starting || session.status == .running
     }
 
     private var inlineAgentResponseText: String? {
@@ -156,17 +157,99 @@ struct CodexAgentModePanelSection: View {
     }
 
     private var inlineAgentResponse: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(inlineAgentResponseLabel)
-                .font(.system(size: 9, weight: .heavy))
-                .foregroundColor(DS.Colors.textTertiary)
-                .kerning(0.45)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 8) {
+                Text("AGENT")
+                    .font(.system(size: 9, weight: .heavy, design: .rounded))
+                    .kerning(1.2)
+                    .foregroundColor(activeDockItem?.accentTheme.cursorColor ?? DS.Colors.textTertiary)
 
-            Text(inlineAgentResponseText ?? inlineAgentPlaceholder)
+                Spacer()
+
+                Text(statusBadgeText)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(statusBadgeColor)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(statusBadgeColor.opacity(0.16)))
+            }
+
+            Text(inlineOverlayTitle)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(DS.Colors.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Stage: \(inlineStageLabel)")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(DS.Colors.textSecondary)
+                    .lineLimit(1)
+
+                if let statusLine = inlineStatusLine {
+                    Text("\(inlineStatusLineLabel): \(statusLine)")
+                        .font(.system(size: 10, weight: .regular))
+                        .foregroundColor(DS.Colors.textTertiary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Text(inlineOverlayCaption)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(DS.Colors.textPrimary)
                 .lineLimit(5)
                 .fixedSize(horizontal: false, vertical: true)
+
+            if !inlineSuggestedActions.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(inlineSuggestedActions, id: \.self) { actionTitle in
+                        Button(actionTitle) {
+                            runSuggestedNextAction(actionTitle)
+                        }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(DS.Colors.textPrimary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(Color.white.opacity(0.07))
+                        )
+                    }
+                }
+            }
+
+            HStack(spacing: 6) {
+                Button {
+                    prepareVoiceFollowUp()
+                } label: {
+                    Label("Voice", systemImage: "mic")
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(DS.Colors.textPrimary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(Color.white.opacity(0.07))
+                )
+
+                Button {
+                    openHUD()
+                } label: {
+                    Label("Text", systemImage: "text.cursor")
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(DS.Colors.textPrimary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(Color.white.opacity(0.07))
+                )
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 9)
@@ -179,6 +262,65 @@ struct CodexAgentModePanelSection: View {
             RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
                 .stroke(DS.Colors.borderSubtle.opacity(0.75), lineWidth: 0.5)
         )
+    }
+
+    private var statusBadgeText: String {
+        if let item = activeDockItem {
+            switch item.status {
+            case .starting: return "Starting"
+            case .running: return "Working"
+            case .done: return "Done"
+            case .failed: return "Attention"
+            }
+        }
+        return inlineAgentResponseLabel
+    }
+
+    private var statusBadgeColor: Color {
+        if let item = activeDockItem {
+            switch item.status {
+            case .starting, .running: return item.accentTheme.cursorColor
+            case .done: return Color(hex: "#65D28B")
+            case .failed: return Color(hex: "#FF7D85")
+            }
+        }
+        return DS.Colors.textTertiary
+    }
+
+    private var inlineOverlayTitle: String {
+        let fallback = session.lastSubmittedPromptText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let title = activeDockItem?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? fallback
+        return title.isEmpty ? "Agent task" : title
+    }
+
+    private var inlineStageLabel: String {
+        activeDockItem?.progressStageLabel ?? session.progressStage.label
+    }
+
+    private var inlineStatusLine: String? {
+        if let item = activeDockItem {
+            let lines = (item.activityStatusLines + [item.progressStepText ?? ""])
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            return lines.first
+        }
+        return nil
+    }
+
+    private var inlineStatusLineLabel: String {
+        "Step"
+    }
+
+    private var inlineOverlayCaption: String {
+        if let caption = activeDockItem?.caption?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !caption.isEmpty {
+            return caption
+        }
+        return inlineAgentResponseText ?? inlineAgentPlaceholder
+    }
+
+    private var inlineSuggestedActions: [String] {
+        activeDockItem?.suggestedNextActions ?? []
     }
 
     private var inlineAgentResponseLabel: String {

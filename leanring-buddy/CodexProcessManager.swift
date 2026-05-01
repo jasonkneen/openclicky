@@ -227,10 +227,11 @@ nonisolated final class CodexProcessManager: @unchecked Sendable {
     private func consumeStderr(_ data: Data) {
         stderrBuffer.append(data)
         consumeLines(from: &stderrBuffer) { [weak self] line in
+            let isBenign = Self.isBenignStderrLine(line)
             OpenClickyMessageLogStore.shared.append(
                 lane: "agent",
                 direction: "incoming",
-                event: "codex.stderr",
+                event: isBenign ? "codex.stderr.benign" : "codex.stderr",
                 fields: [
                     "line": line
                 ]
@@ -239,6 +240,15 @@ nonisolated final class CodexProcessManager: @unchecked Sendable {
                 self?.onStderrLine?(line)
             }
         }
+    }
+
+    private static func isBenignStderrLine(_ line: String) -> Bool {
+        let benignMarkers = [
+            "http://127.0.0.1:7778/mcp",
+            "mcpServer/startupStatus/updated"
+        ]
+        let lower = line.lowercased()
+        return benignMarkers.contains { lower.contains($0.lowercased()) }
     }
 
     private func consumeLines(from buffer: inout Data, handler: (String) -> Void) {

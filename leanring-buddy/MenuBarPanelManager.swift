@@ -563,7 +563,7 @@ final class AgentMenuBarStatusManager: NSObject {
         let controller = NSHostingController(rootView: rootView)
         controller.representedObject = itemID
         popover.contentViewController = controller
-        popover.contentSize = NSSize(width: 320, height: 250)
+        popover.contentSize = NSSize(width: 420, height: 300)
         activePopover = popover
         popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
     }
@@ -644,6 +644,7 @@ final class AgentMenuBarStatusManager: NSObject {
 }
 
 private struct AgentMenuBarStatusPopoverView: View {
+    private let popoverWidth: CGFloat = 420
     let item: ClickyAgentDockItem
     let canOpenDashboard: Bool
     let voice: () -> Void
@@ -658,31 +659,29 @@ private struct AgentMenuBarStatusPopoverView: View {
     /// collection so it stops occupying the menu bar.
     let dismiss: () -> Void
     @State private var isConfirmingStop = false
+    @State private var hoveredQuickAction: QuickAction? = nil
     @State private var statusLineCycleIndex = 0
     @State private var statusLineCycleTask: Task<Void, Never>?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 11) {
             HStack(alignment: .center, spacing: 10) {
-                Text("AGENT")
-                    .font(.system(size: 11, weight: .heavy, design: .rounded))
-                    .kerning(1.6)
-                    .foregroundColor(item.accentTheme.cursorColor)
-                Spacer()
                 Text(statusText)
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(statusColor)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(Capsule().fill(statusColor.opacity(0.18)))
-            }
-            .padding(.trailing, 24)
 
-            Text(titleText)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(.white)
-                .lineLimit(2)
-                .padding(.top, 2)
+                Text(titleText)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(.white)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Spacer()
+            }
+            .padding(.trailing, 30)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text("Stage: \(item.progressStageLabel)")
@@ -694,7 +693,7 @@ private struct AgentMenuBarStatusPopoverView: View {
                     Text("\(statusLineLabel): \(statusLine)")
                         .font(.system(size: 11, weight: .regular))
                         .foregroundColor(Color.white.opacity(0.58))
-                        .lineLimit(2)
+                        .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
                         .contentTransition(.opacity)
                 }
@@ -705,7 +704,7 @@ private struct AgentMenuBarStatusPopoverView: View {
                     Text(liveProgressText)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(Color.white.opacity(0.82))
-                        .lineLimit(4)
+                        .lineLimit(5)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
                     // No real activity yet — emit a thinking affordance
@@ -714,14 +713,29 @@ private struct AgentMenuBarStatusPopoverView: View {
                     AgentMenuBarThinkingDots(tint: item.accentTheme.cursorColor)
                 }
 
-                if let linkTarget {
-                    Button {
-                        NSWorkspace.shared.open(linkTarget)
-                    } label: {
-                        Label(linkButtonTitle(for: linkTarget), systemImage: "arrow.up.right.square")
+                HStack(spacing: 8) {
+                    if let linkTarget {
+                        Button {
+                            NSWorkspace.shared.open(linkTarget)
+                        } label: {
+                            Label(linkButtonTitle(for: linkTarget), systemImage: "arrow.up.right.square")
+                        }
+                        .buttonStyle(.borderless)
+                        .font(.system(size: 12, weight: .semibold))
                     }
-                    .buttonStyle(.borderless)
-                    .font(.system(size: 12, weight: .semibold))
+
+                    Spacer(minLength: 0)
+
+                    if item.status == .starting || item.status == .running {
+                        Button("Stop") {
+                            isConfirmingStop = true
+                        }
+                        .foregroundColor(Color(hex: "#FFB4BA"))
+                        .confirmationDialog("Stop this agent?", isPresented: $isConfirmingStop, titleVisibility: .visible) {
+                            Button("Stop", role: .destructive, action: stop)
+                            Button("Keep running", role: .cancel) {}
+                        }
+                    }
                 }
             }
 
@@ -738,13 +752,14 @@ private struct AgentMenuBarStatusPopoverView: View {
                 .font(.system(size: 12, weight: .semibold))
             }
 
-            HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 8) {
                 stopControls
-                Spacer(minLength: 8)
-                Button("Voice", action: voice)
-                Button("Text", action: text)
-                if canOpenDashboard {
-                    Button("Dashboard", action: dashboard)
+                HStack(spacing: 10) {
+                    quickActionButton(icon: "mic", label: "Voice", quickAction: .voice, action: voice)
+                    quickActionButton(icon: "text.cursor", label: "Text", quickAction: .text, action: text)
+                    if canOpenDashboard {
+                        quickActionButton(icon: "rectangle.grid.2x2", label: "Dashboard", quickAction: .dashboard, action: dashboard)
+                    }
                 }
             }
             .buttonStyle(.borderless)
@@ -759,8 +774,8 @@ private struct AgentMenuBarStatusPopoverView: View {
             .foregroundColor(Color.white.opacity(0.72))
             .offset(x: 8, y: -8)
         }
-        .padding(12)
-        .frame(width: 320, alignment: .leading)
+        .padding(14)
+        .frame(width: popoverWidth, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(
@@ -798,23 +813,24 @@ private struct AgentMenuBarStatusPopoverView: View {
         case .starting, .running:
             Button("Close", action: close)
                 .foregroundColor(Color.white.opacity(0.82))
+        }
+    }
 
-            if isConfirmingStop {
-                Button("Confirm stop") {
-                    isConfirmingStop = false
-                    stop()
+    @ViewBuilder
+    private func quickActionButton(icon: String, label: String, quickAction: QuickAction, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                if hoveredQuickAction == quickAction {
+                    Text(label)
                 }
-                .foregroundColor(Color(hex: "#FFB4BA"))
-                Button("Keep") {
-                    isConfirmingStop = false
-                }
-            } else {
-                Button("Stop") {
-                    isConfirmingStop = true
-                }
-                .foregroundColor(Color(hex: "#FFB4BA"))
             }
         }
+        .onHover { hoveredQuickAction = $0 ? quickAction : nil }
+    }
+
+    private enum QuickAction {
+        case voice, text, dashboard
     }
 
     private var linkTarget: URL? {

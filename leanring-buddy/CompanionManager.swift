@@ -7745,6 +7745,7 @@ final class CompanionManager: ObservableObject {
                 "instructionLength": trimmedPrompt.count
             ]
         )
+        stageDashboardAgentSubmission(prompt: trimmedPrompt, session: codexAgentSession)
         submitAgentPrompt(trimmedPrompt, to: codexAgentSession)
         markRequestCompleted(
             route: "agent.followup",
@@ -7760,6 +7761,62 @@ final class CompanionManager: ObservableObject {
                 "model": codexAgentSession.model
             ]
         )
+    }
+
+    /// Keeps dashboard-driven turns aligned with the same corner-dock UX as
+    /// voice starts: corner flight cue, hoverable dock card, and menu item.
+    private func stageDashboardAgentSubmission(prompt: String, session: CodexAgentSession) {
+        let summary = Self.shortAgentInstructionSummary(prompt)
+        let activity = "Starting \(summary)"
+        let screen = agentDockTargetScreen()
+
+        flyBuddyTowardAgentDock(acknowledgement: "on it.", on: screen)
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_900_000_000)
+            clearDetectedElementLocation()
+        }
+
+        if let itemIndex = agentDockItems.lastIndex(where: { $0.sessionID == session.id }) {
+            agentDockItems[itemIndex].title = summary
+            agentDockItems[itemIndex].userInstruction = prompt
+            agentDockItems[itemIndex].status = .starting
+            agentDockItems[itemIndex].progressStageLabel = "Starting"
+            agentDockItems[itemIndex].progressStepText = activity
+            agentDockItems[itemIndex].activityStatusLines = [activity]
+            agentDockItems[itemIndex].caption = "on it."
+        } else {
+            let dockItem = ClickyAgentDockItem(
+                id: UUID(),
+                sessionID: session.id,
+                title: summary,
+                userInstruction: prompt,
+                accentTheme: Self.nextAgentDockAccentTheme(existingCount: agentDockItems.count),
+                status: .starting,
+                progressStageLabel: "Starting",
+                progressStepText: activity,
+                activityStatusLines: [activity],
+                caption: "on it.",
+                suggestedNextActions: [],
+                createdAt: Date()
+            )
+            agentDockItems.append(dockItem)
+            if agentDockItems.count > 6 {
+                agentDockItems.removeFirst(agentDockItems.count - 6)
+            }
+        }
+
+        refreshAgentDockFollowBehavior()
+        scheduleWidgetSnapshotPublish()
+
+        if let screen {
+            agentDockWindowManager.show(
+                companionManager: self,
+                onScreen: screen,
+                position: agentParkingPosition
+            )
+        } else {
+            showAgentDockWindowNearCurrentScreen()
+        }
     }
 
     private func submitAgentPrompt(_ prompt: String, to session: CodexAgentSession, includeScreenContext: Bool = true) {

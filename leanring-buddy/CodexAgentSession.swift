@@ -230,6 +230,9 @@ final class CodexAgentSession: ObservableObject, Identifiable {
     private var pendingAssistantDeltaFlushTask: Task<Void, Never>?
     private var hasInitializedProcess = false
     private var lastSubmittedPrompt: String?
+    var lastSubmittedPromptText: String? {
+        lastSubmittedPrompt
+    }
     private var currentLeasePaths: [String] = []
     private static let codexRuntimeCompatibilityFallbackModel = "gpt-5.4-mini"
     private static let assistantDeltaFlushDelayNanoseconds: UInt64 = 180_000_000
@@ -1370,56 +1373,65 @@ final class CodexAgentSession: ObservableObject, Identifiable {
 
     private static func userFacingAgentMessage(from text: String) -> String {
         if let fileURL = firstOpenableFileURL(in: text) {
-            return "Found \(fileURL.lastPathComponent). Showing it now."
+            return "Found \(genericArtifactLabel(for: fileURL)). Showing it now."
         }
 
         return text
     }
 
+    private static func genericArtifactLabel(for fileURL: URL) -> String {
+        let ext = fileURL.pathExtension.lowercased()
+        if ["png", "jpg", "jpeg", "gif", "webp", "heic", "bmp", "tiff"].contains(ext) {
+            return "the image"
+        }
+        if ["log", "txt", "md", "json", "jsonl", "yaml", "yml", "toml", "csv"].contains(ext) {
+            return "that file"
+        }
+        if ["keychain", "pem", "key", "crt", "cer", "p12", "pfx"].contains(ext) {
+            return "that login file"
+        }
+        return "that file"
+    }
+
     private static func plainEnglishCommandSummary(command: String, output: String, exitCode: Int?) -> String {
-        let loweredCommand = command.lowercased()
-        let loweredOutput = output.lowercased()
+        let cleanedCommand = compactSingleLine(command)
+        let cleanedOutput = compactSingleLine(strippingANSI(output))
 
         if let exitCode, exitCode != 0 {
-            return "A tool step needs attention."
+            if !cleanedOutput.isEmpty {
+                return "Command failed (\(exitCode)): \(snippet(cleanedOutput, maxLength: 180))"
+            }
+            return "Command failed (\(exitCode)): \(snippet(cleanedCommand, maxLength: 180))"
         }
 
-        if loweredCommand.contains("mdfind")
-            || loweredCommand.contains(" find ")
-            || loweredCommand.hasPrefix("find ")
-            || loweredCommand.contains(" rg ")
-            || loweredCommand.hasPrefix("rg ")
-            || loweredCommand.contains(" grep ")
-            || loweredCommand.hasPrefix("grep ")
-            || loweredCommand.contains(" ls ")
-            || loweredCommand.hasPrefix("ls ") {
-            return "Looking for matching files..."
+        if !cleanedOutput.isEmpty {
+            return snippet(cleanedOutput, maxLength: 180)
         }
 
-        if loweredCommand.contains("open ")
-            || loweredCommand.contains("qlmanage")
-            || loweredCommand.contains("quick look")
-            || loweredOutput.contains("opened")
-            || loweredOutput.contains("showing") {
-            return "Showing the result..."
-        }
+        return "Ran: \(snippet(cleanedCommand, maxLength: 160))"
+    }
 
-        if loweredCommand.contains("osascript")
-            || loweredCommand.contains("tell application")
-            || loweredCommand.contains("activate") {
-            return "Focusing the right app..."
-        }
+    private static func compactSingleLine(_ text: String) -> String {
+        text
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
-        if loweredCommand.contains("swift")
-            || loweredCommand.contains("npm")
-            || loweredCommand.contains("node")
-            || loweredCommand.contains("python")
-            || loweredCommand.contains("pytest")
-            || loweredCommand.contains("test") {
-            return "Checking the work..."
+    private static func snippet(_ text: String, maxLength: Int) -> String {
+        guard maxLength > 0, text.count > maxLength else { return text }
+        let endIndex = text.index(text.startIndex, offsetBy: maxLength)
+        let prefix = String(text[..<endIndex])
+        if let lastSpace = prefix.lastIndex(of: " ") {
+            return "\(prefix[..<lastSpace])..."
         }
+        return "\(prefix)..."
+    }
 
-        return "Working through the task..."
+    private static func strippingANSI(_ text: String) -> String {
+        let ansiPattern = #"\u{001B}\[[0-9;]*[A-Za-z]"#
+        return text.replacingOccurrences(of: ansiPattern, with: "", options: .regularExpression)
     }
 
     private static func firstOpenableFileURL(in text: String, fileManager: FileManager = .default) -> URL? {
@@ -1711,7 +1723,7 @@ final class CodexAgentSession: ObservableObject, Identifiable {
             ?? CodexJSON.string(item["filePath"])
             ?? CodexJSON.string(item["filename"])
         if let path, !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "Editing \(spokenSnippet(from: path, maxLength: 90))"
+            return "Editing a file"
         }
         return "Editing files"
     }
@@ -1721,7 +1733,7 @@ final class CodexAgentSession: ObservableObject, Identifiable {
             ?? CodexJSON.string(item["filePath"])
             ?? CodexJSON.string(item["filename"])
         if let path, !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "Updated \(spokenSnippet(from: path, maxLength: 90))"
+            return "Updated a file"
         }
         return "Updated files"
     }
