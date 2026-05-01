@@ -2,6 +2,59 @@ import AppKit
 import Combine
 import Foundation
 
+actor OpenClickyAgentFileLeaseCoordinator {
+    static let shared = OpenClickyAgentFileLeaseCoordinator()
+
+    struct LeaseConflict {
+        let path: String
+        let ownerSessionID: UUID
+        let ownerTitle: String
+    }
+
+    struct LeaseSummary {
+        let claimedPaths: [String]
+        let conflicts: [LeaseConflict]
+    }
+
+    private struct LeaseRecord {
+        let sessionID: UUID
+        let sessionTitle: String
+        let acquiredAt: Date
+    }
+
+    private var leasesByPath: [String: LeaseRecord] = [:]
+    private var pathsBySession: [UUID: Set<String>] = [:]
+
+    func claimPaths(_ paths: [String], for sessionID: UUID, title: String) -> LeaseSummary {
+        releaseLeases(for: sessionID)
+        let uniquePaths = Array(Set(paths)).sorted()
+        var claimedPaths: [String] = []
+        var conflicts: [LeaseConflict] = []
+
+        for path in uniquePaths {
+            if let existing = leasesByPath[path], existing.sessionID != sessionID {
+                conflicts.append(LeaseConflict(path: path, ownerSessionID: existing.sessionID, ownerTitle: existing.sessionTitle))
+                continue
+            }
+
+            leasesByPath[path] = LeaseRecord(sessionID: sessionID, sessionTitle: title, acquiredAt: Date())
+            pathsBySession[sessionID, default: []].insert(path)
+            claimedPaths.append(path)
+        }
+
+        return LeaseSummary(claimedPaths: claimedPaths, conflicts: conflicts)
+    }
+
+    func releaseLeases(for sessionID: UUID) {
+        guard let paths = pathsBySession.removeValue(forKey: sessionID) else { return }
+        for path in paths {
+            if leasesByPath[path]?.sessionID == sessionID {
+                leasesByPath.removeValue(forKey: path)
+            }
+        }
+    }
+}
+
 struct CodexTranscriptEntry: Identifiable, Equatable {
     enum Role: String, Equatable {
         case user
@@ -177,6 +230,7 @@ final class CodexAgentSession: ObservableObject, Identifiable {
     private var pendingAssistantDeltaFlushTask: Task<Void, Never>?
     private var hasInitializedProcess = false
     private var lastSubmittedPrompt: String?
+    private var currentLeasePaths: [String] = []
     private static let codexRuntimeCompatibilityFallbackModel = "gpt-5.4-mini"
     private static let assistantDeltaFlushDelayNanoseconds: UInt64 = 180_000_000
 
@@ -228,7 +282,8 @@ final class CodexAgentSession: ObservableObject, Identifiable {
         entries.append(CodexTranscriptEntry(role: .user, text: trimmed))
         appendActivityStatusLine("Queued request: \(Self.spokenSnippet(from: trimmed, maxLength: 90))")
         Task {
-            await runPrompt(promptForModel(prompt: trimmed, screenContext: screenContext))
+            let coordinationNote = await buildAgentCoordinationNote(for: trimmed)
+            await runPrompt(promptForModel(prompt: trimmed, screenContext: screenContext, coordinationNote: coordinationNote))
         }
     }
 
@@ -259,6 +314,7 @@ final class CodexAgentSession: ObservableObject, Identifiable {
         currentAssistantEntryID = nil
         status = .stopped
         progressStage = .idle
+        Task { await OpenClickyAgentFileLeaseCoordinator.shared.releaseLeases(for: id) }
     }
 
     private func runPrompt(_ prompt: String, didRetryCompatibilityFallback: Bool = false) async {
@@ -314,11 +370,19 @@ final class CodexAgentSession: ObservableObject, Identifiable {
         }
     }
 
-    private func promptForModel(prompt: String, screenContext: CodexAgentScreenContext?) -> String {
+    private func promptForModel(prompt: String, screenContext: CodexAgentScreenContext?, coordinationNote: String?) -> String {
+        let coordinationSection: String
+        if let coordinationNote, !coordinationNote.isEmpty {
+            coordinationSection = "\n\(coordinationNote)\n"
+        } else {
+            coordinationSection = ""
+        }
+
         let taskBrief = """
         OpenClicky Agent Mode brief:
         - User request: \(prompt)
         - Work as an independent background agent. Each OpenClicky agent session has its own Codex runtime, thread, and process; do not assume another agent has your local state.
+        \(coordinationSection)
         - Runtime map file: \(homeManager.runtimeMapFile.path)
         - Codex home directory: \(homeManager.codexHomeDirectory.path)
         - Codex config file: \(homeManager.codexHomeDirectory.appendingPathComponent("config.toml", isDirectory: false).path)
@@ -543,6 +607,8 @@ final class CodexAgentSession: ObservableObject, Identifiable {
             status = .ready
             progressStage = .completed
             appendActivityStatusLine("Finished the agent loop")
+            Task { await OpenClickyAgentFileLeaseCoordinator.shared.releaseLeases(for: id) }
+            currentLeasePaths = []
             // Chime intentionally NOT played here. CompanionManager owns
             // the audio choreography and plays the chime *after* any
             // in-flight TTS finishes, so the chime can't cut the
@@ -742,6 +808,52 @@ final class CodexAgentSession: ObservableObject, Identifiable {
             appendActivityStatusLine(Self.fileChangeCompletedSummary(from: item))
         default:
             break
+        }
+    }
+
+    private func buildAgentCoordinationNote(for prompt: String) async -> String? {
+        let mentionedPaths = Self.extractLikelyFilePaths(from: prompt)
+        guard !mentionedPaths.isEmpty else {
+            currentLeasePaths = []
+            await OpenClickyAgentFileLeaseCoordinator.shared.releaseLeases(for: id)
+            return nil
+        }
+
+        let leaseSummary = await OpenClickyAgentFileLeaseCoordinator.shared.claimPaths(mentionedPaths, for: id, title: title)
+        currentLeasePaths = leaseSummary.claimedPaths
+
+        let claimedList = leaseSummary.claimedPaths.map { "- \($0)" }.joined(separator: "\n")
+        let conflictList = leaseSummary.conflicts.map { conflict in
+            "- \(conflict.path) (currently held by \(conflict.ownerTitle))"
+        }.joined(separator: "\n")
+
+        if leaseSummary.conflicts.isEmpty {
+            return """
+            - Agent file coordination:
+              - Claimed file ownership for this run:
+            \(claimedList)
+              - If scope changes, avoid editing files owned by other running agents.
+            """
+        }
+
+        return """
+        - Agent file coordination:
+          - Claimed file ownership for this run:
+        \(claimedList)
+          - Potential ownership conflicts detected:
+        \(conflictList)
+          - Do not edit conflicting files in this run; choose non-overlapping files or return blocked.
+        """
+    }
+
+    private static func extractLikelyFilePaths(from text: String) -> [String] {
+        let pattern = #"(?:~|/)?(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.(?:swift|m|mm|h|cpp|c|js|ts|tsx|jsx|json|toml|yaml|yml|md|txt|plist|xcodeproj|pbxproj)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let nsText = text as NSString
+        let matches = regex.matches(in: text, range: NSRange(location: 0, length: nsText.length))
+        return matches.compactMap { match in
+            guard match.range.location != NSNotFound else { return nil }
+            return nsText.substring(with: match.range)
         }
     }
 
