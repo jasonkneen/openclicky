@@ -8659,14 +8659,45 @@ final class CompanionManager: ObservableObject {
                     self.voiceState = .idle
                 }
 
-                // Pick the screen capture matching Claude's screen number,
-                // falling back to the cursor screen if not specified.
+                // Pick the screen capture for the buddy to point on.
+                //
+                // The capture step set `isCursorScreen` against the mouse
+                // location AT CAPTURE TIME — but Claude's response can take
+                // several seconds, and the user may have moved between
+                // displays in that window. Re-read the cursor's CURRENT
+                // location and use it as the source of truth.
+                //
+                // Resolution order:
+                //   1. If Claude returned a screenNumber AND it matches the
+                //      cursor's current screen, trust Claude.
+                //   2. If Claude returned a screenNumber that disagrees with
+                //      the cursor screen, prefer the cursor screen and log
+                //      the mismatch (Claude probably looked at the wrong
+                //      capture; honoring its choice would fly the buddy to
+                //      a screen the user isn't on).
+                //   3. If Claude returned no screenNumber, use the cursor's
+                //      current screen.
+                //   4. As a last resort, use the captured `isCursorScreen`
+                //      flag (stale but better than nothing).
+                let liveMouseLocation = NSEvent.mouseLocation
+                let liveCursorCapture = screenCaptures.first { capture in
+                    capture.displayFrame.contains(liveMouseLocation)
+                }
                 let targetScreenCapture: CompanionScreenCapture? = {
                     if let screenNumber = parseResult.screenNumber,
                        screenNumber >= 1 && screenNumber <= screenCaptures.count {
-                        return screenCaptures[screenNumber - 1]
+                        let claudePick = screenCaptures[screenNumber - 1]
+                        if let liveCursorCapture {
+                            if claudePick.displayFrame == liveCursorCapture.displayFrame {
+                                return claudePick
+                            }
+                            print("🖥️ Pointing screen mismatch — Claude picked screen \(screenNumber) (\(claudePick.displayFrame)) but cursor is on \(liveCursorCapture.displayFrame). Using cursor screen.")
+                            return liveCursorCapture
+                        }
+                        return claudePick
                     }
-                    return screenCaptures.first(where: { $0.isCursorScreen })
+                    return liveCursorCapture
+                        ?? screenCaptures.first(where: { $0.isCursorScreen })
                 }()
 
                 if let pointCoordinate = parseResult.coordinate,
@@ -8995,13 +9026,26 @@ final class CompanionManager: ObservableObject {
     }
 
     private func tutorTargetScreenCapture(from screenCaptures: [CompanionScreenCapture], screenNumber: Int?) -> CompanionScreenCapture? {
+        // Re-read the cursor's CURRENT screen (see voice-pointing path for
+        // the rationale — `isCursorScreen` was set at capture time and may
+        // be stale by the time tutor mode resolves).
+        let liveMouseLocation = NSEvent.mouseLocation
+        let liveCursorCapture = screenCaptures.first { $0.displayFrame.contains(liveMouseLocation) }
+
         if let screenNumber,
            screenNumber >= 1,
            screenNumber <= screenCaptures.count {
-            return screenCaptures[screenNumber - 1]
+            let claudePick = screenCaptures[screenNumber - 1]
+            if let liveCursorCapture, claudePick.displayFrame != liveCursorCapture.displayFrame {
+                print("🖥️ Tutor screen mismatch — Claude picked screen \(screenNumber) but cursor is on \(liveCursorCapture.displayFrame). Using cursor screen.")
+                return liveCursorCapture
+            }
+            return claudePick
         }
 
-        return screenCaptures.first(where: { $0.isCursorScreen }) ?? screenCaptures.first
+        return liveCursorCapture
+            ?? screenCaptures.first(where: { $0.isCursorScreen })
+            ?? screenCaptures.first
     }
 
     private func globalPoint(fromScreenshotPoint point: CGPoint, in capture: CompanionScreenCapture) -> CGPoint {
