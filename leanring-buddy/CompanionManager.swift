@@ -8661,24 +8661,24 @@ final class CompanionManager: ObservableObject {
 
                 // Pick the screen capture for the buddy to point on.
                 //
-                // The capture step set `isCursorScreen` against the mouse
-                // location AT CAPTURE TIME — but Claude's response can take
-                // several seconds, and the user may have moved between
-                // displays in that window. Re-read the cursor's CURRENT
-                // location and use it as the source of truth.
-                //
                 // Resolution order:
-                //   1. If Claude returned a screenNumber AND it matches the
-                //      cursor's current screen, trust Claude.
-                //   2. If Claude returned a screenNumber that disagrees with
-                //      the cursor screen, prefer the cursor screen and log
-                //      the mismatch (Claude probably looked at the wrong
-                //      capture; honoring its choice would fly the buddy to
-                //      a screen the user isn't on).
-                //   3. If Claude returned no screenNumber, use the cursor's
-                //      current screen.
-                //   4. As a last resort, use the captured `isCursorScreen`
-                //      flag (stale but better than nothing).
+                //   1. If Claude returned a screenNumber tag, trust it —
+                //      that's a deliberate signal that the element lives on
+                //      that specific screen. Honor it even when the cursor
+                //      is on a different display (the user may have looked
+                //      at screen 2 while the cursor stayed on screen 1).
+                //   2. If no screenNumber, use the cursor's current screen
+                //      (re-read live, not the stale `isCursorScreen` flag
+                //      from capture time — Claude can take several seconds
+                //      to respond and the user may have moved in that window).
+                //   3. Last resort: the captured `isCursorScreen` flag.
+                //
+                // Earlier versions of this logic preferred the cursor screen
+                // even when Claude returned screenNumber, which broke the
+                // common "Claude correctly identified an element on the
+                // other screen" case. The current logic keeps the live-cursor
+                // benefit when Claude *didn't* tag a screen, and trusts
+                // Claude when it did.
                 let liveMouseLocation = NSEvent.mouseLocation
                 let liveCursorCapture = screenCaptures.first { capture in
                     capture.displayFrame.contains(liveMouseLocation)
@@ -8686,15 +8686,7 @@ final class CompanionManager: ObservableObject {
                 let targetScreenCapture: CompanionScreenCapture? = {
                     if let screenNumber = parseResult.screenNumber,
                        screenNumber >= 1 && screenNumber <= screenCaptures.count {
-                        let claudePick = screenCaptures[screenNumber - 1]
-                        if let liveCursorCapture {
-                            if claudePick.displayFrame == liveCursorCapture.displayFrame {
-                                return claudePick
-                            }
-                            print("🖥️ Pointing screen mismatch — Claude picked screen \(screenNumber) (\(claudePick.displayFrame)) but cursor is on \(liveCursorCapture.displayFrame). Using cursor screen.")
-                            return liveCursorCapture
-                        }
-                        return claudePick
+                        return screenCaptures[screenNumber - 1]
                     }
                     return liveCursorCapture
                         ?? screenCaptures.first(where: { $0.isCursorScreen })
@@ -9026,22 +9018,21 @@ final class CompanionManager: ObservableObject {
     }
 
     private func tutorTargetScreenCapture(from screenCaptures: [CompanionScreenCapture], screenNumber: Int?) -> CompanionScreenCapture? {
-        // Re-read the cursor's CURRENT screen (see voice-pointing path for
-        // the rationale — `isCursorScreen` was set at capture time and may
-        // be stale by the time tutor mode resolves).
-        let liveMouseLocation = NSEvent.mouseLocation
-        let liveCursorCapture = screenCaptures.first { $0.displayFrame.contains(liveMouseLocation) }
-
+        // Resolution order:
+        //   1. If Claude returned a screenNumber tag, trust it — that's a
+        //      deliberate signal about which screen the element lives on.
+        //   2. Otherwise, fall back to the cursor's live current screen
+        //      (re-read so we don't use a stale `isCursorScreen` flag from
+        //      capture time).
+        //   3. Last resort: the captured `isCursorScreen` flag.
         if let screenNumber,
            screenNumber >= 1,
            screenNumber <= screenCaptures.count {
-            let claudePick = screenCaptures[screenNumber - 1]
-            if let liveCursorCapture, claudePick.displayFrame != liveCursorCapture.displayFrame {
-                print("🖥️ Tutor screen mismatch — Claude picked screen \(screenNumber) but cursor is on \(liveCursorCapture.displayFrame). Using cursor screen.")
-                return liveCursorCapture
-            }
-            return claudePick
+            return screenCaptures[screenNumber - 1]
         }
+
+        let liveMouseLocation = NSEvent.mouseLocation
+        let liveCursorCapture = screenCaptures.first { $0.displayFrame.contains(liveMouseLocation) }
 
         return liveCursorCapture
             ?? screenCaptures.first(where: { $0.isCursorScreen })
