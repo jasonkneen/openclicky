@@ -112,6 +112,12 @@ final class CodexHomeManager {
         let skills = home.appendingPathComponent(bundledSkillsDirectoryName, isDirectory: true)
         if let source = resourceURL(named: bundledSkillsDirectoryName, bundle: bundle) {
             try copyDirectoryIfMissing(at: source, to: skills)
+            // Also merge in any individual skills bundled by a newer app
+            // version that the existing CodexHome was missing. Cheap pass —
+            // only copies subdirectories absent at the destination, so it
+            // doesn't churn the wiki-seed-style perf problem the parent
+            // copyDirectoryIfMissing was guarding against.
+            try mergeMissingSubdirectories(at: source, into: skills)
         } else {
             try fileManager.createDirectory(at: skills, withIntermediateDirectories: true)
         }
@@ -379,6 +385,36 @@ final class CodexHomeManager {
             try archiveExistingItem(at: destination, reason: "runtime-replacement")
         }
         try fileManager.copyItem(at: source, to: destination)
+    }
+
+    /// Copies any first-level subdirectories present at `source` but absent at
+    /// `destination`. Used to add newly-bundled skills (e.g. `hatch-pet` shipped
+    /// in a later app version) into a previously-seeded CodexHome without
+    /// re-copying the existing skills directory. Skips files at the source
+    /// root and never overwrites an existing destination subdirectory.
+    private func mergeMissingSubdirectories(at source: URL, into destination: URL) throws {
+        var sourceIsDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: source.path, isDirectory: &sourceIsDirectory),
+              sourceIsDirectory.boolValue else { return }
+        var destinationIsDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: destination.path, isDirectory: &destinationIsDirectory),
+              destinationIsDirectory.boolValue else {
+            // The parent copyDirectoryIfMissing path is responsible for the
+            // initial seed; we only run after that succeeded.
+            return
+        }
+        let entries = try fileManager.contentsOfDirectory(
+            at: source,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        )
+        for entry in entries {
+            var isDir: ObjCBool = false
+            guard fileManager.fileExists(atPath: entry.path, isDirectory: &isDir), isDir.boolValue else { continue }
+            let target = destination.appendingPathComponent(entry.lastPathComponent, isDirectory: true)
+            if fileManager.fileExists(atPath: target.path) { continue }
+            try fileManager.copyItem(at: entry, to: target)
+        }
     }
 
     private func itemsAppearEqual(_ first: URL, _ second: URL) throws -> Bool {
