@@ -1078,13 +1078,13 @@ struct CompanionPanelView: View {
                         Triangle()
                             .fill(accent)
                             .frame(width: 15, height: 15)
-                            .rotationEffect(.degrees(-35))
+                            .rotationEffect(.degrees(-25))
                             .shadow(color: accent.opacity(0.72), radius: 7)
                     case .triangleOutline:
                         Triangle()
                             .stroke(accent, lineWidth: 2)
                             .frame(width: 15, height: 15)
-                            .rotationEffect(.degrees(-35))
+                            .rotationEffect(.degrees(-25))
                     case .pet:
                         EmptyView()
                     }
@@ -1198,7 +1198,7 @@ struct CompanionPanelView: View {
                 Triangle()
                     .fill(accentTheme.cursorColor)
                     .frame(width: 15, height: 15)
-                    .rotationEffect(.degrees(-35))
+                    .rotationEffect(.degrees(-25))
                     .shadow(color: accentTheme.cursorColor.opacity(0.72), radius: 7, x: 0, y: 0)
             }
             .frame(maxWidth: .infinity)

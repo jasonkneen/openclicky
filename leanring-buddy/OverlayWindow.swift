@@ -233,14 +233,10 @@ private struct ClickyTriangleCursorView: View {
                 ClickyTriangleShape()
                     .fill(accentColor)
                     .shadow(color: accentColor.opacity(0.45), radius: 4)
-                ClickyTriangleShape()
-                    .stroke(Color.white.opacity(0.92), style: StrokeStyle(lineWidth: 1.6, lineJoin: .round))
             case .outline:
                 ClickyTriangleShape()
                     .stroke(accentColor.opacity(0.34), style: StrokeStyle(lineWidth: 8.0, lineJoin: .round))
                     .blur(radius: 1.8)
-                ClickyTriangleShape()
-                    .stroke(Color.white.opacity(0.96), style: StrokeStyle(lineWidth: 5.1, lineJoin: .round))
                 ClickyTriangleShape()
                     .stroke(accentColor, style: StrokeStyle(lineWidth: 3.2, lineJoin: .round))
             }
@@ -360,7 +356,7 @@ struct BlueCursorView: View {
 
     /// The rotation angle of the cursor companion in degrees.
     /// Changes to face the direction of travel when navigating to a target.
-    @State private var buddyRotationDegrees: Double = -8.0
+    @State private var buddyRotationDegrees: Double = 2.0
 
     /// Speech bubble text shown when pointing at a detected element.
     @State private var navigationBubbleText: String = ""
@@ -717,7 +713,7 @@ struct BlueCursorView: View {
         ZStack {
             ClickyCursorAvatarView(accentColor: color, showsEyes: false)
                 .frame(width: 23, height: 30)
-                .rotationEffect(.degrees(-8))
+                .rotationEffect(.degrees(2))
                 .shadow(color: color.opacity(0.90), radius: 10, x: 0, y: 0)
                 .position(position)
                 .transition(.opacity.combined(with: .scale(scale: 0.92)))
@@ -1060,7 +1056,7 @@ struct BlueCursorView: View {
         buddyNavigationMode = .pointingAtTarget
 
         // Rotate back to default angle now that we've arrived
-        buddyRotationDegrees = -8.0
+        buddyRotationDegrees = 2.0
 
         // Reset navigation bubble state — start small for the scale-bounce entrance
         navigationBubbleText = ""
@@ -1156,7 +1152,7 @@ struct BlueCursorView: View {
         navigationAnimationTimer = nil
         buddyNavigationMode = .followingCursor
         isReturningToCursor = false
-        buddyRotationDegrees = -8.0
+        buddyRotationDegrees = 2.0
         buddyFlightScale = 1.0
         navigationBubbleText = ""
         navigationBubbleOpacity = 0.0
@@ -1431,7 +1427,7 @@ private struct ClickyAgentDockItemView: View {
 
             ClickyCursorAvatarView(accentColor: item.accentTheme.cursorColor)
                 .frame(width: 25, height: 33)
-                .rotationEffect(.degrees(-8))
+                .rotationEffect(.degrees(2))
                 .shadow(color: item.accentTheme.cursorColor.opacity(0.82), radius: 7, x: 0, y: 0)
                 .frame(width: 52, height: 52)
 

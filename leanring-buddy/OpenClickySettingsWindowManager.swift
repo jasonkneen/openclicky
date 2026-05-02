@@ -1132,7 +1132,7 @@ struct OpenClickySettingsView: View {
                     Triangle()
                         .fill(accentTheme.cursorColor)
                         .frame(width: 18, height: 18)
-                        .rotationEffect(.degrees(-35))
+                        .rotationEffect(.degrees(-25))
                 }
                 .frame(width: 46, height: 46)
 
