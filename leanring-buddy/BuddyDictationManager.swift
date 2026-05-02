@@ -743,7 +743,8 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         let inputFormat = inputNode.outputFormat(forBus: 0)
 
         removeInputTapIfNeeded()
-        inputNode.installTap(onBus: 0, bufferSize: 512, format: inputFormat) { [weak self] buffer, _ in
+        // Smaller tap buffers lower capture-to-provider handoff latency.
+        inputNode.installTap(onBus: 0, bufferSize: 256, format: inputFormat) { [weak self] buffer, _ in
             self?.activeTranscriptionSession?.appendAudioBuffer(buffer)
             self?.updateAudioPowerLevel(from: buffer)
         }

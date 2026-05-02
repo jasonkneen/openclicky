@@ -13,7 +13,12 @@ import SwiftUI
 struct CompanionPanelView: View {
     @ObservedObject var companionManager: CompanionManager
     @AppStorage(ClickyAccentTheme.userDefaultsKey) private var selectedAccentThemeID = ClickyAccentTheme.blue.rawValue
+    @AppStorage(ClickyCursorAvatarStyle.userDefaultsKey) private var avatarStyleRawValue = ClickyCursorAvatarStyle.default.storageValue
+    @ObservedObject private var petLibrary = ClickyBuddyPetLibrary.shared
     @State private var isPanelPinned: Bool
+    @State private var isShowingHatchSheet: Bool = false
+    @State private var hatchPetName: String = ""
+    @State private var hatchPetDescription: String = ""
     #if DEBUG
     @State private var showDevTools = false
     #endif
@@ -933,7 +938,8 @@ struct CompanionPanelView: View {
                     .padding(.top, 2)
                     .padding(.bottom, 10)
             } else {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 10) {
+                    cursorBuddySection
                     cursorColorSection
                     #if DEBUG
                     activationShortcutDebugButton
@@ -944,6 +950,9 @@ struct CompanionPanelView: View {
                 .padding(.top, 13)
                 .padding(.bottom, 10)
             }
+        }
+        .sheet(isPresented: $isShowingHatchSheet) {
+            hatchPetSheet
         }
     }
 
@@ -980,6 +989,196 @@ struct CompanionPanelView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Cursor buddy picker
+
+    private var currentCursorAvatarStyle: ClickyCursorAvatarStyle {
+        ClickyCursorAvatarStyle(storageValue: avatarStyleRawValue)
+    }
+
+    private var cursorBuddySection: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text("Cursor buddy")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(DS.Colors.textSecondary)
+                Spacer()
+                Button(action: { presentHatchSheet() }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text("Hatch new")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(Color.white.opacity(0.06))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .stroke(DS.Colors.borderSubtle, lineWidth: 0.6)
+                            )
+                    )
+                    .foregroundColor(DS.Colors.textSecondary)
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+                .help("Hatch a new buddy via Codex Agent Mode")
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 4) {
+                    avatarTile(.triangleFilled, label: "Triangle")
+                    avatarTile(.triangleOutline, label: "Outline")
+                    ForEach(petLibrary.pets) { pet in
+                        avatarTileForPet(pet)
+                    }
+                    if petLibrary.pets.isEmpty {
+                        emptyBuddiesHintTile
+                    }
+                }
+            }
+        }
+    }
+
+    private var emptyBuddiesHintTile: some View {
+        Button(action: { presentHatchSheet() }) {
+            VStack(spacing: 2) {
+                Image(systemName: "plus")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(DS.Colors.textTertiary)
+                Text("Hatch one")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(DS.Colors.textTertiary)
+            }
+            .frame(width: 56, height: 39)
+            .overlay(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .stroke(DS.Colors.borderSubtle, style: StrokeStyle(lineWidth: 0.8, dash: [3, 3]))
+            )
+        }
+        .buttonStyle(.plain)
+        .pointerCursor()
+    }
+
+    private func avatarTile(_ style: ClickyCursorAvatarStyle, label: String) -> some View {
+        let isSelected = currentCursorAvatarStyle == style
+        let accent = (ClickyAccentTheme(rawValue: selectedAccentThemeID) ?? .blue).cursorColor
+
+        return Button(action: { avatarStyleRawValue = style.storageValue }) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(isSelected ? accent.opacity(0.16) : Color.white.opacity(0.055))
+
+                Group {
+                    switch style {
+                    case .triangleFilled:
+                        Triangle()
+                            .fill(accent)
+                            .frame(width: 15, height: 15)
+                            .rotationEffect(.degrees(-35))
+                            .shadow(color: accent.opacity(0.72), radius: 7)
+                    case .triangleOutline:
+                        Triangle()
+                            .stroke(accent, lineWidth: 2)
+                            .frame(width: 15, height: 15)
+                            .rotationEffect(.degrees(-35))
+                    case .pet:
+                        EmptyView()
+                    }
+                }
+            }
+            .frame(width: 56, height: 39)
+            .overlay(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .stroke(isSelected ? accent : DS.Colors.borderSubtle, lineWidth: isSelected ? 1.5 : 0.6)
+            )
+        }
+        .buttonStyle(.plain)
+        .pointerCursor()
+        .help(label)
+    }
+
+    private func avatarTileForPet(_ pet: ClickyBuddyPet) -> some View {
+        let style = ClickyCursorAvatarStyle.pet(id: pet.id)
+        let isSelected = currentCursorAvatarStyle == style
+        let accent = (ClickyAccentTheme(rawValue: selectedAccentThemeID) ?? .blue).cursorColor
+
+        return Button(action: { avatarStyleRawValue = style.storageValue }) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(isSelected ? accent.opacity(0.16) : Color.white.opacity(0.055))
+                ClickyPetThumbnailView(pet: pet)
+                    .frame(width: 30, height: 32)
+            }
+            .frame(width: 56, height: 39)
+            .overlay(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .stroke(isSelected ? accent : DS.Colors.borderSubtle, lineWidth: isSelected ? 1.5 : 0.6)
+            )
+        }
+        .buttonStyle(.plain)
+        .pointerCursor()
+        .help(pet.displayName)
+    }
+
+    // MARK: - Hatch sheet
+
+    private func presentHatchSheet() {
+        hatchPetName = ""
+        hatchPetDescription = ""
+        isShowingHatchSheet = true
+    }
+
+    private var hatchPetSheet: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Hatch a new buddy")
+                    .font(.system(size: 14, weight: .semibold))
+                Text("This launches a Codex Agent Mode session that runs the hatch-pet skill. It can take several minutes and consumes OpenAI image-gen credits.")
+                    .font(.system(size: 11))
+                    .foregroundColor(DS.Colors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Name")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(DS.Colors.textSecondary)
+                TextField("e.g. Pixel", text: $hatchPetName)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Description (optional)")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(DS.Colors.textSecondary)
+                TextField("A friendly pixel-art companion", text: $hatchPetDescription)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel") { isShowingHatchSheet = false }
+                    .keyboardShortcut(.cancelAction)
+                Button("Hatch") {
+                    let theme = ClickyAccentTheme(rawValue: selectedAccentThemeID) ?? .blue
+                    _ = ClickyPetHatchCoordinator.shared.beginHatch(
+                        name: hatchPetName,
+                        description: hatchPetDescription,
+                        accentTheme: theme,
+                        companionManager: companionManager
+                    )
+                    isShowingHatchSheet = false
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(hatchPetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(16)
+        .frame(width: 360)
     }
 
     private var cursorColorThemeOrder: [ClickyAccentTheme] {

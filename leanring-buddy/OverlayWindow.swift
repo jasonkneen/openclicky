@@ -2,7 +2,7 @@
 //  OverlayWindow.swift
 //  leanring-buddy
 //
-//  System-wide transparent overlay window for blue glowing cursor.
+//  System-wide transparent overlay window for the OpenClicky cursor companion.
 //  One OverlayWindow is created per screen so the cursor buddy
 //  seamlessly follows the cursor across multiple monitors.
 //
@@ -131,19 +131,137 @@ class OverlayWindow: NSWindow {
     }
 }
 
-// Cursor-like triangle shape (equilateral)
-struct Triangle: Shape {
+/// Cursor avatar styles.
+///
+/// Stored as a `String` (with embedded payload for `.pet`) so it round-trips
+/// through `@AppStorage` and `UserDefaults` cleanly.
+///
+/// Legacy values:
+///   - `"triangle"` (pre-fork single triangle) ➝ treated as `.triangleFilled`.
+///   - `"paperclip"` (removed; was hardcoded clippy) ➝ falls back to default.
+///   - `"customAsset"` (single static template image) ➝ falls back to default.
+enum ClickyCursorAvatarStyle: Equatable {
+    case triangleFilled
+    case triangleOutline
+    case pet(id: String)
+
+    static let userDefaultsKey = "openclicky.cursorAvatarStyle"
+    static let `default`: ClickyCursorAvatarStyle = .triangleFilled
+
+    /// Storage representation. `.pet(id)` is encoded as `"pet:<id>"`.
+    var storageValue: String {
+        switch self {
+        case .triangleFilled:    return "triangleFilled"
+        case .triangleOutline:   return "triangleOutline"
+        case .pet(let id):       return "pet:\(id)"
+        }
+    }
+
+    init(storageValue raw: String) {
+        switch raw {
+        case "triangleFilled", "triangle", "":
+            self = .triangleFilled
+        case "triangleOutline":
+            self = .triangleOutline
+        // Legacy values we no longer support — fall back to default.
+        case "paperclip", "customAsset":
+            self = .triangleFilled
+        default:
+            if raw.hasPrefix("pet:") {
+                let id = String(raw.dropFirst("pet:".count))
+                if !id.isEmpty {
+                    self = .pet(id: id)
+                    return
+                }
+            }
+            self = .triangleFilled
+        }
+    }
+
+    /// Whether the parent view should apply rotation to this avatar.
+    /// Triangles point in a direction; pets always face up and use their
+    /// own running-left/running-right rows for direction.
+    var honorsParentRotation: Bool {
+        switch self {
+        case .triangleFilled, .triangleOutline: return true
+        case .pet:                              return false
+        }
+    }
+}
+
+private struct ClickyCursorAvatarView: View {
+    let accentColor: Color
+    var showsEyes: Bool = true
+    /// High-level animation state used when rendering a pet. Ignored for
+    /// triangle styles. Default is `.idle` so the existing call sites that
+    /// don't have a state machine still render cleanly.
+    var animationState: ClickyBuddyAnimationState = .idle
+    @AppStorage(ClickyCursorAvatarStyle.userDefaultsKey) private var avatarStyleRawValue = ClickyCursorAvatarStyle.default.storageValue
+    @ObservedObject private var petLibrary = ClickyBuddyPetLibrary.shared
+
+    private var avatarStyle: ClickyCursorAvatarStyle {
+        ClickyCursorAvatarStyle(storageValue: avatarStyleRawValue)
+    }
+
+    var body: some View {
+        switch avatarStyle {
+        case .triangleFilled:
+            ClickyTriangleCursorView(accentColor: accentColor, style: .filled)
+        case .triangleOutline:
+            ClickyTriangleCursorView(accentColor: accentColor, style: .outline)
+        case .pet(let id):
+            if let pet = petLibrary.pet(withID: id) {
+                ClickyPetSpriteView(pet: pet, animationState: animationState, haloColor: accentColor)
+            } else {
+                // Pet referenced but not installed (yet) — graceful fallback
+                // keeps the cursor visible while the user re-picks or hatches.
+                ClickyTriangleCursorView(accentColor: accentColor, style: .filled)
+            }
+        }
+    }
+}
+
+private struct ClickyTriangleCursorView: View {
+    enum Style { case filled, outline }
+    let accentColor: Color
+    let style: Style
+
+    var body: some View {
+        ZStack {
+            switch style {
+            case .filled:
+                ClickyTriangleShape()
+                    .fill(accentColor)
+                    .shadow(color: accentColor.opacity(0.45), radius: 4)
+                ClickyTriangleShape()
+                    .stroke(Color.white.opacity(0.92), style: StrokeStyle(lineWidth: 1.6, lineJoin: .round))
+            case .outline:
+                ClickyTriangleShape()
+                    .stroke(accentColor.opacity(0.34), style: StrokeStyle(lineWidth: 8.0, lineJoin: .round))
+                    .blur(radius: 1.8)
+                ClickyTriangleShape()
+                    .stroke(Color.white.opacity(0.96), style: StrokeStyle(lineWidth: 5.1, lineJoin: .round))
+                ClickyTriangleShape()
+                    .stroke(accentColor, style: StrokeStyle(lineWidth: 3.2, lineJoin: .round))
+            }
+        }
+        .aspectRatio(0.86, contentMode: .fit)
+    }
+}
+
+private struct ClickyTriangleShape: Shape {
     func path(in rect: CGRect) -> Path {
         var path = Path()
-        let size = min(rect.width, rect.height)
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let size = min(rect.width, rect.height) * 0.82
         let height = size * sqrt(3.0) / 2.0
+        let top = CGPoint(x: center.x, y: center.y + height * 0.56)
+        let bottomLeft = CGPoint(x: center.x - size / 2.0, y: center.y - height * 0.44)
+        let bottomRight = CGPoint(x: center.x + size / 2.0, y: center.y - height * 0.44)
 
-        // Top vertex
-        path.move(to: CGPoint(x: rect.midX, y: rect.midY - height / 1.5))
-        // Bottom left vertex
-        path.addLine(to: CGPoint(x: rect.midX - size / 2, y: rect.midY + height / 3))
-        // Bottom right vertex
-        path.addLine(to: CGPoint(x: rect.midX + size / 2, y: rect.midY + height / 3))
+        path.move(to: top)
+        path.addLine(to: bottomLeft)
+        path.addLine(to: bottomRight)
         path.closeSubpath()
         return path
     }
@@ -189,10 +307,10 @@ enum BuddyNavigationMode {
     case pointingAtTarget
 }
 
-// SwiftUI view for the blue glowing cursor pointer.
+// SwiftUI view for the glowing cursor companion.
 // Each screen gets its own BlueCursorView. The view checks whether
 // the cursor is currently on THIS screen and only shows the buddy
-// triangle when it is. During voice interaction, the triangle is
+// mascot when it is. During voice interaction, the mascot is
 // replaced by a waveform (listening), spinner (processing), or
 // streaming text bubble (responding).
 struct BlueCursorView: View {
@@ -240,9 +358,9 @@ struct BlueCursorView: View {
     /// The buddy's current behavioral mode (following cursor, navigating, or pointing).
     @State private var buddyNavigationMode: BuddyNavigationMode = .followingCursor
 
-    /// The rotation angle of the triangle in degrees. Default is -35° (cursor-like).
+    /// The rotation angle of the cursor companion in degrees.
     /// Changes to face the direction of travel when navigating to a target.
-    @State private var triangleRotationDegrees: Double = -35.0
+    @State private var buddyRotationDegrees: Double = -8.0
 
     /// Speech bubble text shown when pointing at a detected element.
     @State private var navigationBubbleText: String = ""
@@ -257,7 +375,7 @@ struct BlueCursorView: View {
     /// Invalidated when the flight completes, is canceled, or the view disappears.
     @State private var navigationAnimationTimer: Timer?
 
-    /// Scale factor applied to the buddy triangle during flight. Grows to ~1.3x
+    /// Scale factor applied to the buddy mascot during flight. Grows to ~1.3x
     /// at the midpoint of the arc and shrinks back to 1.0x on landing, creating
     /// an energetic "swooping" feel.
     @State private var buddyFlightScale: CGFloat = 1.0
@@ -269,6 +387,28 @@ struct BlueCursorView: View {
     /// True when the buddy is flying BACK to the cursor after pointing.
     /// Only during the return flight can cursor movement cancel the animation.
     @State private var isReturningToCursor: Bool = false
+
+    // MARK: - Pet animation state
+    //
+    // Only used when the user has picked a `.pet(...)` cursor avatar style.
+    // Triangle styles ignore these.
+
+    /// High-level animation state fed to `ClickyPetSpriteView`.
+    @State private var petAnimationState: ClickyBuddyAnimationState = .idle
+
+    /// Last horizontal cursor position used to estimate running direction.
+    @State private var lastDirectionSampleX: CGFloat = 0
+    /// Wall-clock time of the last running-row update — drives a small dwell
+    /// hysteresis so tiny ↔ swap doesn't flip-flop the row every frame.
+    @State private var lastRunningRowFlipAt: Date = .distantPast
+
+    @AppStorage(ClickyCursorAvatarStyle.userDefaultsKey)
+    private var avatarStyleRawValueForRotation = ClickyCursorAvatarStyle.default.storageValue
+
+    /// True when the active avatar is rotation-aware (triangles).
+    private var avatarHonorsRotation: Bool {
+        ClickyCursorAvatarStyle(storageValue: avatarStyleRawValueForRotation).honorsParentRotation
+    }
 
     private let fullWelcomeMessage = "hey! i'm clicky"
     private var overlayCursorColor: Color {
@@ -406,19 +546,25 @@ struct BlueCursorView: View {
                     }
             }
 
-            // Blue triangle cursor — shown when idle or while TTS is playing (responding).
-            // All three states (triangle, waveform, spinner) stay in the view tree
+            // Cursor companion — shown when idle or while TTS is playing (responding).
+            // All three states (mascot, waveform, spinner) stay in the view tree
             // permanently and cross-fade via opacity so SwiftUI doesn't remove/re-insert
             // them (which caused a visible cursor "pop").
             //
             // During cursor following: fast spring animation for snappy tracking.
             // During navigation: NO implicit animation — the frame-by-frame bezier
             // timer controls position directly at 60fps for a smooth arc flight.
-            Triangle()
-                .fill(overlayCursorColor)
-                .frame(width: 16, height: 16)
-                .rotationEffect(.degrees(triangleRotationDegrees))
-                .shadow(color: overlayCursorColor, radius: 8 + (buddyFlightScale - 1.0) * 20, x: 0, y: 0)
+            //
+            // Rotation is applied conditionally: triangle styles point in their
+            // direction of travel via rotation; pet sprites face up and use
+            // their own running-left/running-right rows for direction instead.
+            ClickyCursorAvatarView(
+                accentColor: overlayCursorColor,
+                animationState: petAnimationState
+            )
+                .frame(width: avatarHonorsRotation ? 25 : 48, height: avatarHonorsRotation ? 33 : 52)
+                .rotationEffect(.degrees(avatarHonorsRotation ? buddyRotationDegrees : 0))
+                .shadow(color: overlayCursorColor.opacity(0.86), radius: 8 + (buddyFlightScale - 1.0) * 20, x: 0, y: 0)
                 .scaleEffect(buddyFlightScale)
                 .opacity(buddyIsVisibleOnThisScreen && (cursorState.voiceState == .idle || cursorState.voiceState == .responding) ? cursorOpacity : 0)
                 .position(cursorPosition)
@@ -431,10 +577,23 @@ struct BlueCursorView: View {
                 .animation(.easeIn(duration: 0.25), value: cursorState.voiceState)
                 .animation(
                     buddyNavigationMode == .navigatingToTarget ? nil : .easeInOut(duration: 0.3),
-                    value: triangleRotationDegrees
+                    value: buddyRotationDegrees
                 )
+                // Recompute pet row whenever ANY relevant input changes —
+                // covers navigation flights (cursorPosition is updated by
+                // the bezier timer, not the mouse tracker) and state-only
+                // transitions like processing or pointing.
+                .onChange(of: cursorPosition) { _, newPos in
+                    updatePetAnimationStateForCursorMotion(toX: newPos.x)
+                }
+                .onChange(of: buddyNavigationMode) { _, _ in
+                    updatePetAnimationStateForCursorMotion(toX: cursorPosition.x)
+                }
+                .onChange(of: cursorState.voiceState) { _, _ in
+                    updatePetAnimationStateForCursorMotion(toX: cursorPosition.x)
+                }
 
-            // Blue waveform — replaces the triangle while listening
+            // Blue waveform — replaces the mascot while listening
             BlueCursorWaveformView(
                 audioPowerLevel: cursorState.currentAudioPowerLevel,
                 cursorColor: overlayCursorColor,
@@ -512,7 +671,7 @@ struct BlueCursorView: View {
         startNavigatingToElement(screenLocation: screenLocation)
     }
 
-    /// Whether the buddy triangle should be visible on this screen.
+    /// Whether the buddy mascot should be visible on this screen.
     /// True when cursor is on this screen during normal following, or
     /// when navigating/pointing at a target on this screen. When another
     /// screen is navigating (detectedElementScreenLocation is set but this
@@ -556,10 +715,9 @@ struct BlueCursorView: View {
         let position = CGPoint(x: local.x + 35, y: local.y + 25)
         let color = colorFromHex(cursor.accentHex) ?? overlayCursorColor
         ZStack {
-            Triangle()
-                .fill(color)
-                .frame(width: 17, height: 17)
-                .rotationEffect(.degrees(-35))
+            ClickyCursorAvatarView(accentColor: color, showsEyes: false)
+                .frame(width: 23, height: 30)
+                .rotationEffect(.degrees(-8))
                 .shadow(color: color.opacity(0.90), radius: 10, x: 0, y: 0)
                 .position(position)
                 .transition(.opacity.combined(with: .scale(scale: 0.92)))
@@ -704,6 +862,71 @@ struct BlueCursorView: View {
         let buddyX = swiftUIPosition.x + 35
         let buddyY = swiftUIPosition.y + 25
         cursorPosition = CGPoint(x: buddyX, y: buddyY)
+
+        updatePetAnimationStateForCursorMotion(toX: buddyX)
+    }
+
+    // MARK: - Pet animation state derivation
+
+    /// Translates the buddy's full state (voice, navigation, cursor motion)
+    /// into the right atlas row for the pet sprite. Called on every cursor
+    /// position change AND on every navigation/voice state change so the
+    /// pet stays in sync regardless of who's driving the position update
+    /// (mouse tracker vs. bezier-flight timer).
+    private func updatePetAnimationStateForCursorMotion(toX newX: CGFloat) {
+        // Skip work entirely when the active avatar isn't a pet — the
+        // triangle styles ignore animation state.
+        guard !avatarHonorsRotation else { return }
+
+        // Highest priority: thinking spinner shouldn't show running cycles.
+        if cursorState.voiceState == .processing {
+            setPetAnimationState(.review)
+            lastDirectionSampleX = newX
+            return
+        }
+        // Pointing-at-target is a stationary pose — wave at the target.
+        if buddyNavigationMode == .pointingAtTarget {
+            setPetAnimationState(.waving)
+            lastDirectionSampleX = newX
+            return
+        }
+
+        // Velocity drives direction whether we're following the cursor OR
+        // flying along a bezier arc — both update `cursorPosition`. During
+        // navigation the bezier timer ticks at 60fps so dx stays meaningful.
+        let dx = newX - lastDirectionSampleX
+        let now = Date()
+        let deadZone: CGFloat = 1.5
+        let minDwell: TimeInterval = 0.08
+        let isFlying = buddyNavigationMode == .navigatingToTarget
+
+        if abs(dx) < deadZone {
+            // Mid-flight with no horizontal component (vertical arc, or
+            // crest of the curve where dx briefly approaches 0) — fall back
+            // to the generic running row so the sprite keeps looking active.
+            if isFlying {
+                if petAnimationState != .running {
+                    setPetAnimationState(.running)
+                }
+            } else if now.timeIntervalSince(lastRunningRowFlipAt) > 0.6 {
+                // Following cursor and cursor has been still for >0.6s.
+                setPetAnimationState(.idle)
+            }
+        } else {
+            let desired: ClickyBuddyAnimationState = dx > 0 ? .runningRight : .runningLeft
+            if desired != petAnimationState,
+               now.timeIntervalSince(lastRunningRowFlipAt) > minDwell {
+                setPetAnimationState(desired)
+                lastRunningRowFlipAt = now
+            }
+        }
+        lastDirectionSampleX = newX
+    }
+
+    private func setPetAnimationState(_ next: ClickyBuddyAnimationState) {
+        if petAnimationState != next {
+            petAnimationState = next
+        }
     }
 
     /// Converts a macOS screen point (AppKit, bottom-left origin) to SwiftUI
@@ -753,7 +976,7 @@ struct BlueCursorView: View {
     }
 
     /// Animates the buddy along a quadratic bezier arc from its current position
-    /// to the specified destination. The triangle rotates to face its direction
+    /// to the specified destination. The mascot tilts toward its direction
     /// of travel (tangent to the curve) each frame, scales up at the midpoint
     /// for a "swooping" feel, and the glow intensifies during flight.
     private func animateBezierFlightArc(
@@ -820,9 +1043,9 @@ struct BlueCursorView: View {
                          + 2.0 * t * (endPosition.x - controlPoint.x)
             let tangentY = 2.0 * oneMinusT * (controlPoint.y - startPosition.y)
                          + 2.0 * t * (endPosition.y - controlPoint.y)
-            // +90° offset because the triangle's "tip" points up at 0° rotation,
-            // and atan2 returns 0° for rightward movement
-            self.triangleRotationDegrees = atan2(tangentY, tangentX) * (180.0 / .pi) + 90.0
+            // A small offset makes the paperclip lean into rightward movement
+            // instead of standing straight up during flight.
+            self.buddyRotationDegrees = atan2(tangentY, tangentX) * (180.0 / .pi) + 18.0
 
             // Scale pulse: sin curve peaks at midpoint of the flight.
             // Buddy grows to ~1.3x at the apex, then shrinks back to 1.0x on landing.
@@ -836,8 +1059,8 @@ struct BlueCursorView: View {
     private func startPointingAtElement() {
         buddyNavigationMode = .pointingAtTarget
 
-        // Rotate back to default pointer angle now that we've arrived
-        triangleRotationDegrees = -35.0
+        // Rotate back to default angle now that we've arrived
+        buddyRotationDegrees = -8.0
 
         // Reset navigation bubble state — start small for the scale-bounce entrance
         navigationBubbleText = ""
@@ -933,7 +1156,7 @@ struct BlueCursorView: View {
         navigationAnimationTimer = nil
         buddyNavigationMode = .followingCursor
         isReturningToCursor = false
-        triangleRotationDegrees = -35.0
+        buddyRotationDegrees = -8.0
         buddyFlightScale = 1.0
         navigationBubbleText = ""
         navigationBubbleOpacity = 0.0
@@ -971,7 +1194,7 @@ struct BlueCursorView: View {
 
 // MARK: - Blue Cursor Waveform
 
-/// A small blue waveform that replaces the triangle cursor while
+/// A small blue waveform that replaces the cursor companion while
 /// the user is holding the push-to-talk shortcut and speaking.
 private struct BlueCursorWaveformView: View {
     let audioPowerLevel: CGFloat
@@ -1022,7 +1245,7 @@ private struct BlueCursorWaveformView: View {
 
 // MARK: - Blue Cursor Spinner
 
-/// A small blue spinning indicator that replaces the triangle cursor
+/// A small blue spinning indicator that replaces the cursor companion
 /// while the AI is processing a voice input.
 private struct BlueCursorSpinnerView: View {
     let cursorColor: Color
@@ -1206,10 +1429,9 @@ private struct ClickyAgentDockItemView: View {
                 .shadow(color: item.accentTheme.cursorColor.opacity(0.70), radius: 16, x: 0, y: 0)
                 .shadow(color: Color.black.opacity(0.50), radius: 8, x: 0, y: 4)
 
-            Triangle()
-                .fill(item.accentTheme.cursorColor)
-                .frame(width: 18, height: 18)
-                .rotationEffect(.degrees(-35))
+            ClickyCursorAvatarView(accentColor: item.accentTheme.cursorColor)
+                .frame(width: 25, height: 33)
+                .rotationEffect(.degrees(-8))
                 .shadow(color: item.accentTheme.cursorColor.opacity(0.82), radius: 7, x: 0, y: 0)
                 .frame(width: 52, height: 52)
 

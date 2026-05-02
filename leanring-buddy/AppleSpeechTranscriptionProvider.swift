@@ -58,7 +58,7 @@ final class AppleSpeechTranscriptionProvider: BuddyTranscriptionProvider {
 }
 
 private final class AppleSpeechTranscriptionSession: NSObject, BuddyStreamingTranscriptionSession {
-    let finalTranscriptFallbackDelaySeconds: TimeInterval = 1.8
+    let finalTranscriptFallbackDelaySeconds: TimeInterval = 1.2
 
     private let recognitionRequest: SFSpeechAudioBufferRecognitionRequest
     private var recognitionTask: SFSpeechRecognitionTask?
@@ -85,7 +85,9 @@ private final class AppleSpeechTranscriptionSession: NSObject, BuddyStreamingTra
 
         recognitionRequest.shouldReportPartialResults = true
         recognitionRequest.taskHint = .dictation
-        recognitionRequest.addsPunctuation = true
+        // Lower-latency dictation path: punctuation post-processing tends to
+        // add a little tail delay versus plain transcript tokens.
+        recognitionRequest.addsPunctuation = false
 
         if speechRecognizer.supportsOnDeviceRecognition {
             recognitionRequest.requiresOnDeviceRecognition = true
