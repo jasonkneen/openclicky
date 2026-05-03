@@ -55,8 +55,8 @@ actor OpenClickyAgentFileLeaseCoordinator {
     }
 }
 
-struct CodexTranscriptEntry: Identifiable, Equatable {
-    enum Role: String, Equatable {
+struct CodexTranscriptEntry: Identifiable, Equatable, Codable {
+    enum Role: String, Equatable, Codable {
         case user
         case assistant
         case system
@@ -172,6 +172,7 @@ final class CodexAgentSession: ObservableObject, Identifiable {
     @Published private(set) var title: String
     @Published private(set) var progressStage: CodexAgentProgressStage = .idle
     @Published private(set) var activityStatusLines: [String] = []
+    @Published private(set) var queuedFollowUpPrompts: [String] = []
     @Published var model: String = OpenClickyModelCatalog.codexActionsModel(
         withID: UserDefaults.standard.string(forKey: "clickyCodexModel") ?? OpenClickyModelCatalog.defaultCodexActionsModelID
     ).id
@@ -273,20 +274,68 @@ final class CodexAgentSession: ObservableObject, Identifiable {
         }
     }
 
+    func restoreArchivedState(entries archivedEntries: [CodexTranscriptEntry], activeThreadID archivedThreadID: String?, lastSubmittedPrompt archivedPrompt: String?) {
+        stop(reason: "archived_session_recalled")
+        entries = archivedEntries
+        activeThreadID = archivedThreadID
+        lastSubmittedPrompt = archivedPrompt
+        latestResponseCard = nil
+        queuedFollowUpPrompts.removeAll()
+        activityStatusLines.removeAll()
+        progressStage = .idle
+        lastErrorMessage = nil
+        stopReason = nil
+        status = archivedEntries.isEmpty ? .stopped : .ready
+    }
+
     func submitPromptFromUI(_ prompt: String, screenContext: CodexAgentScreenContext? = nil) {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
-        if entries.isEmpty {
-            title = Self.shortTitle(from: trimmed)
+        if isTurnActiveForChatQueue {
+            queueFollowUp(trimmed)
+            return
         }
 
-        lastSubmittedPrompt = trimmed
-        entries.append(CodexTranscriptEntry(role: .user, text: trimmed))
-        appendActivityStatusLine("Queued request: \(Self.spokenSnippet(from: trimmed, maxLength: 90))")
+        startPromptTurn(trimmed, screenContext: screenContext)
+    }
+
+    var isTurnActiveForChatQueue: Bool {
+        switch status {
+        case .starting, .running:
+            return true
+        case .stopped, .ready, .failed:
+            return false
+        }
+    }
+
+    func removeQueuedFollowUp(at offsets: IndexSet) {
+        for index in offsets.sorted(by: >) where queuedFollowUpPrompts.indices.contains(index) {
+            queuedFollowUpPrompts.remove(at: index)
+        }
+    }
+
+    func removeQueuedFollowUp(_ prompt: String) {
+        guard let index = queuedFollowUpPrompts.firstIndex(of: prompt) else { return }
+        queuedFollowUpPrompts.remove(at: index)
+    }
+
+    private func queueFollowUp(_ prompt: String) {
+        queuedFollowUpPrompts.append(prompt)
+        appendActivityStatusLine("Queued follow-up: \(Self.spokenSnippet(from: prompt, maxLength: 90))")
+    }
+
+    private func startPromptTurn(_ prompt: String, screenContext: CodexAgentScreenContext? = nil) {
+        if entries.isEmpty {
+            title = Self.shortTitle(from: prompt)
+        }
+
+        lastSubmittedPrompt = prompt
+        entries.append(CodexTranscriptEntry(role: .user, text: prompt))
+        appendActivityStatusLine("Queued request: \(Self.spokenSnippet(from: prompt, maxLength: 90))")
         Task {
-            let coordinationNote = await buildAgentCoordinationNote(for: trimmed)
-            await runPrompt(promptForModel(prompt: trimmed, screenContext: screenContext, coordinationNote: coordinationNote))
+            let coordinationNote = await buildAgentCoordinationNote(for: prompt)
+            await runPrompt(promptForModel(prompt: prompt, screenContext: screenContext, coordinationNote: coordinationNote))
         }
     }
 
@@ -307,6 +356,7 @@ final class CodexAgentSession: ObservableObject, Identifiable {
     }
 
     func stop(reason: String? = nil) {
+        queuedFollowUpPrompts.removeAll()
         pendingAssistantDeltaFlushTask?.cancel()
         pendingAssistantDeltaFlushTask = nil
         pendingAssistantDeltas.removeAll()
@@ -612,6 +662,10 @@ final class CodexAgentSession: ObservableObject, Identifiable {
             appendActivityStatusLine("Finished the agent loop")
             Task { await OpenClickyAgentFileLeaseCoordinator.shared.releaseLeases(for: id) }
             currentLeasePaths = []
+            if !queuedFollowUpPrompts.isEmpty {
+                let nextPrompt = queuedFollowUpPrompts.removeFirst()
+                startPromptTurn(nextPrompt, screenContext: nil)
+            }
             // Chime intentionally NOT played here. CompanionManager owns
             // the audio choreography and plays the chime *after* any
             // in-flight TTS finishes, so the chime can't cut the

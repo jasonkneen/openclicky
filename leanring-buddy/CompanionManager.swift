@@ -1240,6 +1240,83 @@ final class CompanionManager: ObservableObject {
         }
     }
 
+    private func animateAgentSpawnProxyFromCursorToDock(accentTheme: ClickyAccentTheme, caption: String? = nil) {
+        let startPoint = Self.clampedExternalCursorPoint(NSEvent.mouseLocation)
+        let targetPoint = agentDockSpawnProxyTargetPoint(from: startPoint)
+        let id = UUID()
+        let cursor = OpenClickyExternalProxyCursor(
+            id: id,
+            screenLocation: startPoint,
+            caption: caption?.trimmingCharacters(in: .whitespacesAndNewlines),
+            accentHex: Self.cursorHex(for: accentTheme)
+        )
+        cursorOverlayState.externalSecondaryCursors.append(cursor)
+        showCursorOverlayIfAvailable()
+
+        externalSecondaryCursorClearTasks[id]?.cancel()
+        externalSecondaryCursorClearTasks[id] = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 45_000_000)
+            await MainActor.run {
+                self?.moveExternalSecondaryCursor(id, to: targetPoint)
+            }
+
+            try? await Task.sleep(nanoseconds: 620_000_000)
+            await MainActor.run {
+                self?.removeExternalSecondaryCursor(id)
+            }
+        }
+    }
+
+    private func moveExternalSecondaryCursor(_ id: UUID, to point: CGPoint) {
+        guard let index = cursorOverlayState.externalSecondaryCursors.firstIndex(where: { $0.id == id }) else { return }
+        var cursors = cursorOverlayState.externalSecondaryCursors
+        cursors[index].screenLocation = Self.clampedExternalCursorPoint(point)
+        cursorOverlayState.externalSecondaryCursors = cursors
+    }
+
+    private func agentDockSpawnProxyTargetPoint(from startPoint: CGPoint) -> CGPoint {
+        let screen = NSScreen.screens.first(where: { $0.frame.contains(startPoint) })
+            ?? agentDockTargetScreen()
+            ?? NSScreen.main
+
+        guard let screen else { return startPoint }
+
+        let dockSize = NSSize(width: 760, height: 500)
+        let edgeInset: CGFloat
+        switch agentParkingPosition {
+        case .topLeft, .topCenter, .topRight:
+            edgeInset = max(56, screen.frame.maxY - screen.visibleFrame.maxY + 56)
+        default:
+            edgeInset = 16
+        }
+
+        var origin = agentParkingPosition.originForWindow(size: dockSize, on: screen, edgeInset: edgeInset)
+        if agentParkingPosition == .topRight {
+            origin.x += 70
+            origin.y += 70
+        }
+
+        let approximateDockIconCenter = CGPoint(
+            x: origin.x + dockSize.width - 50,
+            y: origin.y + dockSize.height - 50
+        )
+        return Self.clampedExternalCursorPoint(approximateDockIconCenter)
+    }
+
+
+    private static func cursorHex(for accentTheme: ClickyAccentTheme) -> String {
+        switch accentTheme {
+        case .blue:
+            return "#3380FF"
+        case .mint:
+            return "#35D39A"
+        case .amber:
+            return "#FACC15"
+        case .rose:
+            return "#FF4F5E"
+        }
+    }
+
     private static func clampedExternalCursorPoint(_ point: CGPoint) -> CGPoint {
         guard !NSScreen.screens.isEmpty else { return point }
         let unionFrame = NSScreen.screens.reduce(CGRect.null) { partial, screen in
@@ -1681,6 +1758,23 @@ final class CompanionManager: ObservableObject {
         return session
     }
 
+    /// Creates a brand-new agent session, stages it into the same dock/menu
+    /// surfaces as a normal agent task, then submits the initial prompt.
+    @discardableResult
+    func createAndLaunchCodexAgentSession(
+        title: String? = nil,
+        prompt: String,
+        accentTheme: ClickyAccentTheme? = nil,
+        includeScreenContext: Bool = true
+    ) -> CodexAgentSession {
+        let session = createAndSelectNewCodexAgentSession(title: title, accentTheme: accentTheme)
+        let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPrompt.isEmpty else { return session }
+        stageDashboardAgentSubmission(prompt: trimmedPrompt, session: session)
+        submitAgentPrompt(trimmedPrompt, to: session, includeScreenContext: includeScreenContext)
+        return session
+    }
+
     private func handleAgentFoundOpenableFile(_ fileURL: URL, session: CodexAgentSession) {
         let standardizedURL = fileURL.standardizedFileURL
         let eventKey = "\(session.id.uuidString)|\(standardizedURL.path)"
@@ -1705,6 +1799,59 @@ final class CompanionManager: ObservableObject {
         guard codexAgentSessions.contains(where: { $0.id == sessionID }) else { return }
         activeCodexAgentSessionID = sessionID
         lastAgentContextSessionID = sessionID
+    }
+
+    func closeCodexAgentSession(_ sessionID: UUID) {
+        guard let closingIndex = codexAgentSessions.firstIndex(where: { $0.id == sessionID }) else { return }
+
+        let closingSession = codexAgentSessions[closingIndex]
+        closingSession.stop(reason: "chat_session_closed")
+        closingSession.onOpenableFileFound = nil
+
+        cancelPendingAgentDockItemRemoval(for: sessionID)
+        pendingAgentActivityRefreshTasks[sessionID]?.cancel()
+        pendingAgentActivityRefreshTasks.removeValue(forKey: sessionID)
+        pendingAgentDockItemRemovalTasks.removeValue(forKey: sessionID)
+        agentStatusCancellables.removeValue(forKey: sessionID)
+        agentActivityCancellables.removeValue(forKey: sessionID)
+        agentLoopActivityCancellables.removeValue(forKey: sessionID)
+        agentTitleCancellables.removeValue(forKey: sessionID)
+        agentRequestTimingsBySessionID.removeValue(forKey: sessionID)
+        agentExecutionStartDatesBySessionID.removeValue(forKey: sessionID)
+        lastNarratedAgentOutcomeBySessionID.removeValue(forKey: sessionID)
+
+        codexAgentSessions.remove(at: closingIndex)
+        agentDockItems.removeAll { $0.sessionID == sessionID }
+
+        if pendingAgentVoiceFollowUpSessionID == sessionID {
+            pendingAgentVoiceFollowUpSessionID = nil
+            pendingAgentVoiceFollowUpCreatedAt = nil
+        }
+        if lastAgentContextSessionID == sessionID {
+            lastAgentContextSessionID = nil
+        }
+
+        if codexAgentSessions.isEmpty {
+            _ = createAndSelectNewCodexAgentSession()
+        } else if activeCodexAgentSessionID == sessionID {
+            let fallbackIndex = min(closingIndex, codexAgentSessions.count - 1)
+            selectCodexAgentSession(codexAgentSessions[fallbackIndex].id)
+        }
+
+        if agentDockItems.isEmpty {
+            agentDockWindowManager.hide()
+        }
+
+        OpenClickyMessageLogStore.shared.append(
+            lane: "agent",
+            direction: "incoming",
+            event: "openclicky.agent_session.closed",
+            fields: [
+                "sessionID": sessionID.uuidString,
+                "title": closingSession.title
+            ]
+        )
+        scheduleWidgetSnapshotPublish()
     }
 
     private func beginRequestTiming(source: String, text: String) -> OpenClickyRequestTiming {
@@ -4797,7 +4944,8 @@ final class CompanionManager: ObservableObject {
 
         let patterns = [
             #"(?i)^\s*(?:this\s+is\s+)?(?:a\s+)?(?:new|separate|different)\s+(?:agent\s+|codex\s+)?task\s*[:,-]?\s+(.+?)\s*$"#,
-            #"(?i)^\s*(?:start|create|spin\s+up|kick\s+off|launch)\s+(?:a\s+)?(?:new|separate|different)\s+(?:agent|codex)\s+task\s*(?:to|for|that)?\s+(.+?)\s*$"#,
+            #"(?i)^\s*(?:start|create|spin\s+up|kick\s+off|launch|set\s+off)\s+(?:a\s+)?(?:new|separate|different)\s+(?:agent|codex)\s+task\s*(?:to|for|that)?\s+(.+?)\s*$"#,
+            #"(?i)^\s*set\s+(?:an?\s+)?(?:new|separate|different)\s+(?:agent|codex)\s+(?:off|going)\s+(?:to|for|that)?\s+(.+?)\s*$"#,
             #"(?i)^\s*(?:new|separate|different)\s+(?:agent|codex)\s*(?:task|job|session)?\s*[:,-]?\s+(.+?)\s*$"#
         ]
 
@@ -4825,7 +4973,8 @@ final class CompanionManager: ObservableObject {
 
         let patterns = [
             #"(?i)^\s*(?:this\s+is\s+)?(?:a\s+)?(?:new|separate|different)\s+(?:agent\s+|codex\s+)?task[\s\.\!\?]*$"#,
-            #"(?i)^\s*(?:start|create|spin\s+up|kick\s+off|launch)\s+(?:a\s+)?(?:new|separate|different)\s+(?:agent|codex)\s+task[\s\.\!\?]*$"#,
+            #"(?i)^\s*(?:start|create|spin\s+up|kick\s+off|launch|set\s+off)\s+(?:a\s+)?(?:new|separate|different)\s+(?:agent|codex)\s+task[\s\.\!\?]*$"#,
+            #"(?i)^\s*set\s+(?:an?\s+)?(?:new|separate|different)\s+(?:agent|codex)\s+(?:off|going)[\s\.\!\?]*$"#,
             #"(?i)^\s*(?:new|separate|different)\s+(?:agent|codex)\s*(?:task|job|session)?[\s\.\!\?]*$"#
         ]
 
@@ -5482,6 +5631,7 @@ final class CompanionManager: ObservableObject {
 
         let patterns = [
             #"(?i)^\s*(?:(?:clicky|openclicky)\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:create|start|spin\s+up|spawn|run|launch|kick\s+off|set\s+up)\s+(?:an?\s+|the\s+)?(?:new\s+)?(?:background\s+)?(?:agent|agenty|codex)\s*(?:task|job|session)?\s+(?:to|for|that|which|who)?\s*(.+?)\s*$"#,
+            #"(?i)^\s*(?:(?:clicky|openclicky)\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?set\s+(?:an?\s+|the\s+)?(?:new\s+)?(?:background\s+)?(?:agent|agenty|codex)\s*(?:task|job|session)?\s+(?:off|going)\s+(?:to|for|that|which|who)?\s*(.+?)\s*$"#,
             #"(?i)^\s*(?:the\s+)?(?:agent|agenty|codex)\s+(?:create|start|spin\s+up|spawn|run|launch|kick\s+off|set\s+up)\s+(?:an?\s+|the\s+)?(?:new\s+)?(?:background\s+)?(?:agent|agenty|codex)?\s*(?:task|job|session)?\s*(?:to|for|that|which|who)?\s*(.+?)\s*$"#,
             #"(?i)^\s*(?:(?:clicky|openclicky)\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:ask|tell|have|get)\s+(?:an?\s+|the\s+)?(?:agent|agenty|codex)\s+to\s+(.+?)\s*$"#,
             #"(?i)^\s*(?:an?\s+|the\s+)?(?:new\s+|background\s+)?(?:agent|agenty|codex)\s*(?:task|job|session)?\s+(?:to|for|that|which|who)\s+(.+?)\s*$"#
@@ -5604,6 +5754,7 @@ final class CompanionManager: ObservableObject {
 
         let patterns = [
             #"(?i)^\s*(?:(?:clicky|openclicky)\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:create|start|spin\s+up|spawn|run|launch|kick\s+off|set\s+up)\s+(?:an?\s+|the\s+)?(?:new\s+)?(?:background\s+)?(?:agent|codex)\s*(?:task|job|session)?[\s\.\!\?]*$"#,
+            #"(?i)^\s*(?:(?:clicky|openclicky)\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?set\s+(?:an?\s+|the\s+)?(?:new\s+)?(?:background\s+)?(?:agent|codex)\s*(?:task|job|session)?\s+(?:off|going)[\s\.\!\?]*$"#,
             #"(?i)^\s*(?:the\s+)?(?:agent|codex)\s+(?:create|start|spin\s+up|spawn|run|launch|kick\s+off|set\s+up)\s+(?:an?\s+|the\s+)?(?:new\s+)?(?:background\s+)?(?:agent|codex)?\s*(?:task|job|session)?[\s\.\!\?]*$"#,
             #"(?i)^\s*(?:(?:clicky|openclicky)\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:ask|tell|have|get)\s+(?:an?\s+|the\s+)?(?:agent|codex)(?:\s+to)?[\s\.\!\?]*$"#
         ]
@@ -6816,27 +6967,15 @@ final class CompanionManager: ObservableObject {
             contextTitle: "OpenClicky Agent"
         )
 
-        // Choreography: the cursor flies to the future dock/spawn point
-        // first. Keep the visual bubble intentionally short; the spoken
-        // acknowledgement can be longer, but the cursor should return quickly
-        // after the dock appears rather than staying pinned in the corner.
-        flyBuddyTowardAgentDock(acknowledgement: "got it.", on: dockScreen)
+        // Spawn the dock representation independently. The live cursor buddy
+        // should stay with the user's cursor; starting a background agent
+        // creates a separate dock item in the top-right instead of flying the
+        // current cursor/avatar away from the user's working position.
+        clearDetectedElementLocation()
 
         Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 1_900_000_000)
-            clearDetectedElementLocation()
-        }
-
-        // Hand the dock-spawn task a captured reference to the response work
-        // so we can start TTS *after* the dock is on-screen (no audio
-        // overlapping the spawn animation). The previous structure ran TTS
-        // on a sibling Task that started at t=0.
-        Task { @MainActor in
-            // Let the cursor visibly start/mostly complete the upward
-            // flight before the agent dock appears at the target.
-            try? await Task.sleep(nanoseconds: 650_000_000)
-
             let accentTheme = Self.nextAgentDockAccentTheme(existingCount: codexAgentSessions.count)
+            animateAgentSpawnProxyFromCursorToDock(accentTheme: accentTheme)
             let agentSession = createAndSelectNewCodexAgentSession(
                 title: Self.shortAgentInstructionSummary(instruction),
                 accentTheme: accentTheme
@@ -6879,7 +7018,7 @@ final class CompanionManager: ObservableObject {
                     "title": agentSession.title,
                     "instruction": instruction,
                     "requestID": timing?.requestID ?? "none",
-                    "spawnChoreography": "cursor_first_then_dock"
+                    "spawnChoreography": "cursor_proxy_to_dock"
                 ]
             )
             markRequestStageCompleted(
@@ -6894,7 +7033,7 @@ final class CompanionManager: ObservableObject {
                     "model": agentSession.model,
                     "sessionID": agentSession.id.uuidString,
                     "title": agentSession.title,
-                    "spawnChoreography": "cursor_first_then_dock"
+                    "spawnChoreography": "cursor_proxy_to_dock"
                 ]
             )
 
@@ -6913,14 +7052,9 @@ final class CompanionManager: ObservableObject {
                 includeScreenContext: Self.shouldAttachScreenContext(to: instruction)
             )
 
-            // Audio defer: with the dock now on-screen and the agent in
-            // flight, give the appearance animation a short settle window
-            // before speaking. This eliminates the bug where TTS started
-            // at t=0 and visibly skipped/overlapped the cursor flight +
-            // dock fade-in. Bumped from 250→350ms now that the periodic
-            // progress narration is suppressed — the acknowledgement is
-            // the only spoken line at spawn, so it should feel intentional
-            // rather than rushed.
+            // Give the dock item a short settle window before speaking.
+            // The cursor remains in place while the separate agent
+            // representation appears in the dock.
             try? await Task.sleep(nanoseconds: 350_000_000)
 
             currentResponseTask = Task { [acknowledgement, dockItemID] in
@@ -7745,8 +7879,12 @@ final class CompanionManager: ObservableObject {
                 "instructionLength": trimmedPrompt.count
             ]
         )
-        stageDashboardAgentSubmission(prompt: trimmedPrompt, session: codexAgentSession)
-        submitAgentPrompt(trimmedPrompt, to: codexAgentSession)
+        if codexAgentSession.isTurnActiveForChatQueue {
+            codexAgentSession.submitPromptFromUI(trimmedPrompt, screenContext: nil)
+        } else {
+            stageDashboardAgentSubmission(prompt: trimmedPrompt, session: codexAgentSession)
+            submitAgentPrompt(trimmedPrompt, to: codexAgentSession)
+        }
         markRequestCompleted(
             route: "agent.followup",
             executionStartedAt: executionStartedAt,
@@ -7763,19 +7901,16 @@ final class CompanionManager: ObservableObject {
         )
     }
 
-    /// Keeps dashboard-driven turns aligned with the same corner-dock UX as
-    /// voice starts: corner flight cue, hoverable dock card, and menu item.
+    /// Keeps chat-driven turns aligned with the same corner-dock UX as
+    /// voice starts: hoverable dock card and menu item, without moving the
+    /// user's live cursor buddy away from the cursor.
     private func stageDashboardAgentSubmission(prompt: String, session: CodexAgentSession) {
         let summary = Self.shortAgentInstructionSummary(prompt)
         let activity = "Starting \(summary)"
         let screen = agentDockTargetScreen()
+        clearDetectedElementLocation()
 
-        flyBuddyTowardAgentDock(acknowledgement: "on it.", on: screen)
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 1_900_000_000)
-            clearDetectedElementLocation()
-        }
-
+        let spawnAccentTheme: ClickyAccentTheme
         if let itemIndex = agentDockItems.lastIndex(where: { $0.sessionID == session.id }) {
             agentDockItems[itemIndex].title = summary
             agentDockItems[itemIndex].userInstruction = prompt
@@ -7784,13 +7919,15 @@ final class CompanionManager: ObservableObject {
             agentDockItems[itemIndex].progressStepText = activity
             agentDockItems[itemIndex].activityStatusLines = [activity]
             agentDockItems[itemIndex].caption = "on it."
+            spawnAccentTheme = agentDockItems[itemIndex].accentTheme
         } else {
+            let accentTheme = Self.nextAgentDockAccentTheme(existingCount: agentDockItems.count)
             let dockItem = ClickyAgentDockItem(
                 id: UUID(),
                 sessionID: session.id,
                 title: summary,
                 userInstruction: prompt,
-                accentTheme: Self.nextAgentDockAccentTheme(existingCount: agentDockItems.count),
+                accentTheme: accentTheme,
                 status: .starting,
                 progressStageLabel: "Starting",
                 progressStepText: activity,
@@ -7803,8 +7940,10 @@ final class CompanionManager: ObservableObject {
             if agentDockItems.count > 6 {
                 agentDockItems.removeFirst(agentDockItems.count - 6)
             }
+            spawnAccentTheme = accentTheme
         }
 
+        animateAgentSpawnProxyFromCursorToDock(accentTheme: spawnAccentTheme)
         refreshAgentDockFollowBehavior()
         scheduleWidgetSnapshotPublish()
 
@@ -8079,19 +8218,6 @@ final class CompanionManager: ObservableObject {
     private func agentDockTargetScreen() -> NSScreen? {
         let mouseLocation = NSEvent.mouseLocation
         return NSScreen.screens.first(where: { $0.frame.contains(mouseLocation) }) ?? NSScreen.main
-    }
-
-    private func flyBuddyTowardAgentDock(acknowledgement: String, on targetScreen: NSScreen? = nil) {
-        guard let targetScreen = targetScreen ?? agentDockTargetScreen() else { return }
-
-        let screenFrame = targetScreen.frame
-        let visibleFrame = targetScreen.visibleFrame
-        detectedElementBubbleText = acknowledgement
-        detectedElementDisplayFrame = screenFrame
-        detectedElementScreenLocation = CGPoint(
-            x: visibleFrame.maxX - 58,
-            y: visibleFrame.maxY - 92
-        )
     }
 
     func pointAtPermissionDragAssistant() {
@@ -10031,7 +10157,7 @@ final class CompanionManager: ObservableObject {
     func debugShowResponseCard() {
         latestVoiceResponseCard = ClickyResponseCard(
             source: .voice,
-            rawText: "This is a developer smoke test for OpenClicky's compact response card. Suggested actions and dismiss behavior should remain usable from the panel and HUD.",
+            rawText: "This is a developer smoke test for OpenClicky's compact response card. Suggested actions and dismiss behavior should remain usable from the panel and chat.",
             contextTitle: "Developer"
         )
     }

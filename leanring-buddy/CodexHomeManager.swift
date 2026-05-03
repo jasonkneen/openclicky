@@ -628,7 +628,7 @@ final class CodexHomeManager {
         return "\(prefix)..."
     }
 
-    static func defaultApplicationSupportDirectory(fileManager: FileManager = .default) -> URL {
+    nonisolated static func defaultApplicationSupportDirectory(fileManager: FileManager = .default) -> URL {
         let base = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support", isDirectory: true)
         return base

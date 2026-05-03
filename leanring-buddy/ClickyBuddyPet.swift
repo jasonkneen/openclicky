@@ -22,7 +22,7 @@ import UniformTypeIdentifiers
 
 // MARK: - Atlas geometry
 
-enum ClickyBuddyPetAtlas {
+nonisolated enum ClickyBuddyPetAtlas {
     static let cellWidth: Int = 192
     static let cellHeight: Int = 208
     static let columns: Int = 8
@@ -34,7 +34,7 @@ enum ClickyBuddyPetAtlas {
 // MARK: - Animation rows
 
 /// One row of the atlas. Order MUST match `animation-rows.md` row indices 0...8.
-enum ClickyBuddyAnimationRow: Int, CaseIterable {
+nonisolated enum ClickyBuddyAnimationRow: Int, CaseIterable {
     case idle           = 0
     case runningRight   = 1
     case runningLeft    = 2
@@ -65,7 +65,7 @@ enum ClickyBuddyAnimationRow: Int, CaseIterable {
 
 // MARK: - On-disk manifest
 
-struct ClickyBuddyPetManifest: Decodable {
+nonisolated struct ClickyBuddyPetManifest: Decodable {
     let id: String
     let displayName: String
     let description: String
@@ -75,7 +75,7 @@ struct ClickyBuddyPetManifest: Decodable {
 // MARK: - Loaded pet
 
 /// A loaded pet with its atlas decoded and sliced into per-frame `CGImage`s.
-final class ClickyBuddyPet: Identifiable, Equatable {
+nonisolated final class ClickyBuddyPet: Identifiable, Equatable {
     let id: String
     let displayName: String
     let petDescription: String
@@ -117,7 +117,7 @@ final class ClickyBuddyPet: Identifiable, Equatable {
 
 // MARK: - Loader
 
-enum ClickyBuddyPetLoaderError: Error {
+nonisolated enum ClickyBuddyPetLoaderError: Error {
     case missingManifest
     case malformedManifest(underlying: Error)
     case missingSpritesheet
@@ -125,9 +125,9 @@ enum ClickyBuddyPetLoaderError: Error {
     case spritesheetUnexpectedSize(width: Int, height: Int)
 }
 
-enum ClickyBuddyPetLoader {
+nonisolated enum ClickyBuddyPetLoader {
     /// Loads a single pet bundle directory.
-    static func loadPet(at bundleURL: URL) throws -> ClickyBuddyPet {
+    nonisolated static func loadPet(at bundleURL: URL) throws -> ClickyBuddyPet {
         let manifestURL = bundleURL.appendingPathComponent("pet.json")
         guard FileManager.default.fileExists(atPath: manifestURL.path) else {
             throw ClickyBuddyPetLoaderError.missingManifest
@@ -165,7 +165,7 @@ enum ClickyBuddyPetLoader {
 
     /// CGImageSource handles WebP natively on macOS 11+ and avoids the
     /// flakiness of `NSImage(contentsOf:)` for `.webp` files.
-    private static func decodeAtlas(at url: URL) throws -> CGImage {
+    nonisolated private static func decodeAtlas(at url: URL) throws -> CGImage {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
             throw ClickyBuddyPetLoaderError.spritesheetDecodeFailed
@@ -182,7 +182,7 @@ enum ClickyBuddyPetLoader {
         return image
     }
 
-    private static func sliceFrames(from atlas: CGImage) -> [ClickyBuddyAnimationRow: [CGImage]] {
+    nonisolated private static func sliceFrames(from atlas: CGImage) -> [ClickyBuddyAnimationRow: [CGImage]] {
         let cellW = ClickyBuddyPetAtlas.cellWidth
         let cellH = ClickyBuddyPetAtlas.cellHeight
         var result: [ClickyBuddyAnimationRow: [CGImage]] = [:]
@@ -206,7 +206,7 @@ enum ClickyBuddyPetLoader {
         return result
     }
 
-    private static func resolveSpritesheetURL(
+    nonisolated private static func resolveSpritesheetURL(
         bundleURL: URL,
         manifest: ClickyBuddyPetManifest
     ) -> URL? {

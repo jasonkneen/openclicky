@@ -515,16 +515,16 @@ final class AgentMenuBarStatusManager: NSObject {
         let popover = NSPopover()
         popover.behavior = .transient
         popover.animates = true
-        let rootView = AgentMenuBarStatusPopoverView(
+        let rootView = ClickyAgentDockHoverCard(
             item: item,
             canOpenDashboard: companionManager.isAdvancedModeEnabled,
-            voice: { [weak companionManager] in
+            chat: { [weak companionManager] in
                 companionManager?.prepareVoiceFollowUpForAgentDockItem(item.id)
             },
             text: { [weak companionManager] in
                 companionManager?.showTextFollowUpForAgentDockItem(item.id)
             },
-            dashboard: { [weak companionManager] in
+            voice: { [weak companionManager] in
                 companionManager?.openAgentDockItem(item.id)
             },
             close: { [weak popover] in
@@ -534,10 +534,6 @@ final class AgentMenuBarStatusManager: NSObject {
                 popover?.performClose(nil)
                 companionManager?.stopAgentDockItem(item.id)
             },
-            runSuggestedAction: { [weak companionManager, weak popover] actionTitle in
-                popover?.performClose(nil)
-                companionManager?.runSuggestedNextAction(actionTitle)
-            },
             dismiss: { [weak companionManager, weak popover] in
                 // Close == dismiss the finished item: hide the popover
                 // and remove the dock entry. dismissAgentDockItem is
@@ -545,12 +541,16 @@ final class AgentMenuBarStatusManager: NSObject {
                 // is already terminal here).
                 popover?.performClose(nil)
                 companionManager?.dismissAgentDockItem(item.id)
+            },
+            runSuggestedAction: { [weak companionManager, weak popover] actionTitle in
+                popover?.performClose(nil)
+                companionManager?.runSuggestedNextAction(actionTitle)
             }
         )
         let controller = NSHostingController(rootView: rootView)
         controller.representedObject = itemID
         popover.contentViewController = controller
-        popover.contentSize = NSSize(width: 420, height: 300)
+        popover.contentSize = NSSize(width: 560, height: 360)
         activePopover = popover
         popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
     }
@@ -627,351 +627,5 @@ final class AgentMenuBarStatusManager: NSObject {
         case .amber: return NSColor(calibratedRed: 0.98, green: 0.80, blue: 0.08, alpha: 1)
         case .rose: return NSColor(calibratedRed: 1.00, green: 0.31, blue: 0.37, alpha: 1)
         }
-    }
-}
-
-private struct AgentMenuBarStatusPopoverView: View {
-    private let popoverWidth: CGFloat = 420
-    let item: ClickyAgentDockItem
-    let canOpenDashboard: Bool
-    let voice: () -> Void
-    let text: () -> Void
-    let dashboard: () -> Void
-    let close: () -> Void
-    let stop: () -> Void
-    let runSuggestedAction: (String) -> Void
-    /// Called when the user taps "Dismiss" on a terminal (`.done` / `.failed`)
-    /// agent. Distinct from `stop` (which sends a cancel signal) — Dismiss
-    /// dismisses the popover AND removes the finished item from the dock
-    /// collection so it stops occupying the menu bar.
-    let dismiss: () -> Void
-    @State private var isConfirmingStop = false
-    @State private var hoveredQuickAction: QuickAction? = nil
-    @State private var statusLineCycleIndex = 0
-    @State private var statusLineCycleTask: Task<Void, Never>?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 11) {
-            HStack(alignment: .center, spacing: 10) {
-                Text(statusText)
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(statusColor)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Capsule().fill(statusColor.opacity(0.18)))
-
-                Text(titleText)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(.white)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                Spacer()
-            }
-            .padding(.trailing, 30)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Stage: \(item.progressStageLabel)")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(Color.white.opacity(0.70))
-                    .lineLimit(1)
-
-                if let statusLine = currentStatusLine {
-                    Text("\(statusLineLabel): \(statusLine)")
-                        .font(.system(size: 11, weight: .regular))
-                        .foregroundColor(Color.white.opacity(0.58))
-                        .lineLimit(3)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .contentTransition(.opacity)
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                if let liveProgressText, !liveProgressText.isEmpty {
-                    Text(liveProgressText)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.82))
-                        .lineLimit(5)
-                        .fixedSize(horizontal: false, vertical: true)
-                } else {
-                    // No real activity yet — emit a thinking affordance
-                    // instead of "An agent is working on this." so the user
-                    // sees real-time progress, not canned filler.
-                    AgentMenuBarThinkingDots(tint: item.accentTheme.cursorColor)
-                }
-
-                HStack(spacing: 8) {
-                    if let linkTarget {
-                        Button {
-                            NSWorkspace.shared.open(linkTarget)
-                        } label: {
-                            Label(linkButtonTitle(for: linkTarget), systemImage: "arrow.up.right.square")
-                        }
-                        .buttonStyle(.borderless)
-                        .font(.system(size: 12, weight: .semibold))
-                    }
-
-                    Spacer(minLength: 0)
-
-                    if item.status == .starting || item.status == .running {
-                        Button("Stop") {
-                            isConfirmingStop = true
-                        }
-                        .foregroundColor(Color(hex: "#FFB4BA"))
-                        .confirmationDialog("Stop this agent?", isPresented: $isConfirmingStop, titleVisibility: .visible) {
-                            Button("Stop", role: .destructive, action: stop)
-                            Button("Keep running", role: .cancel) {}
-                        }
-                    }
-                }
-            }
-
-            if !item.suggestedNextActions.isEmpty {
-                HStack(spacing: 8) {
-                    ForEach(item.suggestedNextActions, id: \.self) { actionTitle in
-                        Button(actionTitle) {
-                            runSuggestedAction(actionTitle)
-                        }
-                        .lineLimit(1)
-                    }
-                }
-                .buttonStyle(.borderless)
-                .font(.system(size: 12, weight: .semibold))
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                stopControls
-                HStack(spacing: 10) {
-                    quickActionButton(icon: "mic", label: "Voice", quickAction: .voice, action: voice)
-                    quickActionButton(icon: "text.cursor", label: "Text", quickAction: .text, action: text)
-                    if canOpenDashboard {
-                        quickActionButton(icon: "rectangle.grid.2x2", label: "Dashboard", quickAction: .dashboard, action: dashboard)
-                    }
-                }
-            }
-            .buttonStyle(.borderless)
-            .font(.system(size: 12, weight: .semibold))
-        }
-        .overlay(alignment: .topTrailing) {
-            Button(action: close) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .bold))
-            }
-            .buttonStyle(.borderless)
-            .foregroundColor(Color.white.opacity(0.72))
-            .offset(x: 8, y: -8)
-        }
-        .padding(14)
-        .frame(width: popoverWidth, alignment: .leading)
-        .background(
-            .ultraThinMaterial,
-            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
-        )
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [item.accentTheme.cursorColor.opacity(0.20), Color(hex: "#111827")],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-        )
-        .onAppear { restartStatusLineCycle() }
-        .onDisappear {
-            statusLineCycleTask?.cancel()
-            statusLineCycleTask = nil
-        }
-        .onChange(of: item.activityStatusLines) { _, _ in
-            restartStatusLineCycle()
-        }
-        .onChange(of: item.progressStepText ?? "") { _, _ in
-            restartStatusLineCycle()
-        }
-    }
-
-    @ViewBuilder
-    private var stopControls: some View {
-        // Closing the panel should never cancel/remove the task. Keep
-        // "Close" available for every state. For terminal sessions,
-        // provide a separate explicit "Dismiss" action to remove it.
-        switch item.status {
-        case .done, .failed:
-            Button("Close", action: close)
-                .foregroundColor(Color.white.opacity(0.82))
-            Button("Dismiss", action: dismiss)
-                .foregroundColor(Color.white.opacity(0.82))
-        case .starting, .running:
-            Button("Close", action: close)
-                .foregroundColor(Color.white.opacity(0.82))
-        }
-    }
-
-    @ViewBuilder
-    private func quickActionButton(icon: String, label: String, quickAction: QuickAction, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: icon)
-                if hoveredQuickAction == quickAction {
-                    Text(label)
-                }
-            }
-        }
-        .onHover { hoveredQuickAction = $0 ? quickAction : nil }
-    }
-
-    private enum QuickAction {
-        case voice, text, dashboard
-    }
-
-    private var linkTarget: URL? {
-        Self.firstOpenableURL(in: liveProgressText ?? "")
-    }
-
-    private var statusLineLabel: String {
-        activityStatusLines.count > 1 ? "Update" : "Step"
-    }
-
-    private var currentStatusLine: String? {
-        let lines = activityStatusLines
-        guard !lines.isEmpty else { return nil }
-        let safeIndex = min(statusLineCycleIndex, lines.count - 1)
-        return lines[safeIndex]
-    }
-
-    private var activityStatusLines: [String] {
-        var lines: [String] = []
-        for candidate in item.activityStatusLines + [item.progressStepText ?? ""] {
-            let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { continue }
-            if !lines.contains(trimmed) {
-                lines.append(trimmed)
-            }
-        }
-        return lines
-    }
-
-    /// Caption text — only the actual streamed agent activity. nil when the
-    /// agent has not produced any output yet so the view can render a
-    /// thinking indicator instead of the "An agent is working on this."
-    /// placeholder.
-    private var liveProgressText: String? {
-        let trimmed = item.caption?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !trimmed.isEmpty { return trimmed }
-        switch item.status {
-        case .starting, .running:
-            return nil
-        case .done:
-            return "Done."
-        case .failed:
-            return "Needs attention."
-        }
-    }
-
-    private func linkButtonTitle(for url: URL) -> String {
-        url.isFileURL ? "Open \(url.lastPathComponent)" : "Open link"
-    }
-
-    private static func firstOpenableURL(in text: String) -> URL? {
-        let patterns = [
-            #"`((?:file://)?/[^`]+)`"#,
-            #"((?:file://)?/Users/[^\s`]+)"#,
-            #"(https?://[^\s`]+)"#
-        ]
-        for pattern in patterns {
-            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
-            let range = NSRange(text.startIndex..<text.endIndex, in: text)
-            guard let match = regex.firstMatch(in: text, range: range), match.numberOfRanges > 1,
-                  let matchRange = Range(match.range(at: 1), in: text) else { continue }
-            let raw = String(text[matchRange])
-                .trimmingCharacters(in: CharacterSet(charactersIn: "`'\".,)\n\t "))
-            if raw.hasPrefix("file://"), let url = URL(string: raw) { return url }
-            if raw.hasPrefix("http://") || raw.hasPrefix("https://") { return URL(string: raw) }
-            if raw.hasPrefix("/") { return URL(fileURLWithPath: raw) }
-        }
-        return nil
-    }
-
-    private var titleText: String {
-        let title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        return title.isEmpty ? "Agent task" : title
-    }
-
-
-    private var statusText: String {
-        switch item.status {
-        case .starting: return "Starting"
-        case .running: return "Working"
-        case .done: return "Done"
-        case .failed: return "Attention"
-        }
-    }
-
-    private var statusColor: Color {
-        switch item.status {
-        case .starting: return Color(hex: "#93C5FD")
-        case .running: return item.accentTheme.cursorColor
-        case .done: return Color(hex: "#34D399")
-        case .failed: return Color(hex: "#FF6369")
-        }
-    }
-
-    private func restartStatusLineCycle() {
-        statusLineCycleTask?.cancel()
-        statusLineCycleTask = nil
-        statusLineCycleIndex = 0
-        let count = activityStatusLines.count
-        guard count > 1 else { return }
-        statusLineCycleTask = Task { @MainActor in
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 1_800_000_000)
-                if Task.isCancelled { return }
-                let lineCount = activityStatusLines.count
-                guard lineCount > 1 else { return }
-                statusLineCycleIndex = (statusLineCycleIndex + 1) % lineCount
-            }
-        }
-    }
-}
-
-/// Three softly-pulsing dots used in the menu-bar status popover while the
-/// agent has not yet produced its first streamed token. Replaces the
-/// previous static "An agent is working on this." caption fallback.
-private struct AgentMenuBarThinkingDots: View {
-    let tint: Color
-    @State private var phase: Int = 0
-    /// Stored handle for the phase-cycling task so we can cancel it in
-    /// `onDisappear`. Without this, every popover open/close leaks
-    /// another infinite task — the menu-bar popover is shown/hidden far
-    /// more often than the dock card, so the leak compounds quickly.
-    @State private var animationTask: Task<Void, Never>?
-
-    var body: some View {
-        HStack(spacing: 5) {
-            ForEach(0..<3, id: \.self) { index in
-                Circle()
-                    .fill(tint.opacity(opacity(for: index)))
-                    .frame(width: 5, height: 5)
-            }
-        }
-        .padding(.vertical, 4)
-        .onAppear {
-            animationTask?.cancel()
-            animationTask = Task { @MainActor in
-                while !Task.isCancelled {
-                    try? await Task.sleep(nanoseconds: 360_000_000)
-                    if Task.isCancelled { return }
-                    phase = (phase + 1) % 3
-                }
-            }
-        }
-        .onDisappear {
-            animationTask?.cancel()
-            animationTask = nil
-        }
-    }
-
-    private func opacity(for index: Int) -> Double {
-        index == phase ? 0.95 : 0.32
     }
 }

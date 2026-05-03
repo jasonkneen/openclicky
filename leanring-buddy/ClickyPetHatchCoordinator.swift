@@ -33,12 +33,13 @@ final class ClickyPetHatchCoordinator {
         guard !trimmedName.isEmpty else { return nil }
 
         let title = "Hatch \(trimmedName)"
-        let session = companionManager.createAndSelectNewCodexAgentSession(
-            title: title,
-            accentTheme: accentTheme
-        )
         let prompt = Self.hatchPrompt(name: trimmedName, description: trimmedDescription)
-        session.submitPromptFromUI(prompt)
+        let session = companionManager.createAndLaunchCodexAgentSession(
+            title: title,
+            prompt: prompt,
+            accentTheme: accentTheme,
+            includeScreenContext: false
+        )
         return session.id
     }
 

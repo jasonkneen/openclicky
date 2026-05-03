@@ -203,7 +203,7 @@ struct OpenClickySettingsView: View {
         case .computerUse:
             return "Choose the computer-use backend for focused-window context and targeted actions."
         case .agentMode:
-            return "Background agents, Codex configuration, model, working directory, and dashboard access."
+            return "Background agents, Codex configuration, model, working directory, and chat access."
         case .googleWorkspace:
             return "Local Google Workspace connection through gogcli. No hosted Google login or key sync."
         case .memory:
@@ -260,7 +260,7 @@ struct OpenClickySettingsView: View {
 
                 toggleRow(
                     title: "Advanced mode",
-                    subtitle: "Shows Agent Mode dashboard controls, inline agent input, model controls, and memory tools.",
+                    subtitle: "Shows Agent Mode chat controls, inline agent input, model controls, and memory tools.",
                     systemImageName: "slider.horizontal.3",
                     isOn: Binding(
                         get: { companionManager.isAdvancedModeEnabled },
@@ -595,7 +595,7 @@ struct OpenClickySettingsView: View {
             settingsGroup("Agent Mode") {
                 toggleRow(
                     title: "Advanced mode",
-                    subtitle: "Keeps the dashboard and agent controls available.",
+                    subtitle: "Keeps chat and agent controls available.",
                     systemImageName: "slider.horizontal.3",
                     isOn: Binding(
                         get: { companionManager.isAdvancedModeEnabled },
@@ -661,7 +661,7 @@ struct OpenClickySettingsView: View {
 
             if companionManager.isAdvancedModeEnabled {
                 settingsGroup("Agent tools") {
-                    actionRow(title: "Open Agent dashboard", systemImageName: "rectangle.grid.2x2") {
+                    actionRow(title: "Open Agent chat", systemImageName: "message") {
                         companionManager.showCodexHUD()
                     }
                     actionRow(title: "Warm up Agent Mode", systemImageName: "bolt") {

@@ -98,7 +98,7 @@ struct CodexAgentModePanelSection: View {
 
             HStack(spacing: 8) {
                 Button(action: openHUD) {
-                    Label("Dashboard", systemImage: "rectangle.grid.2x2")
+                    Label("Chat", systemImage: "message")
                         .font(.system(size: 11, weight: .semibold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 6)
@@ -345,7 +345,7 @@ struct CodexAgentModePanelSection: View {
         case .running:
             return "Working through the task..."
         case .failed:
-            return "Open the dashboard for details."
+            return "Open chat for details."
         case .ready:
             return "Ready."
         case .stopped:
@@ -355,7 +355,7 @@ struct CodexAgentModePanelSection: View {
 
     private var summaryText: String {
         if visibleInlineErrorMessage != nil {
-            return "Agent needs attention. Open the dashboard for details."
+            return "Agent needs attention. Open chat for details."
         }
         return "Ask for coding, research, writing, or app tasks."
     }
@@ -390,8 +390,8 @@ struct CodexAgentModePanelSection: View {
             }
 
             compactChoiceButton(
-                title: "Open dashboard",
-                systemImage: "rectangle.grid.2x2"
+                title: "Open chat",
+                systemImage: "message"
             ) {
                 openHUD()
             }
@@ -515,7 +515,7 @@ struct CodexAgentModeSettingsSheet: View {
 
                     settingsSection(
                         title: "Advanced mode",
-                        subtitle: "Reveals the agent dashboard, inline agent input, model controls, API key overrides, and memory tools."
+                        subtitle: "Reveals chat, inline agent input, model controls, API key overrides, and memory tools."
                     ) {
                         advancedModeToggleRow
                     }
@@ -544,8 +544,8 @@ struct CodexAgentModeSettingsSheet: View {
                                 )
 
                                 settingsActionButton(
-                                    title: "Open Agent dashboard",
-                                    systemImage: "rectangle.grid.2x2",
+                                    title: "Open Agent chat",
+                                    systemImage: "message",
                                     action: {
                                         dismissSettings()
                                         openHUD()
@@ -1006,7 +1006,7 @@ struct CodexAgentModeSettingsSheet: View {
                 Text("Advanced mode")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(DS.Colors.textSecondary)
-                Text("Shows dashboard controls and inline agent tools")
+                Text("Shows chat controls and inline agent tools")
                     .font(.system(size: 8, weight: .medium))
                     .foregroundColor(DS.Colors.textTertiary)
             }
