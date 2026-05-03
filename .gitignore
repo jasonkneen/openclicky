@@ -19,3 +19,4 @@ worker/.env.local
 /AppResources/OpenClicky/CodexRuntime
 /.codesurf
 /.contex
+/output

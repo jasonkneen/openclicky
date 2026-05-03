@@ -14,6 +14,7 @@ struct CompanionPanelView: View {
     @ObservedObject var companionManager: CompanionManager
     @AppStorage(ClickyAccentTheme.userDefaultsKey) private var selectedAccentThemeID = ClickyAccentTheme.blue.rawValue
     @AppStorage(ClickyCursorAvatarStyle.userDefaultsKey) private var avatarStyleRawValue = ClickyCursorAvatarStyle.default.storageValue
+    @AppStorage(ClickyCursorAvatarSizePreference.userDefaultsKey) private var cursorAvatarSizeScale = ClickyCursorAvatarSizePreference.defaultScale
     @ObservedObject private var petLibrary = ClickyBuddyPetLibrary.shared
     @State private var isPanelPinned: Bool
     @State private var isShowingHatchSheet: Bool = false
@@ -1039,6 +1040,25 @@ struct CompanionPanelView: View {
                         emptyBuddiesHintTile
                     }
                 }
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack {
+                    Text("Buddy size")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(DS.Colors.textSecondary)
+                    Spacer()
+                    Text("\(Int((cursorAvatarSizeScale * 100).rounded()))%")
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .foregroundColor(DS.Colors.textTertiary)
+                }
+
+                Slider(
+                    value: $cursorAvatarSizeScale,
+                    in: ClickyCursorAvatarSizePreference.minScale...ClickyCursorAvatarSizePreference.maxScale
+                )
+                .controlSize(.small)
+                .tint((ClickyAccentTheme(rawValue: selectedAccentThemeID) ?? .blue).cursorColor)
             }
         }
     }

@@ -189,6 +189,13 @@ enum ClickyCursorAvatarStyle: Equatable {
     }
 }
 
+enum ClickyCursorAvatarSizePreference {
+    static let userDefaultsKey = "openclicky.cursorAvatarSizeScale"
+    static let defaultScale: Double = 1.0
+    static let minScale: Double = 0.65
+    static let maxScale: Double = 1.85
+}
+
 private struct ClickyCursorAvatarView: View {
     let accentColor: Color
     var showsEyes: Bool = true
@@ -315,6 +322,7 @@ struct BlueCursorView: View {
     let companionManager: CompanionManager
     @ObservedObject var cursorState: CursorOverlayState
     @AppStorage(ClickyAccentTheme.userDefaultsKey) private var selectedAccentThemeID = ClickyAccentTheme.blue.rawValue
+    @AppStorage(ClickyCursorAvatarSizePreference.userDefaultsKey) private var cursorAvatarSizeScale = ClickyCursorAvatarSizePreference.defaultScale
 
     @State private var cursorPosition: CGPoint
     @State private var isCursorOnThisScreen: Bool
@@ -404,6 +412,15 @@ struct BlueCursorView: View {
     /// True when the active avatar is rotation-aware (triangles).
     private var avatarHonorsRotation: Bool {
         ClickyCursorAvatarStyle(storageValue: avatarStyleRawValueForRotation).honorsParentRotation
+    }
+
+    private var normalizedCursorAvatarSizeScale: CGFloat {
+        CGFloat(
+            min(
+                max(cursorAvatarSizeScale, ClickyCursorAvatarSizePreference.minScale),
+                ClickyCursorAvatarSizePreference.maxScale
+            )
+        )
     }
 
     private let fullWelcomeMessage = "hey! i'm clicky"
@@ -558,7 +575,10 @@ struct BlueCursorView: View {
                 accentColor: overlayCursorColor,
                 animationState: petAnimationState
             )
-                .frame(width: avatarHonorsRotation ? 25 : 48, height: avatarHonorsRotation ? 33 : 52)
+                .frame(
+                    width: (avatarHonorsRotation ? 25 : 48) * normalizedCursorAvatarSizeScale,
+                    height: (avatarHonorsRotation ? 33 : 52) * normalizedCursorAvatarSizeScale
+                )
                 .rotationEffect(.degrees(avatarHonorsRotation ? buddyRotationDegrees : 0))
                 .shadow(color: overlayCursorColor.opacity(0.86), radius: 8 + (buddyFlightScale - 1.0) * 20, x: 0, y: 0)
                 .scaleEffect(buddyFlightScale)

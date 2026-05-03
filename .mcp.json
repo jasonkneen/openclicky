@@ -2,7 +2,7 @@
   "mcpServers": {
     "contex": {
       "type": "http",
-      "url": "http://127.0.0.1:60821/mcp"
+      "url": "http://127.0.0.1:50275/mcp"
     }
   }
 }
