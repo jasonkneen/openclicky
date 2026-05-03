@@ -218,7 +218,7 @@ private struct ClickyCursorAvatarView: View {
             ClickyTriangleCursorView(accentColor: accentColor, style: .outline)
         case .pet(let id):
             if let pet = petLibrary.pet(withID: id) {
-                ClickyPetSpriteView(pet: pet, animationState: animationState, haloColor: accentColor)
+                ClickyPetSpriteView(pet: pet, animationState: animationState)
             } else {
                 // Pet referenced but not installed (yet) — graceful fallback
                 // keeps the cursor visible while the user re-picks or hatches.
@@ -362,9 +362,12 @@ struct BlueCursorView: View {
     /// The buddy's current behavioral mode (following cursor, navigating, or pointing).
     @State private var buddyNavigationMode: BuddyNavigationMode = .followingCursor
 
+    /// Baseline clockwise tilt for triangle cursor avatars.
+    private let triangleBaseRotationDegrees: Double = 12.0
+
     /// The rotation angle of the cursor companion in degrees.
     /// Changes to face the direction of travel when navigating to a target.
-    @State private var buddyRotationDegrees: Double = 2.0
+    @State private var buddyRotationDegrees: Double = 12.0
 
     /// Speech bubble text shown when pointing at a detected element.
     @State private var navigationBubbleText: String = ""
@@ -409,9 +412,23 @@ struct BlueCursorView: View {
     @AppStorage(ClickyCursorAvatarStyle.userDefaultsKey)
     private var avatarStyleRawValueForRotation = ClickyCursorAvatarStyle.default.storageValue
 
+    private var currentCursorAvatarStyle: ClickyCursorAvatarStyle {
+        ClickyCursorAvatarStyle(storageValue: avatarStyleRawValueForRotation)
+    }
+
     /// True when the active avatar is rotation-aware (triangles).
     private var avatarHonorsRotation: Bool {
-        ClickyCursorAvatarStyle(storageValue: avatarStyleRawValueForRotation).honorsParentRotation
+        currentCursorAvatarStyle.honorsParentRotation
+    }
+
+    /// Keep glow for triangle cursors only; pet sprites should not glow.
+    private var shouldShowCursorGlow: Bool {
+        switch currentCursorAvatarStyle {
+        case .triangleFilled, .triangleOutline:
+            return true
+        case .pet:
+            return false
+        }
     }
 
     private var normalizedCursorAvatarSizeScale: CGFloat {
@@ -580,7 +597,12 @@ struct BlueCursorView: View {
                     height: (avatarHonorsRotation ? 33 : 52) * normalizedCursorAvatarSizeScale
                 )
                 .rotationEffect(.degrees(avatarHonorsRotation ? buddyRotationDegrees : 0))
-                .shadow(color: overlayCursorColor.opacity(0.86), radius: 8 + (buddyFlightScale - 1.0) * 20, x: 0, y: 0)
+                .shadow(
+                    color: shouldShowCursorGlow ? overlayCursorColor.opacity(0.86) : .clear,
+                    radius: shouldShowCursorGlow ? 8 + (buddyFlightScale - 1.0) * 20 : 0,
+                    x: 0,
+                    y: 0
+                )
                 .scaleEffect(buddyFlightScale)
                 .opacity(buddyIsVisibleOnThisScreen && (cursorState.voiceState == .idle || cursorState.voiceState == .responding) ? cursorOpacity : 0)
                 .position(cursorPosition)
@@ -733,7 +755,7 @@ struct BlueCursorView: View {
         ZStack {
             ClickyCursorAvatarView(accentColor: color, showsEyes: false)
                 .frame(width: 23, height: 30)
-                .rotationEffect(.degrees(2))
+                .rotationEffect(.degrees(triangleBaseRotationDegrees))
                 .shadow(color: color.opacity(0.90), radius: 10, x: 0, y: 0)
                 .position(position)
                 .transition(.opacity.combined(with: .scale(scale: 0.92)))
@@ -1061,7 +1083,7 @@ struct BlueCursorView: View {
                          + 2.0 * t * (endPosition.y - controlPoint.y)
             // A small offset makes the paperclip lean into rightward movement
             // instead of standing straight up during flight.
-            self.buddyRotationDegrees = atan2(tangentY, tangentX) * (180.0 / .pi) + 18.0
+            self.buddyRotationDegrees = atan2(tangentY, tangentX) * (180.0 / .pi) + 28.0
 
             // Scale pulse: sin curve peaks at midpoint of the flight.
             // Buddy grows to ~1.3x at the apex, then shrinks back to 1.0x on landing.
@@ -1076,7 +1098,7 @@ struct BlueCursorView: View {
         buddyNavigationMode = .pointingAtTarget
 
         // Rotate back to default angle now that we've arrived
-        buddyRotationDegrees = 2.0
+        buddyRotationDegrees = triangleBaseRotationDegrees
 
         // Reset navigation bubble state — start small for the scale-bounce entrance
         navigationBubbleText = ""
@@ -1409,6 +1431,17 @@ private struct ClickyAgentDockStackView: View {
 private struct ClickyAgentDockItemView: View {
     let item: ClickyAgentDockItem
     @State private var isStatusAnimating = false
+    @AppStorage(ClickyCursorAvatarStyle.userDefaultsKey)
+    private var avatarStyleRawValue = ClickyCursorAvatarStyle.default.storageValue
+
+    private var shouldShowAccentGlow: Bool {
+        switch ClickyCursorAvatarStyle(storageValue: avatarStyleRawValue) {
+        case .triangleFilled, .triangleOutline:
+            return true
+        case .pet:
+            return false
+        }
+    }
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -1441,14 +1474,29 @@ private struct ClickyAgentDockItemView: View {
                             lineWidth: 1.1
                         )
                 )
-                .shadow(color: item.accentTheme.cursorColor.opacity(0.34), radius: 24, x: 0, y: 11)
-                .shadow(color: item.accentTheme.cursorColor.opacity(0.70), radius: 16, x: 0, y: 0)
+                .shadow(
+                    color: shouldShowAccentGlow ? item.accentTheme.cursorColor.opacity(0.34) : .clear,
+                    radius: shouldShowAccentGlow ? 24 : 0,
+                    x: 0,
+                    y: 11
+                )
+                .shadow(
+                    color: shouldShowAccentGlow ? item.accentTheme.cursorColor.opacity(0.70) : .clear,
+                    radius: shouldShowAccentGlow ? 16 : 0,
+                    x: 0,
+                    y: 0
+                )
                 .shadow(color: Color.black.opacity(0.50), radius: 8, x: 0, y: 4)
 
             ClickyCursorAvatarView(accentColor: item.accentTheme.cursorColor)
                 .frame(width: 25, height: 33)
                 .rotationEffect(.degrees(2))
-                .shadow(color: item.accentTheme.cursorColor.opacity(0.82), radius: 7, x: 0, y: 0)
+                .shadow(
+                    color: shouldShowAccentGlow ? item.accentTheme.cursorColor.opacity(0.82) : .clear,
+                    radius: shouldShowAccentGlow ? 7 : 0,
+                    x: 0,
+                    y: 0
+                )
                 .frame(width: 52, height: 52)
 
             statusIndicator
@@ -1848,6 +1896,10 @@ private struct ClickyAgentDockHoverCard: View {
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
         .frame(width: 500, alignment: .leading)
+        .background(
+            .ultraThinMaterial,
+            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+        )
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(

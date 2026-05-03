@@ -215,7 +215,7 @@ final class MenuBarPanelManager: NSObject {
         menuBarPanel.isExcludedFromWindowsMenu = true
         menuBarPanel.isReleasedWhenClosed = false
         menuBarPanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        menuBarPanel.isMovableByWindowBackground = false
+        menuBarPanel.isMovableByWindowBackground = true
         menuBarPanel.titleVisibility = .hidden
         menuBarPanel.titlebarAppearsTransparent = true
         applyPanelMinimumSize(to: menuBarPanel)
@@ -418,33 +418,20 @@ final class MenuBarPanelManager: NSObject {
     private func applyPinnedPanelBehavior() {
         guard let panel else { return }
 
-        if isPanelPinned {
-            panel.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-            panel.title = "OpenClicky"
-            panel.titleVisibility = .visible
-            panel.titlebarAppearsTransparent = false
-            panel.isMovableByWindowBackground = false
-            panel.isFloatingPanel = false
-            panel.level = .normal
-            panel.isOpaque = true
-            panel.backgroundColor = .windowBackgroundColor
-            panel.hasShadow = true
-            panel.collectionBehavior = []
-            applyPanelMinimumSize(to: panel)
-        } else {
-            panel.styleMask = [.borderless, .nonactivatingPanel, .resizable]
-            panel.title = ""
-            panel.titleVisibility = .hidden
-            panel.titlebarAppearsTransparent = true
-            panel.isMovableByWindowBackground = false
-            panel.isFloatingPanel = true
-            panel.level = .floating
-            panel.isOpaque = false
-            panel.backgroundColor = .clear
-            panel.hasShadow = false
-            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-            applyPanelMinimumSize(to: panel)
-        }
+        // Keep the panel visually consistent (floating + no title bar) in both
+        // pinned and transient modes. Pinning now only controls auto-dismiss.
+        panel.styleMask = [.borderless, .nonactivatingPanel, .resizable]
+        panel.title = ""
+        panel.titleVisibility = .hidden
+        panel.titlebarAppearsTransparent = true
+        panel.isMovableByWindowBackground = true
+        panel.isFloatingPanel = true
+        panel.level = .floating
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        applyPanelMinimumSize(to: panel)
 
         panel.hidesOnDeactivate = false
         panel.isExcludedFromWindowsMenu = true
@@ -776,6 +763,10 @@ private struct AgentMenuBarStatusPopoverView: View {
         }
         .padding(14)
         .frame(width: popoverWidth, alignment: .leading)
+        .background(
+            .ultraThinMaterial,
+            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+        )
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(

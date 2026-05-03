@@ -941,7 +941,9 @@ struct CompanionPanelView: View {
             } else {
                 VStack(alignment: .leading, spacing: 10) {
                     cursorBuddySection
-                    cursorColorSection
+                    if shouldShowCursorColorSection {
+                        cursorColorSection
+                    }
                     #if DEBUG
                     activationShortcutDebugButton
                     #endif
@@ -996,6 +998,15 @@ struct CompanionPanelView: View {
 
     private var currentCursorAvatarStyle: ClickyCursorAvatarStyle {
         ClickyCursorAvatarStyle(storageValue: avatarStyleRawValue)
+    }
+
+    private var shouldShowCursorColorSection: Bool {
+        switch currentCursorAvatarStyle {
+        case .triangleFilled, .triangleOutline:
+            return true
+        case .pet:
+            return false
+        }
     }
 
     private var cursorBuddySection: some View {
