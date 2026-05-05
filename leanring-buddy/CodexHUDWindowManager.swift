@@ -104,7 +104,7 @@ final class CodexHUDWindowManager {
 
     private func positionPanel() {
         guard let panel else { return }
-        let screen = NSScreen.main ?? NSScreen.screens.first
+        let screen = NSScreen.screen(containingOrNearestTo: NSEvent.mouseLocation) ?? panel.screen
         guard let frame = screen?.visibleFrame else { return }
         let size = panel.frame.size
         let x = frame.midX - size.width / 2

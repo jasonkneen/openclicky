@@ -1209,8 +1209,7 @@ final class CompanionManager: ObservableObject {
         // fly back to the user's real pointer. Do not warp the system pointer
         // here and do not draw a duplicate primary cursor icon.
         detectedElementScreenLocation = targetPoint
-        detectedElementDisplayFrame = NSScreen.screens.first { $0.frame.contains(targetPoint) }?.frame
-            ?? NSScreen.main?.frame
+        detectedElementDisplayFrame = NSScreen.screen(containingOrNearestTo: targetPoint)?.frame
             ?? CGRect(origin: targetPoint, size: .zero)
         detectedElementBubbleText = caption?.trimmingCharacters(in: .whitespacesAndNewlines)
         cursorOverlayState.externalPrimaryCaptionText = nil
@@ -1275,9 +1274,8 @@ final class CompanionManager: ObservableObject {
     }
 
     private func agentDockSpawnProxyTargetPoint(from startPoint: CGPoint) -> CGPoint {
-        let screen = NSScreen.screens.first(where: { $0.frame.contains(startPoint) })
+        let screen = NSScreen.screen(containingOrNearestTo: startPoint)
             ?? agentDockTargetScreen()
-            ?? NSScreen.main
 
         guard let screen else { return startPoint }
 
@@ -1318,22 +1316,11 @@ final class CompanionManager: ObservableObject {
     }
 
     private static func clampedExternalCursorPoint(_ point: CGPoint) -> CGPoint {
-        guard !NSScreen.screens.isEmpty else { return point }
-        let unionFrame = NSScreen.screens.reduce(CGRect.null) { partial, screen in
-            partial.union(screen.frame)
-        }
-        guard !unionFrame.isNull else { return point }
-        return CGPoint(
-            x: min(max(point.x, unionFrame.minX), unionFrame.maxX - 1),
-            y: min(max(point.y, unionFrame.minY), unionFrame.maxY - 1)
-        )
+        NSScreen.pointClampedToDesktop(point)
     }
 
     private static func quartzCursorPoint(fromAppKitScreenPoint point: CGPoint) -> CGPoint {
-        let targetScreen = NSScreen.screens.first { $0.frame.contains(point) }
-            ?? NSScreen.screens.min { lhs, rhs in
-                distanceSquared(from: point, to: lhs.frame) < distanceSquared(from: point, to: rhs.frame)
-            }
+        let targetScreen = NSScreen.screen(containingOrNearestTo: point)
         guard let frame = targetScreen?.frame else { return point }
 
         // Public bridge coordinates use AppKit/NSEvent space (global desktop,
@@ -1343,14 +1330,6 @@ final class CompanionManager: ObservableObject {
         let localY = point.y - frame.minY
         let quartzY = frame.minY + (frame.height - localY)
         return CGPoint(x: point.x, y: quartzY)
-    }
-
-    private static func distanceSquared(from point: CGPoint, to rect: CGRect) -> CGFloat {
-        let clampedX = min(max(point.x, rect.minX), rect.maxX)
-        let clampedY = min(max(point.y, rect.minY), rect.maxY)
-        let dx = point.x - clampedX
-        let dy = point.y - clampedY
-        return dx * dx + dy * dy
     }
 
     private func clearExternalPrimaryCaption() {
@@ -8217,12 +8196,12 @@ final class CompanionManager: ObservableObject {
 
     private func agentDockTargetScreen() -> NSScreen? {
         let mouseLocation = NSEvent.mouseLocation
-        return NSScreen.screens.first(where: { $0.frame.contains(mouseLocation) }) ?? NSScreen.main
+        return NSScreen.screen(containingOrNearestTo: mouseLocation)
     }
 
     func pointAtPermissionDragAssistant() {
         let mouseLocation = NSEvent.mouseLocation
-        let targetScreen = NSScreen.screens.first(where: { $0.frame.contains(mouseLocation) }) ?? NSScreen.main
+        let targetScreen = NSScreen.screen(containingOrNearestTo: mouseLocation)
         guard let targetScreen else { return }
 
         let visibleFrame = targetScreen.visibleFrame
@@ -8237,7 +8216,7 @@ final class CompanionManager: ObservableObject {
 
     private func showAgentDockWindowNearCurrentScreen() {
         let mouseLocation = NSEvent.mouseLocation
-        let targetScreen = NSScreen.screens.first(where: { $0.frame.contains(mouseLocation) }) ?? NSScreen.main
+        let targetScreen = NSScreen.screen(containingOrNearestTo: mouseLocation)
         guard let targetScreen else { return }
         agentDockWindowManager.show(
             companionManager: self,
@@ -10141,7 +10120,7 @@ final class CompanionManager: ObservableObject {
     #if DEBUG
     func debugTestCursorFlight() {
         ensureCursorOverlayVisibleForAgentTask()
-        let screen = NSScreen.main ?? NSScreen.screens.first
+        let screen = NSScreen.screen(containingOrNearestTo: NSEvent.mouseLocation)
         guard let screen else { return }
 
         detectedElementScreenLocation = CGPoint(x: screen.frame.midX, y: screen.frame.midY)
@@ -10149,7 +10128,7 @@ final class CompanionManager: ObservableObject {
         detectedElementBubbleText = "Developer test"
         latestVoiceResponseCard = ClickyResponseCard(
             source: .voice,
-            rawText: "Developer cursor flight test armed at the center of the main screen.",
+            rawText: "Developer cursor flight test armed at the center of the cursor screen.",
             contextTitle: "Developer"
         )
     }
@@ -10271,7 +10250,7 @@ final class ClickyTextModeWindowManager {
     private func positionPanel(near cursorLocation: CGPoint) {
         guard let panel else { return }
 
-        let targetScreen = NSScreen.screens.first { $0.frame.contains(cursorLocation) } ?? NSScreen.main
+        let targetScreen = NSScreen.screen(containingOrNearestTo: cursorLocation)
         let visibleFrame = targetScreen?.visibleFrame ?? NSScreen.screens.first?.visibleFrame ?? .zero
         let proposedOrigin = CGPoint(
             x: cursorLocation.x + 18,
@@ -10288,7 +10267,7 @@ final class ClickyTextModeWindowManager {
     private func positionPanel(at origin: CGPoint) {
         guard let panel else { return }
 
-        let targetScreen = NSScreen.screens.first { $0.frame.contains(origin) } ?? NSScreen.main
+        let targetScreen = NSScreen.screen(containingOrNearestTo: origin)
         let visibleFrame = targetScreen?.visibleFrame ?? NSScreen.screens.first?.visibleFrame ?? .zero
         let clampedOrigin = CGPoint(
             x: min(max(origin.x, visibleFrame.minX + 10), visibleFrame.maxX - panelSize.width - 10),
