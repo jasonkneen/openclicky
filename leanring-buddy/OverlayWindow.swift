@@ -1927,11 +1927,32 @@ final class ClickyAgentDockWindowManager {
 @MainActor
 class OverlayWindowManager {
     private var overlayWindows: [OverlayWindow] = []
+    private weak var companionManager: CompanionManager?
+    private var displayConfigurationObserver: NSObjectProtocol?
     var hasShownOverlayBefore = false
+
+    init() {
+        displayConfigurationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.refreshOverlayWindowsForCurrentScreens()
+            }
+        }
+    }
+
+    deinit {
+        if let displayConfigurationObserver {
+            NotificationCenter.default.removeObserver(displayConfigurationObserver)
+        }
+    }
 
     func showOverlay(onScreens screens: [NSScreen], companionManager: CompanionManager) {
         // Hide any existing overlays
-        hideOverlay()
+        hideOverlay(clearCompanionManager: false)
+        self.companionManager = companionManager
 
         // Track if this is the first time showing overlay (welcome message)
         let isFirstAppearance = !hasShownOverlayBefore
@@ -1948,7 +1969,8 @@ class OverlayWindowManager {
             )
 
             let hostingView = NSHostingView(rootView: contentView)
-            hostingView.frame = screen.frame
+            hostingView.frame = NSRect(origin: .zero, size: screen.frame.size)
+            hostingView.autoresizingMask = [.width, .height]
             window.contentView = hostingView
 
             overlayWindows.append(window)
@@ -1957,11 +1979,18 @@ class OverlayWindowManager {
     }
 
     func hideOverlay() {
+        hideOverlay(clearCompanionManager: true)
+    }
+
+    private func hideOverlay(clearCompanionManager: Bool) {
         for window in overlayWindows {
             window.orderOut(nil)
             window.contentView = nil
         }
         overlayWindows.removeAll()
+        if clearCompanionManager {
+            companionManager = nil
+        }
     }
 
     /// Fades out overlay windows over `duration` seconds, then removes them.
@@ -1985,5 +2014,10 @@ class OverlayWindowManager {
 
     func isShowingOverlay() -> Bool {
         return !overlayWindows.isEmpty
+    }
+
+    private func refreshOverlayWindowsForCurrentScreens() {
+        guard !overlayWindows.isEmpty, let companionManager else { return }
+        showOverlay(onScreens: NSScreen.screens, companionManager: companionManager)
     }
 }

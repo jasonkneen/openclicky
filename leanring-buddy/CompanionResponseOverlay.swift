@@ -131,7 +131,7 @@ final class CompanionResponseOverlayManager {
 
         // Clamp to the visible frame of the screen containing the cursor
         // so the panel never goes off-screen.
-        if let currentScreen = screenContainingPoint(mouseLocation) {
+        if let currentScreen = NSScreen.screen(containingOrNearestTo: mouseLocation) {
             let visibleFrame = currentScreen.visibleFrame
 
             // If the panel would go off the right edge, flip it to the left of the cursor
@@ -183,9 +183,6 @@ final class CompanionResponseOverlayManager {
         })
     }
 
-    private func screenContainingPoint(_ point: CGPoint) -> NSScreen? {
-        NSScreen.screens.first { $0.frame.contains(point) }
-    }
 }
 
 // MARK: - SwiftUI View

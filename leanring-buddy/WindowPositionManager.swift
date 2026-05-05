@@ -351,7 +351,7 @@ private final class PermissionDragAssistantWindowManager {
 
     private func positionPanel() {
         guard let panel else { return }
-        let targetScreen = NSScreen.main ?? NSScreen.screens.first
+        let targetScreen = NSScreen.screen(containingOrNearestTo: NSEvent.mouseLocation)
         guard let targetScreen else { return }
 
         let visibleFrame = targetScreen.visibleFrame
@@ -446,5 +446,40 @@ extension NSScreen {
     var displayID: CGDirectDisplayID {
         let key = NSDeviceDescriptionKey("NSScreenNumber")
         return deviceDescription[key] as? CGDirectDisplayID ?? 0
+    }
+
+    /// Returns the screen containing `point`, or the nearest screen when the
+    /// point lands exactly on a display edge or outside the current desktop.
+    static func screen(containingOrNearestTo point: CGPoint) -> NSScreen? {
+        if let containingScreen = screens.first(where: { $0.frame.contains(point) }) {
+            return containingScreen
+        }
+
+        return screens.min { lhs, rhs in
+            distanceSquared(from: point, to: lhs.frame) < distanceSquared(from: point, to: rhs.frame)
+        } ?? main ?? screens.first
+    }
+
+    static var desktopUnionFrame: CGRect? {
+        let unionFrame = screens.reduce(CGRect.null) { partial, screen in
+            partial.union(screen.frame)
+        }
+        return unionFrame.isNull ? nil : unionFrame
+    }
+
+    static func pointClampedToDesktop(_ point: CGPoint) -> CGPoint {
+        guard let unionFrame = desktopUnionFrame else { return point }
+        return CGPoint(
+            x: min(max(point.x, unionFrame.minX), unionFrame.maxX - 1),
+            y: min(max(point.y, unionFrame.minY), unionFrame.maxY - 1)
+        )
+    }
+
+    private static func distanceSquared(from point: CGPoint, to rect: CGRect) -> CGFloat {
+        let clampedX = min(max(point.x, rect.minX), rect.maxX)
+        let clampedY = min(max(point.y, rect.minY), rect.maxY)
+        let dx = point.x - clampedX
+        let dy = point.y - clampedY
+        return dx * dx + dy * dy
     }
 }
