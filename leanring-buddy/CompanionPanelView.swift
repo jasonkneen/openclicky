@@ -321,7 +321,7 @@ struct CompanionPanelView: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(DS.Colors.textTertiary)
 
-                Text("Or, say \"Hey Agent...\" or \"Hey OpenClicky Agent...\" to spawn an agent that can do whatever task you want like doing research, writing posts for social media, even building apps.")
+                Text("Ask naturally. OpenClicky handles quick voice and computer-use requests itself, and hands deeper research, writing, coding, or file work to an agent in the background.")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(DS.Colors.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)

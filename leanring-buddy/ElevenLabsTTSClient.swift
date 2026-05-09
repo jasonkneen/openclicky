@@ -1514,6 +1514,11 @@ final class OpenAIRealtimeSpeechClient: OpenClickyTTSClient {
     nonisolated static let streamSampleRate: Double = 24_000
     private static let defaultVoiceID = "marin"
 
+    struct BidirectionalVoiceTurnResult {
+        let userTranscript: String
+        let assistantTranscript: String
+    }
+
     private var apiKey: String?
     private(set) var voiceID: String
     var model: String
@@ -1522,6 +1527,7 @@ final class OpenAIRealtimeSpeechClient: OpenClickyTTSClient {
     private var audioEngine: AVAudioEngine?
     private var playerNode: AVAudioPlayerNode?
     private var streamingTask: Task<Void, Error>?
+    private var activeBidirectionalVoiceTurn: BidirectionalVoiceTurn?
 
     init(apiKey: String?, model: String, voiceID: String = defaultVoiceID) {
         self.apiKey = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1639,6 +1645,115 @@ final class OpenAIRealtimeSpeechClient: OpenClickyTTSClient {
             sampleRate: Self.streamSampleRate,
             onPlaybackStarted: onPlaybackStarted
         )
+    }
+
+    func beginBidirectionalVoiceTurn(
+        systemPrompt: String,
+        conversationHistory: [(userPlaceholder: String, assistantResponse: String)] = [],
+        onUserTranscript: @escaping @MainActor @Sendable (String) -> Void,
+        onAssistantTextChunk: @escaping @MainActor @Sendable (String) -> Void,
+        onPlaybackStarted: @escaping @MainActor @Sendable () -> Void
+    ) async throws {
+        stopPlaybackInternal()
+        activeBidirectionalVoiceTurn?.cancel()
+        activeBidirectionalVoiceTurn = nil
+
+        guard let apiKey, !apiKey.isEmpty else {
+            throw NSError(
+                domain: "OpenAIRealtimeSpeechClient",
+                code: -1000,
+                userInfo: [NSLocalizedDescriptionKey: "OpenAI Realtime voice needs a Codex/OpenAI API key in Settings or OPENAI_API_KEY in the launch environment."]
+            )
+        }
+        guard var components = URLComponents(string: "wss://api.openai.com/v1/realtime") else {
+            throw NSError(domain: "OpenAIRealtimeSpeechClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "OpenAI Realtime WebSocket URL is invalid."])
+        }
+        components.queryItems = [URLQueryItem(name: "model", value: model)]
+        guard let url = components.url else {
+            throw NSError(domain: "OpenAIRealtimeSpeechClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "OpenAI Realtime WebSocket URL could not be created."])
+        }
+        guard let streamFormat = Self.makeStreamFormat() else {
+            throw NSError(domain: "OpenAIRealtimeSpeechClient", code: -3, userInfo: [NSLocalizedDescriptionKey: "Could not build OpenAI Realtime PCM stream format."])
+        }
+
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 60
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+
+        let webSocket = session.webSocketTask(with: request)
+        webSocket.resume()
+        try await waitForRealtimeConnection(on: webSocket)
+
+        let historyText = conversationHistory.suffix(8).map { entry in
+            "User: \(entry.userPlaceholder)\nOpenClicky: \(entry.assistantResponse)"
+        }.joined(separator: "\n\n")
+        let instructions = [
+            systemPrompt,
+            historyText.isEmpty ? nil : "Recent conversation:\n\(historyText)",
+            "You are in OpenClicky's bidirectional Realtime voice mode. Listen to the user's live microphone audio directly and reply out loud as OpenClicky in one concise spoken answer. Do not mention transcription, Whisper, markdown, or [POINT:] tags."
+        ].compactMap { $0 }.joined(separator: "\n\n")
+
+        try await sendJSON([
+            "type": "session.update",
+            "session": [
+                "type": "realtime",
+                "model": model,
+                "instructions": instructions,
+                "output_modalities": ["audio"],
+                "audio": [
+                    "input": [
+                        "format": [
+                            "type": "audio/pcm",
+                            "rate": Int(Self.streamSampleRate)
+                        ],
+                        "turn_detection": NSNull()
+                    ],
+                    "output": [
+                        "voice": voiceID,
+                        "format": [
+                            "type": "audio/pcm",
+                            "rate": Int(Self.streamSampleRate)
+                        ]
+                    ]
+                ]
+            ]
+        ], to: webSocket)
+
+        let turn = try BidirectionalVoiceTurn(
+            client: self,
+            webSocket: webSocket,
+            streamFormat: streamFormat,
+            onUserTranscript: onUserTranscript,
+            onAssistantTextChunk: onAssistantTextChunk,
+            onPlaybackStarted: onPlaybackStarted
+        )
+        activeBidirectionalVoiceTurn = turn
+        audioEngine = turn.outputEngine
+        playerNode = turn.playerNode
+        try turn.startInputCapture()
+        turn.startReceiving()
+    }
+
+    func finishBidirectionalVoiceTurn() async throws -> BidirectionalVoiceTurnResult {
+        guard let activeBidirectionalVoiceTurn else {
+            throw CancellationError()
+        }
+        self.activeBidirectionalVoiceTurn = nil
+        do {
+            let result = try await activeBidirectionalVoiceTurn.finish()
+            stopPlaybackInternal()
+            return result
+        } catch {
+            activeBidirectionalVoiceTurn.cancel()
+            stopPlaybackInternal()
+            throw error
+        }
+    }
+
+    func cancelBidirectionalVoiceTurn() {
+        activeBidirectionalVoiceTurn?.cancel()
+        activeBidirectionalVoiceTurn = nil
+        stopPlaybackInternal()
     }
 
 
@@ -1851,6 +1966,180 @@ final class OpenAIRealtimeSpeechClient: OpenClickyTTSClient {
         }
 
         return Self.int16Samples(fromLittleEndianPCM: bytes)
+    }
+
+    private final class BidirectionalVoiceTurn {
+        private weak var client: OpenAIRealtimeSpeechClient?
+        private let webSocket: URLSessionWebSocketTask
+        let outputEngine: AVAudioEngine
+        let playerNode: AVAudioPlayerNode
+        private let inputEngine = AVAudioEngine()
+        private let inputConverter = BuddyPCM16AudioConverter(targetSampleRate: OpenAIRealtimeSpeechClient.streamSampleRate)
+        private let streamFormat: AVAudioFormat
+        private let onUserTranscript: @MainActor @Sendable (String) -> Void
+        private let onAssistantTextChunk: @MainActor @Sendable (String) -> Void
+        private let onPlaybackStarted: @MainActor @Sendable () -> Void
+        private var receiveTask: Task<BidirectionalVoiceTurnResult, Error>?
+        private var hasInstalledInputTap = false
+        private var didStartPlayback = false
+
+        init(
+            client: OpenAIRealtimeSpeechClient,
+            webSocket: URLSessionWebSocketTask,
+            streamFormat: AVAudioFormat,
+            onUserTranscript: @escaping @MainActor @Sendable (String) -> Void,
+            onAssistantTextChunk: @escaping @MainActor @Sendable (String) -> Void,
+            onPlaybackStarted: @escaping @MainActor @Sendable () -> Void
+        ) throws {
+            self.client = client
+            self.webSocket = webSocket
+            self.streamFormat = streamFormat
+            self.onUserTranscript = onUserTranscript
+            self.onAssistantTextChunk = onAssistantTextChunk
+            self.onPlaybackStarted = onPlaybackStarted
+
+            let outputEngine = AVAudioEngine()
+            let playerNode = AVAudioPlayerNode()
+            outputEngine.attach(playerNode)
+            outputEngine.connect(playerNode, to: outputEngine.mainMixerNode, format: streamFormat)
+            try outputEngine.start()
+            self.outputEngine = outputEngine
+            self.playerNode = playerNode
+        }
+
+        func startInputCapture() throws {
+            let inputNode = inputEngine.inputNode
+            let inputFormat = inputNode.outputFormat(forBus: 0)
+            inputNode.installTap(onBus: 0, bufferSize: 256, format: inputFormat) { [weak self] buffer, _ in
+                guard let self,
+                      let pcmData = self.inputConverter.convertToPCM16Data(from: buffer),
+                      !pcmData.isEmpty else { return }
+                let base64Audio = pcmData.base64EncodedString()
+                Task { [weak self] in
+                    guard let self else { return }
+                    try? await self.sendJSON([
+                        "type": "input_audio_buffer.append",
+                        "audio": base64Audio
+                    ])
+                }
+            }
+            hasInstalledInputTap = true
+            inputEngine.prepare()
+            try inputEngine.start()
+        }
+
+        func startReceiving() {
+            receiveTask = Task { [weak self] in
+                guard let self else { throw CancellationError() }
+                return try await self.receiveUntilDone()
+            }
+        }
+
+        func finish() async throws -> BidirectionalVoiceTurnResult {
+            stopInputCapture()
+            try await sendJSON(["type": "input_audio_buffer.commit"])
+            try await sendJSON([
+                "type": "response.create",
+                "response": [
+                    "output_modalities": ["audio"]
+                ]
+            ])
+            guard let receiveTask else { throw CancellationError() }
+            let result = try await receiveTask.value
+            webSocket.cancel(with: .normalClosure, reason: nil)
+            return result
+        }
+
+        func cancel() {
+            stopInputCapture()
+            receiveTask?.cancel()
+            receiveTask = nil
+            playerNode.stop()
+            outputEngine.stop()
+            webSocket.cancel(with: .goingAway, reason: nil)
+        }
+
+        private func stopInputCapture() {
+            if hasInstalledInputTap {
+                inputEngine.inputNode.removeTap(onBus: 0)
+                hasInstalledInputTap = false
+            }
+            if inputEngine.isRunning {
+                inputEngine.stop()
+            }
+        }
+
+        private func receiveUntilDone() async throws -> BidirectionalVoiceTurnResult {
+            var userTranscript = ""
+            var assistantTranscript = ""
+            var scheduledFrameCount: AVAudioFramePosition = 0
+
+            while true {
+                try Task.checkCancellation()
+                guard let event = try await client?.receiveRealtimeEvent(from: webSocket) else {
+                    throw CancellationError()
+                }
+                let type = event["type"] as? String ?? ""
+                if (type == "response.output_audio.delta" || type == "response.audio.delta"),
+                   let delta = event["delta"] as? String,
+                   let chunk = Data(base64Encoded: delta) {
+                    let samples = OpenAIRealtimeSpeechClient.int16Samples(fromLittleEndianPCM: chunk)
+                    let frames = await MainActor.run {
+                        ElevenLabsTTSClient.scheduleSamples(samples, on: playerNode, format: streamFormat)
+                    }
+                    scheduledFrameCount += frames
+                    if frames > 0, !didStartPlayback {
+                        didStartPlayback = true
+                        await MainActor.run { onPlaybackStarted() }
+                    }
+                } else if (type == "response.output_audio_transcript.delta" || type == "response.audio_transcript.delta"),
+                          let delta = event["delta"] as? String {
+                    assistantTranscript += delta
+                    let snapshot = assistantTranscript
+                    await MainActor.run { onAssistantTextChunk(snapshot) }
+                } else if type == "response.output_audio_transcript.done" || type == "response.audio_transcript.done" {
+                    if let doneTranscript = event["transcript"] as? String, !doneTranscript.isEmpty {
+                        assistantTranscript = doneTranscript
+                        let snapshot = assistantTranscript
+                        await MainActor.run { onAssistantTextChunk(snapshot) }
+                    }
+                } else if type == "conversation.item.input_audio_transcription.completed",
+                          let transcript = event["transcript"] as? String {
+                    userTranscript = transcript
+                    await MainActor.run { onUserTranscript(transcript) }
+                } else if type == "response.done" {
+                    if assistantTranscript.isEmpty,
+                       let extracted = OpenAIRealtimeSpeechClient.firstTranscriptString(in: event),
+                       !extracted.isEmpty {
+                        assistantTranscript = extracted
+                        let snapshot = assistantTranscript
+                        await MainActor.run { onAssistantTextChunk(snapshot) }
+                    }
+                    break
+                } else if type == "error" {
+                    guard let error = client?.realtimeError(from: event) else { throw CancellationError() }
+                    throw error
+                }
+            }
+
+            if scheduledFrameCount > 0 {
+                await ElevenLabsTTSClient.waitForPlaybackToDrain(
+                    playerNode,
+                    scheduledFrameCount: scheduledFrameCount,
+                    sampleRate: OpenAIRealtimeSpeechClient.streamSampleRate
+                )
+            }
+            return BidirectionalVoiceTurnResult(
+                userTranscript: userTranscript.trimmingCharacters(in: .whitespacesAndNewlines),
+                assistantTranscript: assistantTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        }
+
+        private func sendJSON(_ payload: [String: Any]) async throws {
+            let data = try JSONSerialization.data(withJSONObject: payload)
+            guard let string = String(data: data, encoding: .utf8) else { return }
+            try await webSocket.send(.string(string))
+        }
     }
 
 

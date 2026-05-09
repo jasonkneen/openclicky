@@ -357,9 +357,19 @@ struct OpenClickySettingsView: View {
             }
 
             settingsGroup("Listening / transcription") {
+                if OpenClickyModelCatalog.isSpeechModelID(companionManager.selectedModel) {
+                    valueRow(
+                        title: "Current input path",
+                        subtitle: "GPT Realtime is selected, so OpenClicky streams microphone audio directly to Realtime instead of using Whisper or another speech-to-text provider.",
+                        systemImageName: "waveform.badge.mic"
+                    )
+                }
+
                 valueRow(
                     title: "Current provider",
-                    subtitle: companionManager.buddyDictationManager.transcriptionProviderDisplayName,
+                    subtitle: OpenClickyModelCatalog.isSpeechModelID(companionManager.selectedModel)
+                        ? "Bypassed while GPT Realtime is the response voice model"
+                        : companionManager.buddyDictationManager.transcriptionProviderDisplayName,
                     systemImageName: "waveform"
                 )
 

@@ -743,6 +743,9 @@ final class CompanionManager: ObservableObject {
     private var lastVoiceInteractionCompletedAt: Date = .distantPast
     private static let tutorObservationVoiceCooldown: TimeInterval = 90
     private var agentDockFollowTimer: Timer?
+    private var isRealtimeBidirectionalVoiceCaptureActive = false
+    private var realtimeBidirectionalVoiceCaptureStartedAt: Date?
+    private var realtimeBidirectionalVoiceTask: Task<Void, Never>?
 
     func setSelectedModel(_ model: String) {
         let selectedVoiceResponseModel = OpenClickyModelCatalog.voiceResponseModel(withID: model)
@@ -2089,6 +2092,11 @@ final class CompanionManager: ObservableObject {
         max(0, Int((end.timeIntervalSince(start) * 1000).rounded()))
     }
 
+    private static func elapsedMilliseconds(since startDate: Date?) -> Int {
+        guard let startDate else { return -1 }
+        return elapsedMilliseconds(from: startDate, to: Date())
+    }
+
     static func voiceResponseCompletionAudioPlaybackState(
         spokenText: String,
         playbackFinished: Bool
@@ -2143,10 +2151,12 @@ final class CompanionManager: ObservableObject {
             }
         case .openAI:
             if OpenClickyModelCatalog.isSpeechModelID(selectedVoiceResponseModel.id) {
-                fields["executionMethod"] = "OpenAIRealtimeSpeechClient.speakResponse"
+                fields["executionMethod"] = "OpenAIRealtimeSpeechClient.beginBidirectionalVoiceTurn"
                 fields["authMode"] = "openai_api_key_primary"
                 fields["transport"] = "realtime_websocket"
-                fields["streamingMethod"] = "response.output_audio.delta"
+                fields["streamingMethod"] = "input_audio_buffer.append + response.output_audio.delta"
+                fields["inputPath"] = "realtime_input_audio_buffer"
+                fields["bypassesWhisper"] = true
                 fields["playbackEngine"] = OpenClickyTTSProvider.openAIRealtime.rawValue
                 fields["speechModel"] = selectedVoiceResponseModel.id
             } else if AppBundleConfiguration.openAIAPIKey() != nil {
@@ -2224,6 +2234,10 @@ final class CompanionManager: ObservableObject {
             startPrewarmedScreenshotCaptureIfPossible()
 
             pendingKeyboardShortcutStartTask?.cancel()
+            if shouldUseBidirectionalRealtimeVoiceInput {
+                startBidirectionalRealtimeVoiceCapture(source: "keyboardShortcut")
+                return
+            }
             pendingKeyboardShortcutStartTask = Task {
                 await buddyDictationManager.startPushToTalkFromKeyboardShortcut(
                     currentDraftText: "",
@@ -2243,6 +2257,9 @@ final class CompanionManager: ObservableObject {
             ClickyAnalytics.trackPushToTalkReleased()
             pendingKeyboardShortcutStartTask?.cancel()
             pendingKeyboardShortcutStartTask = nil
+            if finishBidirectionalRealtimeVoiceCaptureIfNeeded(source: "keyboardShortcut") {
+                return
+            }
             // Keep the prewarmed screenshot — even on a quick press the user
             // may still produce a final transcript (e.g. wake-word). The
             // freshness check in the consumer discards stale captures.
@@ -2250,6 +2267,176 @@ final class CompanionManager: ObservableObject {
         case .none:
             break
         }
+    }
+
+    private var shouldUseBidirectionalRealtimeVoiceInput: Bool {
+        OpenClickyModelCatalog.isSpeechModelID(selectedModel)
+    }
+
+    private func startBidirectionalRealtimeVoiceCapture(source: String) {
+        guard !isRealtimeBidirectionalVoiceCaptureActive else { return }
+
+        isRealtimeBidirectionalVoiceCaptureActive = true
+        realtimeBidirectionalVoiceCaptureStartedAt = Date()
+        voiceState = .listening
+        currentAudioPowerLevel = 0
+        latestVoiceResponseCard = nil
+
+        let startedAt = Date()
+        let historyForAPI = conversationHistory.map { entry in
+            (userPlaceholder: entry.userTranscript, assistantResponse: entry.assistantResponse)
+        }
+        OpenClickyMessageLogStore.shared.append(
+            lane: "voice",
+            direction: "internal",
+            event: "voice.realtime_bidirectional.start_requested",
+            fields: [
+                "source": source,
+                "speechModel": selectedModel,
+                "speechVoice": openAIRealtimeSpeechClient.voiceID,
+                "inputPath": "realtime_input_audio_buffer",
+                "bypassesWhisper": true
+            ]
+        )
+
+        realtimeBidirectionalVoiceTask?.cancel()
+        realtimeBidirectionalVoiceTask = Task { [weak self] in
+            do {
+                try await self?.openAIRealtimeSpeechClient.beginBidirectionalVoiceTurn(
+                    systemPrompt: self?.currentVoiceResponseSystemPrompt() ?? "",
+                    conversationHistory: historyForAPI,
+                    onUserTranscript: { transcript in
+                        self?.lastTranscript = transcript
+                    },
+                    onAssistantTextChunk: { accumulatedText in
+                        let trimmed = accumulatedText.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !trimmed.isEmpty else { return }
+                        self?.latestVoiceResponseCard = ClickyResponseCard(
+                            source: .voice,
+                            rawText: trimmed,
+                            contextTitle: "Realtime voice input"
+                        )
+                        self?.updateVoiceResponseCaption(trimmed)
+                    },
+                    onPlaybackStarted: {
+                        self?.voiceState = .responding
+                        OpenClickyMessageLogStore.shared.append(
+                            lane: "voice",
+                            direction: "internal",
+                            event: "voice.realtime_bidirectional.audio_started",
+                            fields: [
+                                "source": source,
+                                "speechModel": self?.selectedModel ?? "unknown",
+                                "speechVoice": self?.openAIRealtimeSpeechClient.voiceID ?? "unknown",
+                                "startupDurationMs": Self.elapsedMilliseconds(since: startedAt)
+                            ]
+                        )
+                    }
+                )
+                OpenClickyMessageLogStore.shared.append(
+                    lane: "voice",
+                    direction: "internal",
+                    event: "voice.realtime_bidirectional.input_ready",
+                    fields: [
+                        "source": source,
+                        "startupDurationMs": Self.elapsedMilliseconds(since: startedAt)
+                    ]
+                )
+            } catch {
+                await MainActor.run {
+                    self?.handleBidirectionalRealtimeVoiceFailure(error, source: source, stage: "start")
+                }
+            }
+        }
+    }
+
+    @discardableResult
+    private func finishBidirectionalRealtimeVoiceCaptureIfNeeded(source: String) -> Bool {
+        guard isRealtimeBidirectionalVoiceCaptureActive else { return false }
+        isRealtimeBidirectionalVoiceCaptureActive = false
+        voiceState = .processing
+
+        let finishedAt = Date()
+        let captureStartedAt = realtimeBidirectionalVoiceCaptureStartedAt
+        realtimeBidirectionalVoiceTask = Task { [weak self] in
+            do {
+                guard let self else { return }
+                let result = try await self.openAIRealtimeSpeechClient.finishBidirectionalVoiceTurn()
+                let assistantText = result.assistantTranscript.isEmpty ? "Done." : result.assistantTranscript
+                let userTranscript = result.userTranscript.isEmpty ? "Realtime voice input" : result.userTranscript
+
+                await MainActor.run {
+                    self.lastTranscript = userTranscript
+                    self.conversationHistory.append((
+                        userTranscript: userTranscript,
+                        assistantResponse: assistantText
+                    ))
+                    if self.conversationHistory.count > 10 {
+                        self.conversationHistory.removeFirst(self.conversationHistory.count - 10)
+                    }
+                    self.latestVoiceResponseCard = ClickyResponseCard(
+                        source: .voice,
+                        rawText: assistantText,
+                        contextTitle: userTranscript
+                    )
+                    self.updateVoiceResponseCaption(assistantText)
+                    self.voiceState = .idle
+                    self.lastVoiceInteractionCompletedAt = Date()
+                    self.scheduleWidgetSnapshotPublish()
+                    OpenClickyMessageLogStore.shared.append(
+                        lane: "voice",
+                        direction: "internal",
+                        event: "voice.realtime_bidirectional.finished",
+                        fields: [
+                            "source": source,
+                            "speechModel": self.selectedModel,
+                            "speechVoice": self.openAIRealtimeSpeechClient.voiceID,
+                            "inputPath": "realtime_input_audio_buffer",
+                            "bypassesWhisper": true,
+                            "userTranscriptLength": result.userTranscript.count,
+                            "assistantTranscriptLength": assistantText.count,
+                            "captureDurationMs": Self.elapsedMilliseconds(since: captureStartedAt),
+                            "responseDurationMs": Self.elapsedMilliseconds(since: finishedAt)
+                        ]
+                    )
+                }
+
+                do {
+                    try self.codexHomeManager.appendPersistentMemoryEvent(
+                        userRequest: userTranscript,
+                        agentResponse: assistantText
+                    )
+                } catch {
+                    print("⚠️ OpenClicky memory update failed: \(error)")
+                }
+                ClickyAnalytics.trackAIResponseReceived(response: assistantText)
+            } catch {
+                await MainActor.run {
+                    self?.handleBidirectionalRealtimeVoiceFailure(error, source: source, stage: "finish")
+                }
+            }
+        }
+        realtimeBidirectionalVoiceCaptureStartedAt = nil
+        return true
+    }
+
+    private func handleBidirectionalRealtimeVoiceFailure(_ error: Error, source: String, stage: String) {
+        openAIRealtimeSpeechClient.cancelBidirectionalVoiceTurn()
+        isRealtimeBidirectionalVoiceCaptureActive = false
+        realtimeBidirectionalVoiceCaptureStartedAt = nil
+        voiceState = .idle
+        OpenClickyMessageLogStore.shared.append(
+            lane: "voice",
+            direction: "internal",
+            event: "voice.realtime_bidirectional.failed",
+            fields: [
+                "source": source,
+                "stage": stage,
+                "speechModel": selectedModel,
+                "speechVoice": openAIRealtimeSpeechClient.voiceID,
+                "error": error.localizedDescription
+            ]
+        )
     }
 
     private func handleFinalVoiceTranscript(_ finalTranscript: String) {
@@ -2311,6 +2498,9 @@ final class CompanionManager: ObservableObject {
             return
         }
         if submitContextualAgentFollowUp(finalTranscript, source: "voice") {
+            return
+        }
+        if startImplicitAgentTaskIfNeeded(from: finalTranscript) {
             return
         }
         // Remember this transcript as the candidate task in case Haiku's
@@ -2506,6 +2696,30 @@ final class CompanionManager: ObservableObject {
             ]
         )
         startVoiceAgentTask(instruction: instruction)
+        return true
+    }
+
+    private func startImplicitAgentTaskIfNeeded(from finalTranscript: String) -> Bool {
+        guard let instruction = Self.implicitAgentTaskInstruction(from: finalTranscript) else {
+            return false
+        }
+
+        OpenClickyMessageLogStore.shared.append(
+            lane: "agent",
+            direction: "incoming",
+            event: "openclicky.agent_task.implicit_route",
+            fields: [
+                "transcript": finalTranscript,
+                "instruction": instruction,
+                "executor": "agent_mode",
+                "route": "agent.start",
+                "requestID": activeRequestTiming?.requestID ?? "none"
+            ]
+        )
+        startVoiceAgentTask(
+            instruction: instruction,
+            acknowledgement: "i’ll take care of that in the background."
+        )
         return true
     }
 
@@ -6444,6 +6658,67 @@ final class CompanionManager: ObservableObject {
             || clickyAgentInstruction(from: transcript) != nil
             || permissiveAgentInstruction(from: transcript) != nil
             || isReferentialAgentWorkFollowUp(transcript)
+            || implicitAgentTaskInstruction(from: transcript) != nil
+    }
+
+    private static func implicitAgentTaskInstruction(from transcript: String) -> String? {
+        let candidate = normalizedAgentTaskInstruction(from: transcript)
+        let normalized = normalizedSpokenCommandText(candidate)
+        guard wordCount(in: normalized) >= 3 else { return nil }
+        guard !isMetaAgentRoutingQuestion(candidate) else { return nil }
+        guard !isLikelyPureConversation(candidate) else { return nil }
+
+        let hasAction = containsAgentWorkAction(normalized)
+        let hasToolContext = isLikelyAgentToolWorkInstruction(candidate)
+            || hasAgentWorkVerbAndArtifact(candidate)
+            || containsDurableWorkTarget(normalized)
+        let asksForFreshInfo = containsFreshResearchRequest(normalized)
+
+        guard (hasAction && hasToolContext) || asksForFreshInfo else { return nil }
+        guard !isLikelyDirectLocalOnlyRequest(candidate) else { return nil }
+
+        return cleanedAgentTaskInstruction(candidate)
+    }
+
+    private static func isLikelyPureConversation(_ transcript: String) -> Bool {
+        let normalized = normalizedSpokenCommandText(transcript)
+        guard !normalized.isEmpty else { return true }
+
+        let conversationPrefixes = [
+            "what is", "what are", "what does", "what do", "why", "how do", "how does",
+            "how would", "can you explain", "explain", "tell me about", "walk me through",
+            "do you think", "should i", "is it", "are we", "am i"
+        ]
+        let hasConversationPrefix = conversationPrefixes.contains { normalized.hasPrefix($0) }
+        guard hasConversationPrefix else { return false }
+
+        return !containsAgentWorkAction(normalized)
+            && !isLikelyAgentToolWorkInstruction(transcript)
+            && !containsDurableWorkTarget(normalized)
+            && !containsFreshResearchRequest(normalized)
+    }
+
+    private static func containsAgentWorkAction(_ normalized: String) -> Bool {
+        let actionPattern = #"\b(?:check|look\s+at|take\s+a\s+look|inspect|review|audit|fix|modify|change|update|edit|build|create|make|write|draft|research|search|find|summari[sz]e|organize|clean\s+up|cleanup|test|run|install|compare|read|move|rename|delete|prune|optimi[sz]e|wire|implement|add|remove|route|delegate)\b"#
+        return normalized.range(of: actionPattern, options: .regularExpression) != nil
+    }
+
+    private static func containsDurableWorkTarget(_ normalized: String) -> Bool {
+        let targetPattern = #"\b(?:openclicky|clicky|repo|repository|codebase|project|app|settings|preference|preferences|log|logs|memory|skill|skills|desktop|download|downloads|document|documents|folder|folders|file|files|code|diff|git|branch|pull\s+request|issue|bug|test|tests|build|swift|xcode|email|gmail|calendar|spreadsheet|sheet|doc|slides)\b"#
+        return normalized.range(of: targetPattern, options: .regularExpression) != nil
+    }
+
+    private static func containsFreshResearchRequest(_ normalized: String) -> Bool {
+        let researchPattern = #"\b(?:latest|live|price|news|weather|schedule|standings|research|look\s+up|search\s+(?:the\s+)?web|google|browse)\b"#
+        return normalized.range(of: researchPattern, options: .regularExpression) != nil
+    }
+
+    private static func isLikelyDirectLocalOnlyRequest(_ transcript: String) -> Bool {
+        nativeTypeRequest(from: transcript) != nil
+            || nativeKeyPressRequest(from: transcript) != nil
+            || localAppOpenRequest(from: transcript) != nil
+            || localFolderOpenRequest(from: transcript) != nil
+            || isIncompleteLocalAppOpenRequest(from: transcript)
     }
 
     private static func deferredLiveAgentRouteInstruction(
@@ -8548,8 +8823,8 @@ final class CompanionManager: ObservableObject {
     YOUR JOB IS NARROW. you only do these things:
     1. POINT and ANNOTATE things on the user's screen using the [POINT:...] tag.
     2. GIVE ADVICE, EXPLAIN, and ANSWER QUESTIONS conversationally — including conceptual coding questions, walkthroughs, "what does this mean", "how would i", etc.
-    3. SEARCH THE WEB conversationally when the user asks. answer from your own general knowledge; if the user explicitly wants live/current data (today's weather, latest price, breaking news), say "i'd need to spin up an agent for that, want me to?" and stop.
-    4. SPAWN and MANAGE AGENTS — recognize when a request needs an agent, and offer to start one.
+    3. SEARCH THE WEB conversationally when the user asks. answer from your own general knowledge; if the user explicitly wants live/current data (today's weather, latest price, breaking news), give a brief handoff-style acknowledgement; OpenClicky routes that kind of task to Agent Mode.
+    4. ROUTE WORK NATURALLY — simple conversational help stays in voice, direct computer-control is handled by OpenClicky's computer-use path, and file/code/research/settings/log work is handed to Agent Mode without making the user say a special agent phrase.
 
     YOU DO NOT, EVER:
     - run code, run commands, run shell, run terminal, run python, run scripts
@@ -8558,11 +8833,9 @@ final class CompanionManager: ObservableObject {
     - perform any filesystem, git, build, install, or refactor work
     - take any local action beyond pointing at things on screen
 
-    if the user asks you to do anything in the "DO NOT" list, your response is exactly this pattern:
-    "i can't do that from voice — want me to spin up an agent to <restate the task in 4-8 words>?"
-    then stop. do not attempt the task. do not narrate what you would have done. do not propose a workaround. just offer the agent and wait for the user's confirmation. once they say yes / yeah / sure / go / spin it up, the app will hear that as agent intent — you do not need to start an agent yourself, just confirm verbally with something like "on it, starting an agent for that".
+    if the user asks you to do anything in the "DO NOT" list and OpenClicky has not already routed it before you see the turn, do not ask them to repeat it with a special agent phrase. respond with a short handoff such as "i’ll take care of that in the background." then stop. OpenClicky should route clear file, code, log, settings, current-research, and other tool-heavy work to Agent Mode automatically.
 
-    when the user clearly mentions "agent" / "start an agent" / "spin up an agent" / "ask an agent", the app spawns the agent before you see the request — your job in that case is just to confirm briefly: "on it, starting an agent for that."
+    when the user clearly mentions "agent" / "start an agent" / "spin up an agent" / "ask an agent", or when the app has already decided the task needs Agent Mode, your job is just to confirm briefly: "on it, starting an agent for that."
 
     response style:
     - default to one or two sentences. be direct and dense. sound like a capable coworker over the user's shoulder, not a formal report. if the user asks you to explain more or go deeper, give a thorough explanation with no length cap — but still no file edits, no commands, just words.
@@ -10372,6 +10645,9 @@ final class CompanionManager: ObservableObject {
         voiceFollowUpStopTask?.cancel()
         voiceFollowUpStopTask = nil
         ClickyAnalytics.trackPushToTalkReleased()
+        if finishBidirectionalRealtimeVoiceCaptureIfNeeded(source: "microphoneButton") {
+            return
+        }
         buddyDictationManager.stopPersistentDictationFromMicrophoneButton()
     }
 
@@ -10385,6 +10661,19 @@ final class CompanionManager: ObservableObject {
         interruptCurrentVoiceResponse()
         clearDetectedElementLocation()
         ClickyAnalytics.trackPushToTalkStarted()
+
+        if shouldUseBidirectionalRealtimeVoiceInput {
+            startBidirectionalRealtimeVoiceCapture(source: "microphoneButton")
+            voiceFollowUpStopTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 8_000_000_000)
+                await MainActor.run {
+                    guard let self else { return }
+                    self.voiceFollowUpStopTask = nil
+                    self.stopSDKVoiceCapture()
+                }
+            }
+            return
+        }
 
         Task {
             await buddyDictationManager.startAutoSubmittingDictationFromMicrophoneButton(

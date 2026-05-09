@@ -534,7 +534,7 @@ struct CodexAgentModeSettingsSheet: View {
 
                         settingsSection(
                             title: "Coding and actions model",
-                            subtitle: "Used when you say \"Hey Agent\", \"Clicky Agent\", or \"OpenClicky Agent\". The bundled Codex runtime uses local ChatGPT sign-in when no OpenAI key is set."
+                            subtitle: "Used for background Agent Mode when OpenClicky decides a request needs deeper tools, files, research, or coding. The bundled Codex runtime uses local ChatGPT sign-in when no OpenAI key is set."
                         ) {
                             VStack(spacing: 7) {
                                 modelOptionGrid(
