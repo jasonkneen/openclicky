@@ -9,10 +9,10 @@
 
 import Foundation
 
-public enum ThreeDGenerationTool {
+enum ThreeDGenerationTool {
 
-    public static let name = "generate_3d"
-    public static let description = """
+    static let name = "generate_3d"
+    static let description = """
     Generate a 3D low-poly stylized model (GLB) from a text prompt. \
     The model appears inline in the chat as a rotatable preview. \
     Use this whenever the user asks for a 3D object, prop, character, \
@@ -20,7 +20,7 @@ public enum ThreeDGenerationTool {
     """
 
     /// JSON Schema (subset OpenAI/Anthropic-compatible).
-    public static let jsonSchema: [String: Any] = [
+    static let jsonSchema: [String: Any] = [
         "type": "object",
         "properties": [
             "prompt": [
@@ -48,19 +48,19 @@ public enum ThreeDGenerationTool {
     ]
 
     /// Public result returned to the agent.
-    public struct InvocationResult: Codable {
-        public let job_id: String
-        public let prompt: String
-        public let style: String
-        public let status: String       // "queued"
-        public let provider: String
-        public let user_message: String // What to show in the chat alongside the bubble.
+    struct InvocationResult: Codable {
+        let job_id: String
+        let prompt: String
+        let style: String
+        let status: String       // "queued"
+        let provider: String
+        let user_message: String // What to show in the chat alongside the bubble.
     }
 
     /// Invoke the tool. Returns immediately with a job id — UI binds to
     /// `ThreeDGenerationService.shared.jobs` to render progress / completion.
     @MainActor
-    public static func invoke(arguments: [String: Any]) throws -> InvocationResult {
+    static func invoke(arguments: [String: Any]) throws -> InvocationResult {
         guard let prompt = arguments["prompt"] as? String, !prompt.isEmpty else {
             throw NSError(
                 domain: "ThreeDGenerationTool",

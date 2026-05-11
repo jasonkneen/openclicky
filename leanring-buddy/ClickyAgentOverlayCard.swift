@@ -44,6 +44,105 @@ struct ClickyThinkingDots: View {
     }
 }
 
+struct OpenClickyOpenableLink: Identifiable, Hashable {
+    let url: URL
+
+    var id: String { url.absoluteString }
+
+    var buttonTitle: String {
+        guard url.isFileURL else { return "Open link" }
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue {
+            return "Open folder"
+        }
+        let name = url.lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? "Open file" : "Open \(name)"
+    }
+
+    var systemImageName: String {
+        guard url.isFileURL else { return "arrow.up.right.square" }
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue {
+            return "folder"
+        }
+        return "doc"
+    }
+}
+
+enum OpenClickyOpenableLinkExtractor {
+    static func links(in text: String, limit: Int = 3) -> [OpenClickyOpenableLink] {
+        guard !text.isEmpty, limit > 0 else { return [] }
+        var urls: [URL] = []
+        appendWebLinks(from: text, to: &urls)
+        appendFileLinks(from: text, to: &urls)
+
+        var seen = Set<String>()
+        return urls.compactMap { url -> OpenClickyOpenableLink? in
+            let key = url.isFileURL ? url.standardizedFileURL.path : url.absoluteString
+            guard seen.insert(key).inserted else { return nil }
+            return OpenClickyOpenableLink(url: url)
+        }
+        .prefix(limit)
+        .map { $0 }
+    }
+
+    private static func appendWebLinks(from text: String, to urls: inout [URL]) {
+        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return }
+        let nsText = text as NSString
+        let range = NSRange(location: 0, length: nsText.length)
+        detector.enumerateMatches(in: text, options: [], range: range) { match, _, _ in
+            guard let url = match?.url,
+                  let scheme = url.scheme?.lowercased(),
+                  scheme == "http" || scheme == "https" else { return }
+            urls.append(url)
+        }
+    }
+
+    private static func appendFileLinks(from text: String, to urls: inout [URL]) {
+        for line in text.components(separatedBy: .newlines) {
+            urls.append(contentsOf: fileURLs(inLine: line))
+        }
+    }
+
+    private static func fileURLs(inLine line: String) -> [URL] {
+        var results: [URL] = []
+        var searchStart = line.startIndex
+        while searchStart < line.endIndex,
+              let range = line.range(of: #"(?:file://)?/Users/"#, options: .regularExpression, range: searchStart..<line.endIndex) {
+            let rawCandidate = String(line[range.lowerBound..<line.endIndex])
+            if let url = resolvedFileURL(from: rawCandidate) {
+                results.append(url)
+            }
+            searchStart = range.upperBound
+        }
+        return results
+    }
+
+    private static func resolvedFileURL(from rawCandidate: String) -> URL? {
+        var candidate = rawCandidate
+            .replacingOccurrences(of: "file://", with: "")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "`'\" <>[]{}"))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        candidate = trimTrailingSentencePunctuation(candidate)
+
+        let fileManager = FileManager.default
+        while !candidate.isEmpty {
+            let expanded = (candidate as NSString).expandingTildeInPath
+            if fileManager.fileExists(atPath: expanded) {
+                return URL(fileURLWithPath: expanded).standardizedFileURL
+            }
+            guard let lastSpace = candidate.lastIndex(where: { $0 == " " || $0 == "\t" }) else { break }
+            candidate = String(candidate[..<lastSpace])
+            candidate = trimTrailingSentencePunctuation(candidate)
+        }
+        return nil
+    }
+
+    private static func trimTrailingSentencePunctuation(_ value: String) -> String {
+        value.trimmingCharacters(in: CharacterSet(charactersIn: ".,;:)\n\t "))
+    }
+}
+
 struct ClickyAgentDockHoverCard: View {
     let item: ClickyAgentDockItem
     let canOpenDashboard: Bool
@@ -124,11 +223,11 @@ struct ClickyAgentDockHoverCard: View {
                             .buttonStyle(ClickyAgentDockPillButtonStyle())
                         }
 
-                        if let linkTarget {
+                        ForEach(linkTargets) { link in
                             Button {
-                                NSWorkspace.shared.open(linkTarget)
+                                NSWorkspace.shared.open(link.url)
                             } label: {
-                                Label(linkButtonTitle(for: linkTarget), systemImage: "arrow.up.right.square")
+                                Label(link.buttonTitle, systemImage: link.systemImageName)
                             }
                             .buttonStyle(ClickyAgentDockPillButtonStyle())
                         }
@@ -377,44 +476,13 @@ struct ClickyAgentDockHoverCard: View {
     private enum QuickAction { case voice, text, dashboard }
 
     private var hasTaskActionButtons: Bool {
-        !item.suggestedNextActions.isEmpty || linkTarget != nil
+        !item.suggestedNextActions.isEmpty || !linkTargets.isEmpty
     }
 
-    private var linkTarget: URL? {
-        // Only scan the live caption — the previous version scanned the
-        // canned "An agent is working on this." fallback, which never
-        // contained a link anyway.
-        Self.firstOpenableURL(in: item.caption ?? "")
-    }
-
-    private func linkButtonTitle(for url: URL) -> String {
-        url.isFileURL ? "Open \(url.lastPathComponent)" : "Open link"
-    }
-
-    private static func firstOpenableURL(in text: String) -> URL? {
-        let patterns = [
-            #"`((?:file://)?/[^`]+)`"#,
-            #"((?:file://)?/Users/[^\s`]+)"#,
-            #"(https?://[^\s`]+)"#
-        ]
-        for pattern in patterns {
-            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
-            let range = NSRange(text.startIndex..<text.endIndex, in: text)
-            guard let match = regex.firstMatch(in: text, range: range), match.numberOfRanges > 1,
-                  let matchRange = Range(match.range(at: 1), in: text) else { continue }
-            let raw = String(text[matchRange])
-                .trimmingCharacters(in: CharacterSet(charactersIn: "`'\".,)\n\t "))
-            if raw.hasPrefix("file://"), let url = URL(string: raw) {
-                return url
-            }
-            if raw.hasPrefix("http://") || raw.hasPrefix("https://") {
-                return URL(string: raw)
-            }
-            if raw.hasPrefix("/") {
-                return URL(fileURLWithPath: raw)
-            }
-        }
-        return nil
+    private var linkTargets: [OpenClickyOpenableLink] {
+        let text = ([item.caption ?? ""] + item.activityStatusLines + [item.progressStepText ?? ""])
+            .joined(separator: "\n")
+        return OpenClickyOpenableLinkExtractor.links(in: text, limit: 2)
     }
 
     private var displayTitle: String {

@@ -10,7 +10,7 @@ import Foundation
 
 /// User-facing style hint. Translated per-provider into either a `style`
 /// API field or prompt-engineering prefix.
-public enum ThreeDStyle: String, Codable, CaseIterable, Sendable {
+enum ThreeDStyle: String, Codable, CaseIterable, Sendable {
     case lowPolyStylized   // Default for OpenClicky chat
     case clay
     case voxel
@@ -18,7 +18,7 @@ public enum ThreeDStyle: String, Codable, CaseIterable, Sendable {
     case realistic
     case none
 
-    public var promptPrefix: String {
+    var promptPrefix: String {
         switch self {
         case .lowPolyStylized:
             return "low poly, stylized, flat shaded, faceted clean geometry, minimal triangle count, "
@@ -36,17 +36,17 @@ public enum ThreeDStyle: String, Codable, CaseIterable, Sendable {
     }
 }
 
-public struct ThreeDGenerationRequest: Sendable {
-    public let prompt: String
-    public let style: ThreeDStyle
+struct ThreeDGenerationRequest: Sendable {
+    let prompt: String
+    let style: ThreeDStyle
     /// Negative prompt — provider may ignore.
-    public let negativePrompt: String?
+    let negativePrompt: String?
     /// Request quad mesh (lower poly count, retopologised).
-    public let quad: Bool
+    let quad: Bool
     /// Request PBR textures. If false, providers return base-color only.
-    public let pbr: Bool
+    let pbr: Bool
 
-    public init(
+    init(
         prompt: String,
         style: ThreeDStyle = .lowPolyStylized,
         negativePrompt: String? = "high poly, photorealistic, noisy detail, blurry",
@@ -63,7 +63,7 @@ public struct ThreeDGenerationRequest: Sendable {
 
 // MARK: - Outputs
 
-public enum ThreeDTaskStatus: String, Codable, Sendable {
+enum ThreeDTaskStatus: String, Codable, Sendable {
     case queued
     case running
     case success
@@ -71,33 +71,33 @@ public enum ThreeDTaskStatus: String, Codable, Sendable {
     case cancelled
 }
 
-public struct ThreeDGenerationProgress: Sendable {
-    public let status: ThreeDTaskStatus
+struct ThreeDGenerationProgress: Sendable {
+    let status: ThreeDTaskStatus
     /// 0.0 – 1.0 when the provider supplies it; nil otherwise.
-    public let progress: Double?
-    public let message: String?
+    let progress: Double?
+    let message: String?
 
-    public init(status: ThreeDTaskStatus, progress: Double? = nil, message: String? = nil) {
+    init(status: ThreeDTaskStatus, progress: Double? = nil, message: String? = nil) {
         self.status = status
         self.progress = progress
         self.message = message
     }
 }
 
-public struct ThreeDGenerationResult: Sendable {
-    public let taskId: String
+struct ThreeDGenerationResult: Sendable {
+    let taskId: String
     /// Local file URL of the downloaded GLB.
-    public let glbURL: URL
+    let glbURL: URL
     /// Optional thumbnail PNG file URL.
-    public let thumbnailURL: URL?
+    let thumbnailURL: URL?
     /// Remote URL the GLB was downloaded from (useful for share/export).
-    public let remoteGLBURL: URL?
-    public let provider: String
-    public let prompt: String
-    public let style: ThreeDStyle
-    public let createdAt: Date
+    let remoteGLBURL: URL?
+    let provider: String
+    let prompt: String
+    let style: ThreeDStyle
+    let createdAt: Date
 
-    public init(
+    init(
         taskId: String,
         glbURL: URL,
         thumbnailURL: URL?,
@@ -120,7 +120,7 @@ public struct ThreeDGenerationResult: Sendable {
 
 // MARK: - Errors
 
-public enum ThreeDGenerationError: LocalizedError, Sendable {
+enum ThreeDGenerationError: LocalizedError, Sendable {
     case missingAPIKey(provider: String)
     case submissionFailed(provider: String, status: Int, body: String)
     case pollingFailed(provider: String, status: Int, body: String)
@@ -130,7 +130,7 @@ public enum ThreeDGenerationError: LocalizedError, Sendable {
     case timedOut(taskId: String, afterSeconds: Int)
     case cancelled
 
-    public var errorDescription: String? {
+    var errorDescription: String? {
         switch self {
         case .missingAPIKey(let p):
             return "Missing API key for \(p). Set it in OpenClicky → Settings → 3D Generation."
@@ -154,7 +154,7 @@ public enum ThreeDGenerationError: LocalizedError, Sendable {
 
 // MARK: - Provider protocol
 
-public protocol ThreeDGenerationProvider: Sendable {
+protocol ThreeDGenerationProvider: Sendable {
     /// Stable identifier for telemetry / settings UI ("tripo", "meshy", …).
     var identifier: String { get }
     /// Human label for menus.

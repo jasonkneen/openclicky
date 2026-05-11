@@ -294,6 +294,21 @@ struct ClickyResponseCardCompactView: View {
                 .mask(ClickyResponseCardScrollFadeMask())
             }
 
+            if !openableLinks.isEmpty {
+                FlowLayout(spacing: 8, rowSpacing: 8) {
+                    ForEach(openableLinks) { link in
+                        responseActionPill(
+                            title: link.buttonTitle,
+                            systemImageName: link.systemImageName,
+                            foregroundColor: DS.Colors.textPrimary,
+                            backgroundColor: Color.white.opacity(0.08)
+                        ) {
+                            NSWorkspace.shared.open(link.url)
+                        }
+                    }
+                }
+            }
+
             if !card.suggestedNextActions.isEmpty {
                 FlowLayout(spacing: 8, rowSpacing: 8) {
                     ForEach(card.suggestedNextActions, id: \.self) { actionTitle in
@@ -355,6 +370,10 @@ struct ClickyResponseCardCompactView: View {
         )
     }
 
+
+    private var openableLinks: [OpenClickyOpenableLink] {
+        OpenClickyOpenableLinkExtractor.links(in: card.rawText, limit: 3)
+    }
 
     private func sanitizedDisplayText(_ text: String) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)

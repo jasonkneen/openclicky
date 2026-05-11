@@ -8,15 +8,15 @@ import Combine
 import SwiftUI
 
 @MainActor
-public final class ThreeDViewerWindowManager: ObservableObject {
+final class ThreeDViewerWindowManager: ObservableObject {
 
-    public static let shared = ThreeDViewerWindowManager()
+    static let shared = ThreeDViewerWindowManager()
 
     private var window: NSWindow?
     private var cancellables = Set<AnyCancellable>()
     private var autoOpenedForJob: UUID?
 
-    public init() {
+    init() {
         // Observe the service so the window pops open when a job starts.
         let service = ThreeDGenerationService.shared
         service.$jobs
@@ -34,7 +34,7 @@ public final class ThreeDViewerWindowManager: ObservableObject {
 
     // MARK: - Public
 
-    public func toggle() {
+    func toggle() {
         if let window, window.isVisible {
             window.close()
         } else {
@@ -42,7 +42,7 @@ public final class ThreeDViewerWindowManager: ObservableObject {
         }
     }
 
-    public func showWindow() {
+    func showWindow() {
         if window == nil {
             window = makeWindow()
         }
@@ -50,7 +50,7 @@ public final class ThreeDViewerWindowManager: ObservableObject {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    public func close() {
+    func close() {
         window?.close()
     }
 

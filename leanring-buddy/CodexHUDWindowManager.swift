@@ -410,6 +410,29 @@ private struct CodexHUDView: View {
                 .multilineTextAlignment(isUser ? .trailing : .leading)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
+
+            let openableLinks = OpenClickyOpenableLinkExtractor.links(in: entry.text, limit: 2)
+            if !openableLinks.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(openableLinks) { link in
+                        Button {
+                            NSWorkspace.shared.open(link.url)
+                        } label: {
+                            Label(link.buttonTitle, systemImage: link.systemImageName)
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundColor(DS.Colors.textPrimary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(Capsule().fill(Color.white.opacity(0.08)))
+                        .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 0.5))
+                        .pointerCursor()
+                    }
+                    if isUser { Spacer(minLength: 0) }
+                }
+                .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+            }
         }
         .padding(9)
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)

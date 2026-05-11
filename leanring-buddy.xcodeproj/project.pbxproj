@@ -295,7 +295,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				AA00BB012F6500010039DA55 /* XCRemoteSwiftPackageReference "Sparkle" */,
-				AA00BB032F6500030039DA55 /* XCRemoteSwiftPackageReference "GLTFSceneKit" */,
+				AA00BB052F6500050039DA55 /* XCRemoteSwiftPackageReference "GLTFSceneKit" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 28F22CC02F56440300A0FC59 /* Products */;
@@ -826,7 +826,7 @@
 				minimumVersion = 2.9.0;
 			};
 		};
-		AA00BB032F6500030039DA55 /* XCRemoteSwiftPackageReference "GLTFSceneKit" */ = {
+		AA00BB052F6500050039DA55 /* XCRemoteSwiftPackageReference "GLTFSceneKit" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/magicien/GLTFSceneKit";
 			requirement = {
@@ -844,7 +844,7 @@
 		};
 		AA00BB042F6500040039DA55 /* GLTFSceneKit */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = AA00BB032F6500030039DA55 /* XCRemoteSwiftPackageReference "GLTFSceneKit" */;
+			package = AA00BB052F6500050039DA55 /* XCRemoteSwiftPackageReference "GLTFSceneKit" */;
 			productName = GLTFSceneKit;
 		};
 /* End XCSwiftPackageProductDependency section */

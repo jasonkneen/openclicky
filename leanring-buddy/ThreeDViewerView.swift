@@ -12,17 +12,17 @@ import SceneKit
 import GLTFSceneKit
 #endif
 
-public struct ThreeDViewerView: View {
+struct ThreeDViewerView: View {
 
-    public let glbURL: URL
-    public var autoRotate: Bool = true
-    public var background: Color = Color(nsColor: .underPageBackgroundColor)
-    public var allowsCameraControl: Bool = true
+    let glbURL: URL
+    var autoRotate: Bool = true
+    var background: Color = Color(nsColor: .underPageBackgroundColor)
+    var allowsCameraControl: Bool = true
 
     @State private var loadError: String?
     @State private var scene: SCNScene?
 
-    public init(
+    init(
         glbURL: URL,
         autoRotate: Bool = true,
         background: Color = Color(nsColor: .underPageBackgroundColor),
@@ -34,7 +34,7 @@ public struct ThreeDViewerView: View {
         self.allowsCameraControl = allowsCameraControl
     }
 
-    public var body: some View {
+    var body: some View {
         ZStack {
             background
 

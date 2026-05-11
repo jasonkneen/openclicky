@@ -15,17 +15,17 @@
 import Foundation
 
 @MainActor
-public enum ThreeDGenerationDispatcher {
+enum ThreeDGenerationDispatcher {
 
-    public struct Match {
+    struct Match {
         /// The exact substring that triggered (so caller can strip / replace).
-        public let originalText: String
-        public let prompt: String
-        public let style: ThreeDStyle
+        let originalText: String
+        let prompt: String
+        let style: ThreeDStyle
         /// The job id created by the service.
-        public let jobId: UUID
+        let jobId: UUID
         /// A short message to surface in chat ("Generating a low-poly fox…").
-        public let userMessage: String
+        let userMessage: String
     }
 
     // MARK: - Entry points
@@ -34,7 +34,7 @@ public enum ThreeDGenerationDispatcher {
     /// already started a generation job — caller only needs to substitute the
     /// `originalText` with `userMessage` in the displayed transcript.
     @discardableResult
-    public static func scanAndDispatch(_ text: String) -> [Match] {
+    static func scanAndDispatch(_ text: String) -> [Match] {
         var matches: [Match] = []
 
         // 1. /3d <prompt>  (one per line)
@@ -52,7 +52,7 @@ public enum ThreeDGenerationDispatcher {
     }
 
     /// Try to parse a single line as `/3d <prompt>`. Returns nil if not a match.
-    public static func parseSlashCommand(_ line: String) -> Match? {
+    static func parseSlashCommand(_ line: String) -> Match? {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         guard let range = trimmed.range(of: #"^/3d\b\s*"#, options: .regularExpression) else {
             return nil
@@ -145,7 +145,7 @@ public enum ThreeDGenerationDispatcher {
     /// Append this to the Claude / Codex system prompt so the model knows to
     /// emit the sentinel when the user asks for a 3D model. Both agents
     /// already have system-prompt machinery in OpenClicky.
-    public static let systemPromptInstruction = """
+    static let systemPromptInstruction = """
     3D model generation is available. When the user asks you to make, create, generate, sculpt, or visualise a 3D object, prop, asset, character, or artifact, emit a single line in your reply with EXACTLY this format and nothing else on that line:
         [OPENCLICKY_3D] prompt: "<short description of the object>" style: "low_poly_stylized"
     OpenClicky will detect that line, start a 3D generation job, and show the rotating preview in a floating window. The default style is low_poly_stylized; alternatives are clay, voxel, game_asset, realistic.

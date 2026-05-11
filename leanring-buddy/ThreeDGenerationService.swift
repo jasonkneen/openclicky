@@ -4,22 +4,31 @@
 // - Persists results to ~/Library/Application Support/OpenClicky/Generated3D/.
 // - Publishes an ObservableObject the UI binds to for in-flight + finished jobs.
 
+import Combine
 import Foundation
 import SwiftUI
 
 @MainActor
-public final class ThreeDGenerationService: ObservableObject {
+final class ThreeDGenerationService: ObservableObject {
+
+    // This module compiles with Swift 6's `InferIsolatedConformances` upcoming
+    // feature enabled (see the project build settings). Without an explicit
+    // nonisolated witness, the conformance to `ObservableObject` is inferred as
+    // `@MainActor`-isolated, which `@ObservedObject` can't use → "does not
+    // conform to protocol 'ObservableObject'". Declaring `objectWillChange`
+    // explicitly as nonisolated makes the conformance nonisolated.
+    nonisolated let objectWillChange = ObservableObjectPublisher()
 
     // MARK: - Singleton
 
-    public static let shared = ThreeDGenerationService()
+    static let shared = ThreeDGenerationService()
 
     // MARK: - Public state
 
     /// In-flight jobs keyed by client-side job id.
-    @Published public private(set) var jobs: [ThreeDJob] = []
+    @Published private(set) var jobs: [ThreeDJob] = []
     /// Completed assets, newest first.
-    @Published public private(set) var assets: [ThreeDGenerationResult] = []
+    @Published private(set) var assets: [ThreeDGenerationResult] = []
 
     // MARK: - Config
 
@@ -27,7 +36,7 @@ public final class ThreeDGenerationService: ObservableObject {
     private let assetsDirectory: URL
     private let indexURL: URL
 
-    public init(provider: ThreeDGenerationProvider? = nil) {
+    init(provider: ThreeDGenerationProvider? = nil) {
         let dir = ThreeDGenerationService.defaultAssetsDirectory()
         self.assetsDirectory = dir
         self.indexURL = dir.appendingPathComponent("index.json")
@@ -37,7 +46,7 @@ public final class ThreeDGenerationService: ObservableObject {
         loadIndex()
     }
 
-    public func setProvider(_ provider: ThreeDGenerationProvider) {
+    func setProvider(_ provider: ThreeDGenerationProvider) {
         self.provider = provider
     }
 
@@ -46,7 +55,7 @@ public final class ThreeDGenerationService: ObservableObject {
     /// Kick off a generation job. Returns the job id; observe `jobs` and `assets`
     /// for progress and completion.
     @discardableResult
-    public func generate(
+    func generate(
         prompt: String,
         style: ThreeDStyle = .lowPolyStylized,
         quad: Bool = true,
@@ -98,7 +107,7 @@ public final class ThreeDGenerationService: ObservableObject {
         return jobId
     }
 
-    public func cancelJob(_ id: UUID) {
+    func cancelJob(_ id: UUID) {
         // Best-effort: mark as cancelled. (URLSession task cancellation is wired
         // via Task.checkCancellation in providers; we'd need to track Tasks per
         // job to actually interrupt the network call — left as a follow-up.)
@@ -108,7 +117,7 @@ public final class ThreeDGenerationService: ObservableObject {
         }
     }
 
-    public func clearJob(_ id: UUID) {
+    func clearJob(_ id: UUID) {
         jobs.removeAll { $0.id == id }
     }
 
@@ -200,7 +209,7 @@ public final class ThreeDGenerationService: ObservableObject {
 
     // MARK: - Paths & keys
 
-    public static func defaultAssetsDirectory() -> URL {
+    static func defaultAssetsDirectory() -> URL {
         let base = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         return base
@@ -210,7 +219,7 @@ public final class ThreeDGenerationService: ObservableObject {
 
     /// Reads the Tripo API key. Reads UserDefaults first (set from Settings UI),
     /// then env var. Swap for Keychain when wiring into the existing key flow.
-    public static func readTripoAPIKey() -> String? {
+    static func readTripoAPIKey() -> String? {
         if let k = UserDefaults.standard.string(forKey: "OpenClicky.Tripo3D.APIKey"),
            !k.isEmpty { return k }
         if let env = ProcessInfo.processInfo.environment["TRIPO_API_KEY"],
@@ -221,16 +230,16 @@ public final class ThreeDGenerationService: ObservableObject {
 
 // MARK: - Job
 
-public struct ThreeDJob: Identifiable, Equatable {
-    public let id: UUID
-    public let prompt: String
-    public let style: ThreeDStyle
-    public var status: ThreeDTaskStatus
-    public var progress: Double
-    public var message: String
-    public let providerName: String
-    public let startedAt: Date
-    public var resultGLBURL: URL?
+struct ThreeDJob: Identifiable, Equatable {
+    let id: UUID
+    let prompt: String
+    let style: ThreeDStyle
+    var status: ThreeDTaskStatus
+    var progress: Double
+    var message: String
+    let providerName: String
+    let startedAt: Date
+    var resultGLBURL: URL?
 }
 
 // MARK: - JSON helpers

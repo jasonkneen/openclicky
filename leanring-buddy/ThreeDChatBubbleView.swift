@@ -5,22 +5,22 @@
 import SwiftUI
 import AppKit
 
-public struct ThreeDChatBubbleView: View {
+struct ThreeDChatBubbleView: View {
 
-    public enum Mode {
+    enum Mode {
         /// A job currently being generated.
         case job(ThreeDJob)
         /// A finished asset.
         case asset(ThreeDGenerationResult)
     }
 
-    public let mode: Mode
-    public var onRetry: (() -> Void)? = nil
-    public var onCancel: (() -> Void)? = nil
+    let mode: Mode
+    var onRetry: (() -> Void)? = nil
+    var onCancel: (() -> Void)? = nil
 
     @ObservedObject private var service = ThreeDGenerationService.shared
 
-    public init(
+    init(
         mode: Mode,
         onRetry: (() -> Void)? = nil,
         onCancel: (() -> Void)? = nil
@@ -30,7 +30,7 @@ public struct ThreeDChatBubbleView: View {
         self.onCancel = onCancel
     }
 
-    public var body: some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             header
             content

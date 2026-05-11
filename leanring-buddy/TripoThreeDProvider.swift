@@ -6,12 +6,12 @@
 
 import Foundation
 
-public actor TripoThreeDProvider: ThreeDGenerationProvider {
+actor TripoThreeDProvider: ThreeDGenerationProvider {
 
     // MARK: - Config
 
-    public nonisolated let identifier = "tripo"
-    public nonisolated let displayName = "Tripo AI"
+    nonisolated let identifier = "tripo"
+    nonisolated let displayName = "Tripo AI"
 
     private let apiKeyProvider: @Sendable () -> String?
     private let modelVersion: String?
@@ -20,7 +20,7 @@ public actor TripoThreeDProvider: ThreeDGenerationProvider {
     private let pollInterval: TimeInterval
     private let timeoutSeconds: Int
 
-    public init(
+    init(
         apiKeyProvider: @escaping @Sendable () -> String?,
         modelVersion: String? = nil,
         baseURL: URL = URL(string: "https://api.tripo3d.ai/v2/openapi")!,
@@ -38,7 +38,7 @@ public actor TripoThreeDProvider: ThreeDGenerationProvider {
 
     // MARK: - Provider entry point
 
-    public func generate(
+    func generate(
         request: ThreeDGenerationRequest,
         destinationDirectory: URL,
         onProgress: @Sendable @escaping (ThreeDGenerationProgress) -> Void
