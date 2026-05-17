@@ -188,12 +188,14 @@ final class CompanionManager: ObservableObject {
     @Published private(set) var voiceState: CompanionVoiceState = .idle {
         didSet {
             cursorOverlayState.voiceState = voiceState
+            notchCaptureWindowManager.updateVoiceState(voiceState, audioPowerLevel: currentAudioPowerLevel)
         }
     }
     @Published private(set) var lastTranscript: String?
     @Published private(set) var currentAudioPowerLevel: CGFloat = 0 {
         didSet {
             cursorOverlayState.currentAudioPowerLevel = currentAudioPowerLevel
+            notchCaptureWindowManager.updateAudioPowerLevel(currentAudioPowerLevel)
         }
     }
     @Published private(set) var hasAccessibilityPermission = false
@@ -262,6 +264,7 @@ final class CompanionManager: ObservableObject {
     let globalPushToTalkShortcutMonitor = GlobalPushToTalkShortcutMonitor()
     let overlayWindowManager = OverlayWindowManager()
     let textModeWindowManager = ClickyTextModeWindowManager()
+    let notchCaptureWindowManager = OpenClickyNotchCaptureWindowManager()
     let agentDockWindowManager = ClickyAgentDockWindowManager()
     let agentMenuBarStatusManager = AgentMenuBarStatusManager()
     let settingsWindowManager = OpenClickySettingsWindowManager()
@@ -1372,6 +1375,11 @@ final class CompanionManager: ObservableObject {
         print("OpenClicky runtime identity - bundleID: \(Bundle.main.bundleIdentifier ?? "unknown"), appPath: \(Bundle.main.bundleURL.path)")
         print("OpenClicky start - accessibility: \(hasAccessibilityPermission), screen: \(hasScreenRecordingPermission), mic: \(hasMicrophonePermission), screenContent: \(hasScreenContentPermission), fullDiskAccess: \(hasFullDiskAccessPermission), onboarded: \(hasCompletedOnboarding)")
         startPermissionPolling()
+        if runtimeMode == .menuBar {
+            notchCaptureWindowManager.showPersistentPill { [weak self] submittedText in
+                self?.submitTextModePrompt(submittedText)
+            }
+        }
         bindVoiceStateObservation()
         bindAudioPowerLevel()
         bindShortcutTransitions()
@@ -2078,8 +2086,8 @@ final class CompanionManager: ObservableObject {
         controlDoubleTapCancellable = globalPushToTalkShortcutMonitor
             .controlDoubleTapPublisher
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] activationPoint in
-                self?.showTextModeInputAtCursor(activationPoint: activationPoint)
+            .sink { [weak self] _ in
+                self?.showTextModeInputAtCursor()
             }
     }
 
@@ -4879,20 +4887,21 @@ final class CompanionManager: ObservableObject {
     }
 
     private func showTextModeInputAtCursor(activationPoint: CGPoint? = nil) {
+        showNotchTextInput()
+    }
+
+    private func showNotchTextInput(
+        accentTheme: ClickyAccentTheme? = nil,
+        submitText: ((String) -> Void)? = nil
+    ) {
         guard allPermissionsGranted else { return }
         guard !buddyDictationManager.isKeyboardShortcutSessionActiveOrFinalizing else { return }
 
-        if !isClickyCursorEnabled && !isOverlayVisible {
-            overlayWindowManager.hasShownOverlayBefore = true
-            overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-            isOverlayVisible = true
-        }
-
         NotificationCenter.default.post(name: .clickyDismissPanel, object: nil)
-        let inputAnchorPoint = activationPoint ?? NSEvent.mouseLocation
-        textModeWindowManager.show(
-            at: inputAnchorPoint,
-            submitText: { [weak self] submittedText in
+        textModeWindowManager.hide()
+        notchCaptureWindowManager.showTextInput(
+            accentTheme: accentTheme,
+            submitText: submitText ?? { [weak self] submittedText in
                 self?.submitTextModePrompt(submittedText)
             }
         )
@@ -6750,6 +6759,30 @@ final class CompanionManager: ObservableObject {
         count == 1 ? "one \(singular)" : "\(count) \(plural)"
     }
 
+    private static func alphanumericTokenRanges(in text: String) -> [Range<String.Index>] {
+        var ranges: [Range<String.Index>] = []
+        var currentStart: String.Index?
+        var index = text.startIndex
+
+        while index < text.endIndex {
+            let character = text[index]
+            if character.isLetter || character.isNumber {
+                if currentStart == nil {
+                    currentStart = index
+                }
+            } else if let start = currentStart {
+                ranges.append(start..<index)
+                currentStart = nil
+            }
+            index = text.index(after: index)
+        }
+
+        if let start = currentStart {
+            ranges.append(start..<text.endIndex)
+        }
+        return ranges
+    }
+
     private static func clickyAgentInstruction(from transcript: String) -> String? {
         struct TranscriptToken {
             let normalizedText: String
@@ -6757,11 +6790,10 @@ final class CompanionManager: ObservableObject {
         }
 
         let foldedTranscript = transcript.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-        let tokenMatches = foldedTranscript.matches(of: /[A-Za-z0-9]+/)
-        let tokens = tokenMatches.map { match in
+        let tokens = alphanumericTokenRanges(in: foldedTranscript).map { range in
             TranscriptToken(
-                normalizedText: String(foldedTranscript[match.range]).lowercased(),
-                originalRange: match.range
+                normalizedText: String(foldedTranscript[range]).lowercased(),
+                originalRange: range
             )
         }
 
@@ -6851,17 +6883,17 @@ final class CompanionManager: ObservableObject {
     /// like "agency", or if the remaining instruction would be empty.
     static func permissiveAgentInstruction(from transcript: String) -> String? {
         let folded = transcript.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-        let tokenMatches = folded.matches(of: /[A-Za-z0-9]+/)
-        guard !tokenMatches.isEmpty else { return nil }
+        let tokenRanges = alphanumericTokenRanges(in: folded)
+        guard !tokenRanges.isEmpty else { return nil }
 
         // Prefer the last exact "agent" / "agents" token, but fall back to
         // earlier ones. Dictation can append trailing phrases like "agent
         // work"; using only the last token can hide the real delegation.
         var agentTokenRanges: [Range<String.Index>] = []
-        for match in tokenMatches {
-            let token = String(folded[match.range]).lowercased()
+        for range in tokenRanges {
+            let token = String(folded[range]).lowercased()
             if token == "agent" || token == "agents" {
-                agentTokenRanges.append(match.range)
+                agentTokenRanges.append(range)
             }
         }
         guard !agentTokenRanges.isEmpty else { return nil }
@@ -9632,11 +9664,8 @@ final class CompanionManager: ObservableObject {
             self?.submitTextFollowUp(submittedText, toAgentSessionID: sessionID)
         }
 
-        if let textFollowUpOrigin = agentDockWindowManager.textFollowUpOrigin() {
-            textModeWindowManager.show(origin: textFollowUpOrigin, accentTheme: item.accentTheme, submitText: submitText)
-        } else {
-            textModeWindowManager.show(at: NSEvent.mouseLocation, accentTheme: item.accentTheme, submitText: submitText)
-        }
+        textModeWindowManager.hide()
+        notchCaptureWindowManager.showTextInput(accentTheme: item.accentTheme, submitText: submitText)
     }
 
     func beginAgentDockDrag() {
