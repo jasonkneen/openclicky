@@ -125,8 +125,12 @@ final class OpenClickyNotchCaptureWindowManager {
     private static let mainPanelHeight: CGFloat = 620
     private static let mainPanelMinimumSize = NSSize(width: 356, height: 300)
     private static let mainPanelMaximumSize = NSSize(width: 760, height: 820)
-    private static let minimumCollapsedPanelWidth: CGFloat = 320
-    private static let maximumCollapsedPanelWidth: CGFloat = 560
+    private static let statusPanelWidthScale: CGFloat = 0.36
+    private static let statusPanelHorizontalNudge: CGFloat = 0
+    private static let minimumBuiltInCollapsedPanelWidth: CGFloat = 156
+    private static let minimumExternalCollapsedPanelWidth: CGFloat = 92
+    private static let maximumExternalCollapsedPanelWidth: CGFloat = 112
+    private static let maximumExpandedStatusPanelWidth: CGFloat = 220
     private static let statusLozengeHeight: CGFloat = 38
     private static let collapsedPanelHeight: CGFloat = statusLozengeHeight
     private static let expandedHandleWidth: CGFloat = 96
@@ -595,7 +599,10 @@ final class OpenClickyNotchCaptureWindowManager {
         interfacePanel.level = .statusBar
         interfacePanel.isOpaque = false
         interfacePanel.backgroundColor = .clear
-        interfacePanel.hasShadow = true
+        // Keep shadows inside the SwiftUI surface. AppKit's window shadow can
+        // create a faint rectangular/rounded outline around transparent panels,
+        // especially over bright browser content.
+        interfacePanel.hasShadow = false
         interfacePanel.hidesOnDeactivate = false
         interfacePanel.isReleasedWhenClosed = false
         interfacePanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
@@ -748,7 +755,11 @@ final class OpenClickyNotchCaptureWindowManager {
 
     private func repositionMainPanelIfVisible() {
         guard !isMainPanelPinned, let mainPanel, mainPanel.isVisible else { return }
-        positionMainPanel(size: mainPanel.frame.size)
+        // The status/notch bar can resize or move as tasks start, finish, or
+        // buttons are pressed. Once the main panel is visible, keep its origin
+        // stable so those unrelated bar updates do not make the panel drift up
+        // the screen. Fresh opens still use `resizeAndRepositionMainPanel`.
+        mainPanel.setFrameOrigin(mainPanel.frame.origin)
     }
 
     private func positionPanel(size: NSSize) {
@@ -834,8 +845,12 @@ final class OpenClickyNotchCaptureWindowManager {
     }
 
     private static func statusLozengeY(for size: NSSize, on screen: NSScreen) -> CGFloat {
-        if let notchInset = notchReservedTopInset(on: screen), notchInset > 0 {
-            return screen.frame.maxY - notchInset - size.height - Self.notchClearanceGap
+        if notchReservedTopInset(on: screen) != nil {
+            // On a MacBook notch screen the status bar should hug the physical
+            // notch at the top edge, not sit below the menu/notch safe area.
+            // Clipping a couple of points at the top also hides the top seam,
+            // matching the no-notch external-display treatment.
+            return screen.frame.maxY - size.height + Self.noNotchScreenTopOverlap
         }
         return screen.frame.maxY - size.height - Self.topGap + Self.noNotchScreenTopOverlap
     }
@@ -844,7 +859,7 @@ final class OpenClickyNotchCaptureWindowManager {
         let fullFrame = screen.frame
         let visibleFrame = screen.visibleFrame
         let usableFrame = visibleFrame.isEmpty ? fullFrame : visibleFrame
-        let centeredX = fullFrame.midX - size.width / 2
+        let centeredX = fullFrame.midX - size.width / 2 + Self.statusPanelHorizontalNudge
 
         guard size.width + (Self.screenEdgePadding * 2) > usableFrame.width else {
             return centeredX
@@ -856,27 +871,47 @@ final class OpenClickyNotchCaptureWindowManager {
     }
 
     private static func voicePanelWidth(for screen: NSScreen?) -> CGFloat {
-        // Voice should not fall back to the older tiny listening notch. The
-        // centered notch bar is now OpenClicky's single surface for listening,
-        // thinking, and speaking, so use the same width as the collapsed bar.
-        collapsedPanelWidth(for: screen)
+        guard let screen else { return Self.minimumBuiltInCollapsedPanelWidth }
+
+        if isLikelyBuiltInNotchScreen(screen) {
+            // Voice should not fall back to the older tiny listening notch. The
+            // built-in notch display keeps the same notch-surrounding bar.
+            return collapsedPanelWidth(for: screen)
+        }
+
+        // External displays normally keep a compact centered bar. Voice states
+        // get the wider status canvas so the surface expands evenly left/right
+        // only when OpenClicky has labels and waveform content to show.
+        return expandedStatusPanelWidth(for: screen)
     }
 
     private static func collapsedPanelWidth(for screen: NSScreen?) -> CGFloat {
-        guard let screen else { return Self.minimumCollapsedPanelWidth }
+        guard let screen else { return Self.minimumBuiltInCollapsedPanelWidth }
 
         if isLikelyBuiltInNotchScreen(screen) {
-            let maximumSurroundingNotchWidth = max(Self.minimumCollapsedPanelWidth, screen.visibleFrame.width - 48)
-            let notchSurroundWidth = physicalNotchWidth(on: screen).map { $0 + 148 } ?? Self.minimumCollapsedPanelWidth
+            let maximumSurroundingNotchWidth = max(Self.minimumBuiltInCollapsedPanelWidth, screen.visibleFrame.width - 48)
+            let notchSurroundWidth = (physicalNotchWidth(on: screen).map { $0 + 72 } ?? 260) * Self.statusPanelWidthScale
             return min(
-                Self.maximumCollapsedPanelWidth,
-                max(Self.minimumCollapsedPanelWidth, min(round(notchSurroundWidth), maximumSurroundingNotchWidth))
+                Self.maximumExpandedStatusPanelWidth,
+                max(Self.minimumBuiltInCollapsedPanelWidth, min(round(notchSurroundWidth), maximumSurroundingNotchWidth))
             )
         }
 
         let visibleWidth = screen.visibleFrame.isEmpty ? screen.frame.width : screen.visibleFrame.width
-        let oneThirdWidth = round(visibleWidth / 3)
-        return min(Self.maximumCollapsedPanelWidth, max(Self.minimumCollapsedPanelWidth, oneThirdWidth))
+        let proportionalWidth = round(visibleWidth * 0.14 * Self.statusPanelWidthScale)
+        return min(
+            Self.maximumExternalCollapsedPanelWidth,
+            max(Self.minimumExternalCollapsedPanelWidth, proportionalWidth)
+        )
+    }
+
+    private static func expandedStatusPanelWidth(for screen: NSScreen) -> CGFloat {
+        let visibleWidth = screen.visibleFrame.isEmpty ? screen.frame.width : screen.visibleFrame.width
+        let oneThirdWidth = round((visibleWidth / 3) * Self.statusPanelWidthScale)
+        return min(
+            Self.maximumExpandedStatusPanelWidth,
+            max(Self.minimumBuiltInCollapsedPanelWidth, oneThirdWidth)
+        )
     }
 
     private static func hasRunningAgentWork(in companionManager: CompanionManager) -> Bool {
@@ -947,6 +982,10 @@ final class OpenClickyNotchCaptureWindowManager {
         }
         if auxiliaryTopInset > 0 {
             return auxiliaryTopInset
+        }
+        // Fallback: many MacBook notch screens report safeAreaInsets.top >= 32
+        if #available(macOS 12.0, *), safeTopInset > 30 {
+            return safeTopInset
         }
         return nil
     }
@@ -1227,7 +1266,7 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
         NSLayoutConstraint.activate([
             notchHandle.topAnchor.constraint(equalTo: topAnchor),
             notchHandle.centerXAnchor.constraint(equalTo: centerXAnchor),
-            notchHandle.widthAnchor.constraint(equalToConstant: 96),
+            notchHandle.widthAnchor.constraint(equalToConstant: 64),
             notchHandle.heightAnchor.constraint(equalToConstant: 10),
 
             shellGlassView.topAnchor.constraint(equalTo: topAnchor),
@@ -1243,7 +1282,7 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
             rightEdgeGradientView.topAnchor.constraint(equalTo: shellView.topAnchor),
             rightEdgeGradientView.trailingAnchor.constraint(equalTo: shellView.trailingAnchor),
             rightEdgeGradientView.bottomAnchor.constraint(equalTo: shellView.bottomAnchor),
-            rightEdgeGradientView.widthAnchor.constraint(equalToConstant: 150)
+            rightEdgeGradientView.widthAnchor.constraint(equalToConstant: 92)
         ])
     }
 
@@ -1434,9 +1473,9 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
         voiceStack.addArrangedSubview(waveformView)
         voiceAppIconView.widthAnchor.constraint(equalToConstant: 18).isActive = true
         voiceAppIconView.heightAnchor.constraint(equalToConstant: 18).isActive = true
-        copyStack.widthAnchor.constraint(greaterThanOrEqualToConstant: 150).isActive = true
-        voiceNotchSpacer.widthAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
-        waveformView.widthAnchor.constraint(equalToConstant: 24).isActive = true
+        copyStack.widthAnchor.constraint(greaterThanOrEqualToConstant: 76).isActive = true
+        voiceNotchSpacer.widthAnchor.constraint(greaterThanOrEqualToConstant: 12).isActive = true
+        waveformView.widthAnchor.constraint(equalToConstant: 18).isActive = true
         waveformView.heightAnchor.constraint(equalToConstant: 8).isActive = true
 
         NSLayoutConstraint.activate([

@@ -189,6 +189,9 @@ final class CompanionManager: ObservableObject {
         didSet {
             cursorOverlayState.voiceState = voiceState
             notchCaptureWindowManager.updateVoiceState(Self.notchVoicePhase(for: voiceState), audioPowerLevel: currentAudioPowerLevel)
+            if voiceState == .idle, oldValue != .idle {
+                scheduleVoiceResponseCaptionClear(after: 1.2)
+            }
         }
     }
     @Published private(set) var lastTranscript: String?
@@ -10471,8 +10474,8 @@ final class CompanionManager: ObservableObject {
     }
 
     private func scheduleVoiceResponseCaptionClear(after delay: TimeInterval = 2.2) {
-        guard voiceResponseCaptionsEnabled else { return }
         let currentCaption = cursorOverlayState.externalPrimaryCaptionText
+        guard currentCaption?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else { return }
         externalProxyClearTask?.cancel()
         externalProxyClearTask = Task { [weak self] in
             let nanoseconds = UInt64(max(0.1, delay) * 1_000_000_000)

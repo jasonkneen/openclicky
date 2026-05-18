@@ -281,27 +281,9 @@ struct OpenClickyNotchPanelView: View {
                         endPoint: .bottomTrailing
                     )
                 )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 28, style: .continuous)
-                        .stroke(Color.white.opacity(0.11), lineWidth: 1)
-                )
         )
-        .overlay(alignment: .top) {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [Color.white.opacity(0.16), Color.clear],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                .frame(height: 1)
-                .padding(.horizontal, 28)
-                .padding(.top, 1)
-        }
         .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .shadow(color: Color.black.opacity(0.55), radius: 30, x: 0, y: 22)
         .animation(.spring(response: 0.24, dampingFraction: 0.88), value: quickPromptMode)
         .animation(.spring(response: 0.24, dampingFraction: 0.88), value: isCompactChatExpanded)
         .animation(.spring(response: 0.24, dampingFraction: 0.88), value: companionManager.codexAgentSession.entries.count)
