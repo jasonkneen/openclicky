@@ -111,7 +111,7 @@ nonisolated enum AppBundleConfiguration {
             forKey: "ElevenLabsVoiceID",
             environmentKeys: ["ELEVENLABS_VOICE_ID"]
         ) ?? localDevelopmentEnvironmentValue(forKey: "ELEVENLABS_VOICE_ID")
-        ?? "kPzsL2i3teMYv0FxEYQ6"
+        ?? "hpp4J3VqNfWAUOO0d1Us"
     }
 
     static func cartesiaAPIKey() -> String? {
