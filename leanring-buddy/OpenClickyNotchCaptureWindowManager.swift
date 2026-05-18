@@ -93,10 +93,10 @@ final class OpenClickyNotchCaptureWindowManager {
         case collapsedText
         case text
         case voice
-        case main
     }
 
     private var panel: OpenClickyNotchCapturePanel?
+    private var mainPanel: OpenClickyNotchCapturePanel?
     private var contentView: OpenClickyNotchCaptureRootView?
     private var mainHostingView: NSHostingView<OpenClickyNotchPanelView>?
     private var activeMode: ActiveMode?
@@ -115,6 +115,7 @@ final class OpenClickyNotchCaptureWindowManager {
     private static let textPanelHeight: CGFloat = 226
     private static let voicePanelHeight: CGFloat = 64
     private static let topGap: CGFloat = 0
+    private static let mainPanelGapBelowCapture: CGFloat = 10
     private static let screenEdgePadding: CGFloat = 12
 
     func showPersistentPill(
@@ -155,7 +156,7 @@ final class OpenClickyNotchCaptureWindowManager {
                 }
             }
         case .listening, .processing, .responding:
-            guard activeMode != .text, activeMode != .main else { return }
+            guard activeMode != .text else { return }
             activeMode = .voice
             ensureCaptureContentView(width: Self.voicePanelWidth(for: Self.preferredAnchorScreen()), height: Self.voicePanelHeight)
             contentView?.configureVoice(
@@ -174,6 +175,7 @@ final class OpenClickyNotchCaptureWindowManager {
 
     func hide() {
         panel?.orderOut(nil)
+        mainPanel?.orderOut(nil)
         activeMode = nil
     }
 
@@ -205,8 +207,7 @@ final class OpenClickyNotchCaptureWindowManager {
     }
 
     private func showMainPanel(companionManager: CompanionManager) {
-        activeMode = .main
-        ensurePanel()
+        ensureMainPanel()
         let notchPanelView = OpenClickyNotchPanelView(
             companionManager: companionManager,
             isPanelPinned: false,
@@ -217,10 +218,9 @@ final class OpenClickyNotchCaptureWindowManager {
         hostingView.autoresizingMask = [.width, .height]
         hostingView.wantsLayer = true
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor
-        panel?.contentView = hostingView
-        contentView = nil
+        mainPanel?.contentView = hostingView
         mainHostingView = hostingView
-        showPanel(activating: true, width: Self.mainPanelWidth, height: Self.mainPanelHeight)
+        showMainPanelWindow(activating: true, width: Self.mainPanelWidth, height: Self.mainPanelHeight)
     }
 
     private func showPanel(activating: Bool, width: CGFloat, height: CGFloat) {
@@ -232,6 +232,17 @@ final class OpenClickyNotchCaptureWindowManager {
             panel?.orderFrontRegardless()
         }
         panel?.orderFrontRegardless()
+    }
+
+    private func showMainPanelWindow(activating: Bool, width: CGFloat, height: CGFloat) {
+        resizeAndRepositionMainPanel(width: width, height: height)
+        if activating {
+            NSApp.activate(ignoringOtherApps: true)
+            mainPanel?.makeKeyAndOrderFront(nil)
+        } else {
+            mainPanel?.orderFrontRegardless()
+        }
+        mainPanel?.orderFrontRegardless()
     }
 
     private func ensurePanel() {
@@ -258,6 +269,30 @@ final class OpenClickyNotchCaptureWindowManager {
         panel = capturePanel
     }
 
+    private func ensureMainPanel() {
+        guard mainPanel == nil else { return }
+
+        let interfacePanel = OpenClickyNotchCapturePanel(
+            contentRect: NSRect(x: 0, y: 0, width: Self.mainPanelWidth, height: Self.mainPanelHeight),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        interfacePanel.isFloatingPanel = true
+        interfacePanel.level = .statusBar
+        interfacePanel.isOpaque = false
+        interfacePanel.backgroundColor = .clear
+        interfacePanel.hasShadow = true
+        interfacePanel.hidesOnDeactivate = false
+        interfacePanel.isReleasedWhenClosed = false
+        interfacePanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        interfacePanel.isMovableByWindowBackground = true
+        interfacePanel.titleVisibility = .hidden
+        interfacePanel.titlebarAppearsTransparent = true
+
+        mainPanel = interfacePanel
+    }
+
     private func ensureCaptureContentView(width: CGFloat, height: CGFloat) {
         ensurePanel()
         if contentView != nil { return }
@@ -277,8 +312,25 @@ final class OpenClickyNotchCaptureWindowManager {
             animate: false
         )
         contentView?.setCanvas(size: size)
-        mainHostingView?.frame = NSRect(origin: .zero, size: size)
         positionPanel(size: size)
+        repositionMainPanelIfVisible()
+    }
+
+    private func resizeAndRepositionMainPanel(width: CGFloat, height: CGFloat) {
+        guard let mainPanel else { return }
+        let size = NSSize(width: width, height: height)
+        mainPanel.setFrame(
+            NSRect(origin: mainPanel.frame.origin, size: size),
+            display: true,
+            animate: false
+        )
+        mainHostingView?.frame = NSRect(origin: .zero, size: size)
+        positionMainPanel(size: size)
+    }
+
+    private func repositionMainPanelIfVisible() {
+        guard let mainPanel, mainPanel.isVisible else { return }
+        positionMainPanel(size: mainPanel.frame.size)
     }
 
     private func positionPanel(size: NSSize) {
@@ -292,6 +344,22 @@ final class OpenClickyNotchCaptureWindowManager {
         let x = min(max(unclampedX, usableFrame.minX + Self.screenEdgePadding), maxX)
         let y = topEdge - size.height - Self.topGap
         panel.setFrameOrigin(NSPoint(x: x, y: y))
+    }
+
+    private func positionMainPanel(size: NSSize) {
+        guard let mainPanel, let screen = Self.preferredAnchorScreen() else { return }
+        let fullFrame = screen.frame
+        let visibleFrame = screen.visibleFrame
+        let topEdge = fullFrame.maxY
+        let usableFrame = visibleFrame.isEmpty ? fullFrame : visibleFrame
+        let captureHeight = panel?.isVisible == true ? panel?.frame.height ?? Self.collapsedPanelHeight : Self.collapsedPanelHeight
+        let unclampedX = fullFrame.midX - size.width / 2
+        let maxX = usableFrame.maxX - size.width - Self.screenEdgePadding
+        let x = min(max(unclampedX, usableFrame.minX + Self.screenEdgePadding), maxX)
+        let preferredY = topEdge - captureHeight - Self.mainPanelGapBelowCapture - size.height
+        let minY = usableFrame.minY + Self.screenEdgePadding
+        let y = max(preferredY, minY)
+        mainPanel.setFrameOrigin(NSPoint(x: x, y: y))
     }
 
     private static func voicePanelWidth(for screen: NSScreen?) -> CGFloat {
