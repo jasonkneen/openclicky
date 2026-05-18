@@ -125,12 +125,13 @@ final class OpenClickyNotchCaptureWindowManager {
     private static let mainPanelHeight: CGFloat = 620
     private static let mainPanelMinimumSize = NSSize(width: 356, height: 300)
     private static let mainPanelMaximumSize = NSSize(width: 760, height: 820)
-    private static let statusPanelWidthScale: CGFloat = 0.36
+    private static let statusPanelWidthScale: CGFloat = 0.20
     private static let statusPanelHorizontalNudge: CGFloat = 0
-    private static let minimumBuiltInCollapsedPanelWidth: CGFloat = 156
-    private static let minimumExternalCollapsedPanelWidth: CGFloat = 92
-    private static let maximumExternalCollapsedPanelWidth: CGFloat = 112
-    private static let maximumExpandedStatusPanelWidth: CGFloat = 220
+    private static let minimumBuiltInCollapsedPanelWidth: CGFloat = 90
+    private static let minimumVoicePanelWidth: CGFloat = 96
+    private static let minimumExternalCollapsedPanelWidth: CGFloat = 56
+    private static let maximumExternalCollapsedPanelWidth: CGFloat = 68
+    private static let maximumExpandedStatusPanelWidth: CGFloat = 128
     private static let statusLozengeHeight: CGFloat = 38
     private static let collapsedPanelHeight: CGFloat = statusLozengeHeight
     private static let expandedHandleWidth: CGFloat = 96
@@ -834,7 +835,7 @@ final class OpenClickyNotchCaptureWindowManager {
     }
 
     private static func notchHoverRegion(on screen: NSScreen) -> NSRect {
-        let width = max(collapsedPanelWidth(for: screen) + 52, 188)
+        let width = max(collapsedPanelWidth(for: screen) + 28, 104)
         let height = max(collapsedPanelHeight + 24, 36)
         return NSRect(
             x: screen.frame.midX - width / 2,
@@ -876,7 +877,7 @@ final class OpenClickyNotchCaptureWindowManager {
         if isLikelyBuiltInNotchScreen(screen) {
             // Voice should not fall back to the older tiny listening notch. The
             // built-in notch display keeps the same notch-surrounding bar.
-            return collapsedPanelWidth(for: screen)
+            return max(Self.minimumVoicePanelWidth, collapsedPanelWidth(for: screen))
         }
 
         // External displays normally keep a compact centered bar. Voice states
@@ -890,7 +891,7 @@ final class OpenClickyNotchCaptureWindowManager {
 
         if isLikelyBuiltInNotchScreen(screen) {
             let maximumSurroundingNotchWidth = max(Self.minimumBuiltInCollapsedPanelWidth, screen.visibleFrame.width - 48)
-            let notchSurroundWidth = (physicalNotchWidth(on: screen).map { $0 + 72 } ?? 260) * Self.statusPanelWidthScale
+            let notchSurroundWidth = (physicalNotchWidth(on: screen).map { $0 + 32 } ?? 220) * Self.statusPanelWidthScale
             return min(
                 Self.maximumExpandedStatusPanelWidth,
                 max(Self.minimumBuiltInCollapsedPanelWidth, min(round(notchSurroundWidth), maximumSurroundingNotchWidth))
@@ -910,7 +911,7 @@ final class OpenClickyNotchCaptureWindowManager {
         let oneThirdWidth = round((visibleWidth / 3) * Self.statusPanelWidthScale)
         return min(
             Self.maximumExpandedStatusPanelWidth,
-            max(Self.minimumBuiltInCollapsedPanelWidth, oneThirdWidth)
+            max(Self.minimumVoicePanelWidth, oneThirdWidth)
         )
     }
 
@@ -1266,7 +1267,7 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
         NSLayoutConstraint.activate([
             notchHandle.topAnchor.constraint(equalTo: topAnchor),
             notchHandle.centerXAnchor.constraint(equalTo: centerXAnchor),
-            notchHandle.widthAnchor.constraint(equalToConstant: 64),
+            notchHandle.widthAnchor.constraint(equalToConstant: 52),
             notchHandle.heightAnchor.constraint(equalToConstant: 10),
 
             shellGlassView.topAnchor.constraint(equalTo: topAnchor),
@@ -1282,7 +1283,7 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
             rightEdgeGradientView.topAnchor.constraint(equalTo: shellView.topAnchor),
             rightEdgeGradientView.trailingAnchor.constraint(equalTo: shellView.trailingAnchor),
             rightEdgeGradientView.bottomAnchor.constraint(equalTo: shellView.bottomAnchor),
-            rightEdgeGradientView.widthAnchor.constraint(equalToConstant: 92)
+            rightEdgeGradientView.widthAnchor.constraint(equalToConstant: 30)
         ])
     }
 
@@ -1309,7 +1310,7 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
         let collapsedStack = NSStackView()
         collapsedStack.orientation = .horizontal
         collapsedStack.alignment = .centerY
-        collapsedStack.spacing = 8
+        collapsedStack.spacing = 4
         collapsedStack.translatesAutoresizingMaskIntoConstraints = false
         collapsedStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         collapsedStack.addArrangedSubview(collapsedAppIconView)
@@ -1321,21 +1322,21 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
         shellView.addSubview(collapsedAgentDotsView)
 
         NSLayoutConstraint.activate([
-            collapsedAppIconView.widthAnchor.constraint(equalToConstant: 18),
-            collapsedAppIconView.heightAnchor.constraint(equalToConstant: 18),
-            collapsedPlayIconView.widthAnchor.constraint(equalToConstant: 16),
-            collapsedPlayIconView.heightAnchor.constraint(equalToConstant: 16),
-            collapsedPlayIconView.trailingAnchor.constraint(equalTo: shellView.trailingAnchor, constant: -12),
+            collapsedAppIconView.widthAnchor.constraint(equalToConstant: 14),
+            collapsedAppIconView.heightAnchor.constraint(equalToConstant: 14),
+            collapsedPlayIconView.widthAnchor.constraint(equalToConstant: 14),
+            collapsedPlayIconView.heightAnchor.constraint(equalToConstant: 14),
+            collapsedPlayIconView.trailingAnchor.constraint(equalTo: shellView.trailingAnchor, constant: -7),
             collapsedPlayIconView.centerYAnchor.constraint(equalTo: shellView.centerYAnchor),
-            collapsedAgentDotsView.widthAnchor.constraint(equalToConstant: 24),
+            collapsedAgentDotsView.widthAnchor.constraint(equalToConstant: 20),
             collapsedAgentDotsView.heightAnchor.constraint(equalToConstant: 8),
-            collapsedAgentDotsView.trailingAnchor.constraint(equalTo: shellView.trailingAnchor, constant: -12),
+            collapsedAgentDotsView.trailingAnchor.constraint(equalTo: shellView.trailingAnchor, constant: -7),
             collapsedAgentDotsView.centerYAnchor.constraint(equalTo: shellView.centerYAnchor),
-            collapsedStack.leadingAnchor.constraint(equalTo: shellView.leadingAnchor, constant: 12),
-            collapsedStack.trailingAnchor.constraint(lessThanOrEqualTo: collapsedPlayIconView.leadingAnchor, constant: -8),
-            collapsedStack.trailingAnchor.constraint(lessThanOrEqualTo: collapsedAgentDotsView.leadingAnchor, constant: -8),
+            collapsedStack.leadingAnchor.constraint(equalTo: shellView.leadingAnchor, constant: 7),
+            collapsedStack.trailingAnchor.constraint(lessThanOrEqualTo: collapsedPlayIconView.leadingAnchor, constant: -4),
+            collapsedStack.trailingAnchor.constraint(lessThanOrEqualTo: collapsedAgentDotsView.leadingAnchor, constant: -4),
             collapsedStack.centerYAnchor.constraint(equalTo: shellView.centerYAnchor),
-            collapsedAppNameLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 300)
+            collapsedAppNameLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 46)
         ])
     }
 
@@ -1443,7 +1444,7 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
     private func configureVoiceStack() {
         voiceStack.orientation = .horizontal
         voiceStack.alignment = .centerY
-        voiceStack.spacing = 6
+        voiceStack.spacing = 4
         voiceStack.translatesAutoresizingMaskIntoConstraints = false
         shellView.addSubview(voiceStack)
 
@@ -1471,16 +1472,16 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
         voiceStack.addArrangedSubview(copyStack)
         voiceStack.addArrangedSubview(voiceNotchSpacer)
         voiceStack.addArrangedSubview(waveformView)
-        voiceAppIconView.widthAnchor.constraint(equalToConstant: 18).isActive = true
-        voiceAppIconView.heightAnchor.constraint(equalToConstant: 18).isActive = true
-        copyStack.widthAnchor.constraint(greaterThanOrEqualToConstant: 76).isActive = true
-        voiceNotchSpacer.widthAnchor.constraint(greaterThanOrEqualToConstant: 12).isActive = true
-        waveformView.widthAnchor.constraint(equalToConstant: 18).isActive = true
+        voiceAppIconView.widthAnchor.constraint(equalToConstant: 16).isActive = true
+        voiceAppIconView.heightAnchor.constraint(equalToConstant: 16).isActive = true
+        copyStack.widthAnchor.constraint(greaterThanOrEqualToConstant: 58).isActive = true
+        voiceNotchSpacer.widthAnchor.constraint(greaterThanOrEqualToConstant: 4).isActive = true
+        waveformView.widthAnchor.constraint(equalToConstant: 14).isActive = true
         waveformView.heightAnchor.constraint(equalToConstant: 8).isActive = true
 
         NSLayoutConstraint.activate([
-            voiceStack.leadingAnchor.constraint(equalTo: shellView.leadingAnchor, constant: 8),
-            voiceStack.trailingAnchor.constraint(equalTo: shellView.trailingAnchor, constant: -8),
+            voiceStack.leadingAnchor.constraint(equalTo: shellView.leadingAnchor, constant: 7),
+            voiceStack.trailingAnchor.constraint(equalTo: shellView.trailingAnchor, constant: -7),
             voiceStack.centerYAnchor.constraint(equalTo: shellView.centerYAnchor)
         ])
         voiceStack.isHidden = true
