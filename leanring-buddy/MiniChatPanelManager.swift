@@ -14,7 +14,17 @@ import Combine
 /// Lives here (not in CompanionManager.swift) so the additive patch
 /// keeps that file's diff minimal.
 enum ChatWorkspaceArchiveStore {
+  struct Snapshot: Codable {
+    let id: UUID
+    let title: String
+    let accentThemeRawValue: String
+    let entries: [CodexTranscriptEntry]
+    let activeThreadID: String?
+    let lastSubmittedPrompt: String?
+  }
+
   private static let key = "openClickyArchivedSessions"
+  private static let snapshotsKey = "openClickyArchivedSessionSnapshots"
 
   static func load() -> Set<UUID> {
     guard let raw = UserDefaults.standard.array(forKey: key) as? [String] else { return [] }
@@ -23,6 +33,35 @@ enum ChatWorkspaceArchiveStore {
 
   static func save(_ ids: Set<UUID>) {
     UserDefaults.standard.set(ids.map { $0.uuidString }, forKey: key)
+  }
+
+  static func loadSnapshots() -> [Snapshot] {
+    guard let data = UserDefaults.standard.data(forKey: snapshotsKey) else { return [] }
+    return (try? JSONDecoder().decode([Snapshot].self, from: data)) ?? []
+  }
+
+  static func saveSnapshot(for session: CodexAgentSession) {
+    var snapshots = loadSnapshots().filter { $0.id != session.id }
+    snapshots.append(
+      Snapshot(
+        id: session.id,
+        title: session.title,
+        accentThemeRawValue: session.accentTheme.rawValue,
+        entries: session.entries,
+        activeThreadID: session.activeThreadID,
+        lastSubmittedPrompt: session.lastSubmittedPromptText
+      )
+    )
+    saveSnapshots(snapshots)
+  }
+
+  static func removeSnapshot(for sessionID: UUID) {
+    saveSnapshots(loadSnapshots().filter { $0.id != sessionID })
+  }
+
+  private static func saveSnapshots(_ snapshots: [Snapshot]) {
+    guard let data = try? JSONEncoder().encode(snapshots) else { return }
+    UserDefaults.standard.set(data, forKey: snapshotsKey)
   }
 }
 

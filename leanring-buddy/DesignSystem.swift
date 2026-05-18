@@ -23,9 +23,13 @@ struct Triangle: Shape {
 
 enum ClickyAccentTheme: String, CaseIterable, Identifiable {
     case blue
+    case cyan
     case mint
+    case lime
     case amber
+    case orange
     case rose
+    case violet
     case white
 
     static let userDefaultsKey = "clickyAccentTheme"
@@ -36,12 +40,20 @@ enum ClickyAccentTheme: String, CaseIterable, Identifiable {
         switch self {
         case .blue:
             return "Blue"
+        case .cyan:
+            return "Cyan"
         case .mint:
             return "Mint"
+        case .lime:
+            return "Lime"
         case .amber:
             return "Amber"
+        case .orange:
+            return "Orange"
         case .rose:
             return "Rose"
+        case .violet:
+            return "Violet"
         case .white:
             return "White"
         }
@@ -51,12 +63,20 @@ enum ClickyAccentTheme: String, CaseIterable, Identifiable {
         switch self {
         case .blue:
             return "Blue"
+        case .cyan:
+            return "Cyan"
         case .mint:
             return "Green"
+        case .lime:
+            return "Lime"
         case .amber:
             return "Amber"
+        case .orange:
+            return "Orange"
         case .rose:
             return "Red"
+        case .violet:
+            return "Purple"
         case .white:
             return "White"
         }
@@ -66,12 +86,20 @@ enum ClickyAccentTheme: String, CaseIterable, Identifiable {
         switch self {
         case .blue:
             return Color(hex: "#2563EB")
+        case .cyan:
+            return Color(hex: "#0891B2")
         case .mint:
             return Color(hex: "#059669")
+        case .lime:
+            return Color(hex: "#65A30D")
         case .amber:
             return Color(hex: "#D97706")
+        case .orange:
+            return Color(hex: "#EA580C")
         case .rose:
             return Color(hex: "#E11D48")
+        case .violet:
+            return Color(hex: "#7C3AED")
         case .white:
             return Color(hex: "#F8FAFC")
         }
@@ -81,12 +109,20 @@ enum ClickyAccentTheme: String, CaseIterable, Identifiable {
         switch self {
         case .blue:
             return Color(hex: "#1D4ED8")
+        case .cyan:
+            return Color(hex: "#0E7490")
         case .mint:
             return Color(hex: "#047857")
+        case .lime:
+            return Color(hex: "#4D7C0F")
         case .amber:
             return Color(hex: "#B45309")
+        case .orange:
+            return Color(hex: "#C2410C")
         case .rose:
             return Color(hex: "#BE123C")
+        case .violet:
+            return Color(hex: "#6D28D9")
         case .white:
             return Color(hex: "#E5E7EB")
         }
@@ -96,14 +132,31 @@ enum ClickyAccentTheme: String, CaseIterable, Identifiable {
         switch self {
         case .blue:
             return Color(hex: "#60A5FA")
+        case .cyan:
+            return Color(hex: "#22D3EE")
         case .mint:
             return Color(hex: "#34D399")
+        case .lime:
+            return Color(hex: "#A3E635")
         case .amber:
             return Color(hex: "#FBBF24")
+        case .orange:
+            return Color(hex: "#FB923C")
         case .rose:
             return Color(hex: "#FB7185")
+        case .violet:
+            return Color(hex: "#A78BFA")
         case .white:
             return Color(hex: "#F8FAFC")
+        }
+    }
+
+    var textOnAccent: Color {
+        switch self {
+        case .white:
+            return Color(hex: "#101211")
+        case .blue, .cyan, .mint, .lime, .amber, .orange, .rose, .violet:
+            return .white
         }
     }
 
@@ -111,12 +164,20 @@ enum ClickyAccentTheme: String, CaseIterable, Identifiable {
         switch self {
         case .blue:
             return Color(hex: "#3380FF")
+        case .cyan:
+            return Color(hex: "#22D3EE")
         case .mint:
             return Color(hex: "#35D39A")
+        case .lime:
+            return Color(hex: "#A3E635")
         case .amber:
             return Color(hex: "#FACC15")
+        case .orange:
+            return Color(hex: "#FF8A3D")
         case .rose:
             return Color(hex: "#FF4F5E")
+        case .violet:
+            return Color(hex: "#9B6DFF")
         case .white:
             return Color(hex: "#F8FAFC")
         }
@@ -183,7 +244,7 @@ enum DS {
         /// Text used on top of the accent fill (#2563eb blue), like the primary button label.
         /// White on #2563eb achieves ~5.1:1 contrast — WCAG AA compliant.
         /// White on #1d4ed8 hover achieves ~6.5:1 — also WCAG AA compliant.
-        static let textOnAccent: Color = .white
+        static var textOnAccent: Color { ClickyAccentTheme.current.textOnAccent }
 
         // ── Tailwind Blue Scale ─────────────────────────────────────
         // Full Tailwind CSS v4 blue palette for consistent blue usage.

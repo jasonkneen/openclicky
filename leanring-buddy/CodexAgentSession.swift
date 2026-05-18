@@ -398,6 +398,20 @@ final class CodexAgentSession: ObservableObject, Identifiable {
 
         lastSubmittedPrompt = prompt
         entries.append(CodexTranscriptEntry(role: .user, text: prompt))
+        OpenClickyMessageLogStore.shared.appendConversationTurn(
+            lane: "agent",
+            direction: "incoming",
+            role: "user",
+            text: prompt,
+            source: "codex_agent_session",
+            sessionID: id.uuidString,
+            title: title,
+            extraFields: [
+                "model": model,
+                "workingDirectory": workingDirectoryPath,
+                "screenContextAttached": screenContext != nil
+            ]
+        )
         appendActivityStatusLine("Queued request: \(Self.spokenSnippet(from: prompt, maxLength: 90))")
         Task {
             let coordinationNote = await buildAgentCoordinationNote(for: prompt)
@@ -560,11 +574,21 @@ final class CodexAgentSession: ObservableObject, Identifiable {
         }
 
         status = .starting
-        let homeManager = self.homeManager
         let processManager = self.processManager
-        let preparedLayout = try homeManager.prepare(bundle: .main)
-        let executable = try CodexRuntimeLocator.codexExecutableURL(bundle: .main)
+        let applicationSupportDirectory = homeManager.applicationSupportDirectory
+        let workerBaseURL = homeManager.workerBaseURL
+        let model = homeManager.model
+        let reasoningEffort = homeManager.reasoningEffort
+        let modelProviderID = homeManager.modelProviderID
         let layout = try await Task.detached(priority: .userInitiated) {
+            let backgroundHomeManager = CodexHomeManager(
+                applicationSupportDirectory: applicationSupportDirectory,
+                workerBaseURL: workerBaseURL,
+                model: model,
+                reasoningEffort: reasoningEffort
+            )
+            let preparedLayout = try backgroundHomeManager.prepare(bundle: .main)
+            let executable = try CodexRuntimeLocator.codexExecutableURL(bundle: .main)
             try processManager.start(executableURL: executable, codexHome: preparedLayout.homeDirectory)
             return preparedLayout
         }.value
@@ -614,7 +638,7 @@ final class CodexAgentSession: ObservableObject, Identifiable {
         do {
             threadStart = try await processManager.sendRequest(method: "thread/start", params: [
                 "model": model,
-                "modelProvider": homeManager.modelProviderID,
+                "modelProvider": modelProviderID,
                 "cwd": workingDirectoryPath,
                 "approvalPolicy": "never",
                 "sandbox": "danger-full-access",
@@ -653,7 +677,8 @@ final class CodexAgentSession: ObservableObject, Identifiable {
     }
 
     private func ensureCodexAuthentication() async throws {
-        guard homeManager.modelProviderID == ClickyCodexConfigTemplate.defaultModelProviderID else { return }
+        let modelProviderID = homeManager.modelProviderID
+        guard modelProviderID == ClickyCodexConfigTemplate.defaultModelProviderID else { return }
 
         let accountRead = try await processManager.sendRequest(method: "account/read", params: [
             "refreshToken": false
@@ -906,6 +931,21 @@ final class CodexAgentSession: ObservableObject, Identifiable {
                 }
                 let visibleText = parsed.visibleText
                 upsertEntry(id: id, role: .assistant, text: visibleText)
+                OpenClickyMessageLogStore.shared.appendConversationTurn(
+                    lane: "agent",
+                    direction: "outgoing",
+                    role: "assistant",
+                    text: visibleText,
+                    source: "codex_agent_session",
+                    sessionID: self.id.uuidString,
+                    title: title,
+                    extraFields: [
+                        "model": model,
+                        "workingDirectory": workingDirectoryPath,
+                        "itemID": id,
+                        "taskTitleMetadata": parsed.taskTitle ?? ""
+                    ]
+                )
                 latestResponseCard = ClickyResponseCard(
                     source: .agent,
                     rawText: Self.userFacingAgentMessage(from: visibleText),

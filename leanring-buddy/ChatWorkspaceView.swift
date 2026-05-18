@@ -15,7 +15,7 @@ struct ChatWorkspaceView: View {
   var prepareVoiceFollowUp: () -> Void
   var dismiss: () -> Void
 
-  @State private var sidebarVisible: Bool = true
+  @AppStorage("openClickyAgentHUDSidebarVisible") private var sidebarVisible: Bool = false
   @State private var memoryDrawerOpen: Bool = false
   @State private var draft: String = ""
 

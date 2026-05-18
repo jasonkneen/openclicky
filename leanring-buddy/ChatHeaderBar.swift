@@ -32,15 +32,14 @@ struct ChatHeaderBar: View {
       .buttonStyle(.plain)
       .help(sidebarVisible ? "Hide sidebar" : "Show sidebar")
 
+      archiveToggleButton
+
       modelMenu
 
       Spacer()
 
       iconButton(systemName: "rectangle.on.rectangle", help: "Pop out mini chat") {
         companion.popoutCurrentSession()
-      }
-      iconButton(systemName: "archivebox", help: "Archive conversation") {
-        companion.archiveSession(session.id)
       }
       iconButton(systemName: "brain", help: "Memory") {
         memoryDrawerOpen.toggle()
@@ -66,6 +65,20 @@ struct ChatHeaderBar: View {
     .padding(.horizontal, 10)
     .padding(.vertical, 6)
     .background(Self.bg)
+  }
+
+  private var archiveToggleButton: some View {
+    let isArchived = companion.archivedSessionIDs.contains(session.id)
+    return iconButton(
+      systemName: isArchived ? "tray.and.arrow.up" : "archivebox",
+      help: isArchived ? "Unarchive conversation" : "Archive conversation"
+    ) {
+      if isArchived {
+        companion.unarchiveSession(session.id)
+      } else {
+        companion.archiveSession(session.id)
+      }
+    }
   }
 
   private var modelMenu: some View {

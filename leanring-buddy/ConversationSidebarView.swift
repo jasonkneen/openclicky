@@ -155,6 +155,14 @@ struct ConversationSidebarView: View {
           }
           .buttonStyle(.plain)
           .help("Unarchive")
+        } else {
+          Button(action: { companion.archiveSession(session.id) }) {
+            Image(systemName: "archivebox")
+              .font(.system(size: 10))
+              .foregroundColor(Self.textSecondary)
+          }
+          .buttonStyle(.plain)
+          .help("Archive")
         }
       }
       .padding(.horizontal, 10)

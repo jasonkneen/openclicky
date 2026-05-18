@@ -41,7 +41,10 @@ final class OpenClickyAutomationStore: ObservableObject {
   func startTimer() {
     timer?.invalidate()
     let t = Timer(timeInterval: 30, repeats: true) { [weak self] _ in
-      Task { @MainActor in self?.tick() }
+      guard let self else { return }
+      Task { @MainActor [self] in
+        self.tick()
+      }
     }
     RunLoop.main.add(t, forMode: .common)
     timer = t

@@ -182,16 +182,24 @@ struct CodexHUDView: View {
     }
 
     var body: some View {
-        VStack(spacing: 8) {
-            if chromeMode == .standalone { header }
+        VStack(spacing: 0) {
+            if chromeMode == .standalone {
+                header
+                Divider()
+                    .background(DS.Colors.borderSubtle)
+                    .padding(.horizontal, 14)
+            }
             agentTeamStrip
+                .padding(.top, chromeMode == .standalone ? 10 : 0)
             if !session.queuedFollowUpPrompts.isEmpty {
                 queuedFollowUpDrawer
-                    .padding(.horizontal, 10)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 10)
             }
             transcript
-                .padding(.horizontal, 10)
-                .padding(.bottom, chromeMode == .standalone ? 0 : 10)
+                .padding(.horizontal, 14)
+                .padding(.top, 10)
+                .padding(.bottom, chromeMode == .standalone ? 10 : 14)
             if chromeMode == .standalone {
                 composer
             }
@@ -208,19 +216,9 @@ struct CodexHUDView: View {
             Group {
                 if chromeMode == .standalone {
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    Color(red: 0.075, green: 0.077, blue: 0.092),
-                                    Color(red: 0.125, green: 0.105, blue: 0.150),
-                                    Color(red: 0.070, green: 0.088, blue: 0.105)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
+                        .fill(DS.Colors.background)
                 } else {
-                    Color(red: 0.117, green: 0.117, blue: 0.117)
+                    DS.Colors.background
                 }
             }
         )
@@ -228,7 +226,7 @@ struct CodexHUDView: View {
             Group {
                 if chromeMode == .standalone {
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(isDropTargeted ? DS.Colors.accentText.opacity(0.55) : Color.white.opacity(0.10), lineWidth: isDropTargeted ? 1.4 : 1)
+                        .stroke(isDropTargeted ? DS.Colors.accentText.opacity(0.55) : DS.Colors.borderSubtle, lineWidth: isDropTargeted ? 1.4 : 1)
                 }
             }
         )
@@ -254,23 +252,23 @@ struct CodexHUDView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            Image(systemName: "cursorarrow.motionlines.click")
-                .font(.system(size: 15, weight: .black))
-                .foregroundColor(DS.Colors.accentText)
-                .frame(width: 34, height: 34)
-                .background(Circle().fill(DS.Colors.accentText.opacity(0.12)))
-
-            VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
                 Text("OpenClicky")
-                    .font(.system(size: 15, weight: .black))
+                    .font(.system(size: 14, weight: .bold))
                     .foregroundColor(DS.Colors.textPrimary)
-                Text(headerSubtitle)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(DS.Colors.textSecondary)
-                    .lineLimit(1)
+
+                Circle()
+                    .fill(sessionStatusColor)
+                    .frame(width: 7, height: 7)
+                    .shadow(color: sessionStatusColor.opacity(0.55), radius: 3.5)
             }
 
             Spacer()
+
+            Text(headerSubtitle)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(DS.Colors.textTertiary)
+                .lineLimit(1)
 
             HUDHeaderPill(
                 title: session.status.label,
@@ -286,23 +284,8 @@ struct CodexHUDView: View {
             iconButton(systemName: "bolt.fill", helpText: "Warm up", action: { session.warmUp() })
             iconButton(systemName: "xmark", helpText: "Close", action: close)
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [DS.Colors.accentText.opacity(0.12), Color.white.opacity(0.045)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-        )
-        .padding(.horizontal, 10)
-        .padding(.top, 10)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
     }
 
     private var headerSubtitle: String {
@@ -341,21 +324,21 @@ struct CodexHUDView: View {
                     companionManager.createAndSelectNewCodexAgentSession()
                 }) {
                     Label("New", systemImage: "plus.message.fill")
-                        .font(.system(size: 10, weight: .heavy))
+                        .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(DS.Colors.textSecondary)
                         .padding(.horizontal, 11)
                         .padding(.vertical, 8)
-                        .background(Capsule(style: .continuous).fill(Color.white.opacity(0.07)))
+                        .background(Capsule(style: .continuous).fill(DS.Colors.surface2))
                         .overlay(
                             Capsule(style: .continuous)
-                                .stroke(DS.Colors.borderSubtle.opacity(0.8), lineWidth: 1)
+                                .stroke(DS.Colors.borderSubtle, lineWidth: 1)
                         )
                 }
                 .buttonStyle(.plain)
                 .pointerCursor()
                 .accessibilityLabel("Add agent")
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 14)
         }
     }
 
@@ -381,11 +364,11 @@ struct CodexHUDView: View {
             }
             .background(
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Color.white.opacity(0.038))
+                    .fill(DS.Colors.surface1)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(Color.white.opacity(0.055), lineWidth: 1)
+                    .stroke(DS.Colors.borderSubtle, lineWidth: 1)
             )
             .onChange(of: session.entries.count) {
                 if let id = session.entries.last?.id {
@@ -400,17 +383,17 @@ struct CodexHUDView: View {
     private var emptyState: some View {
         HStack(spacing: 10) {
             Image(systemName: "sparkles")
-                .font(.system(size: 15, weight: .black))
+                .font(.system(size: 14, weight: .bold))
                 .foregroundColor(DS.Colors.accentText)
                 .frame(width: 34, height: 34)
-                .background(Circle().fill(DS.Colors.accentText.opacity(0.14)))
+                .background(Circle().fill(DS.Colors.accentSubtle))
             VStack(alignment: .leading, spacing: 3) {
                 Text("Ask OpenClicky to inspect, edit, explain, or automate something.")
-                    .font(.system(size: 13, weight: .heavy))
+                    .font(.system(size: 13, weight: .bold))
                     .foregroundColor(DS.Colors.textPrimary)
                 Text("Agent tasks use the bundled Codex runtime and the coding/actions model selected in settings.")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(DS.Colors.textSecondary)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(DS.Colors.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
@@ -419,17 +402,11 @@ struct CodexHUDView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [DS.Colors.accentText.opacity(0.11), Color.white.opacity(0.045)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
+                .fill(DS.Colors.surface2)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                .stroke(DS.Colors.borderSubtle, lineWidth: 1)
         )
     }
 
@@ -475,7 +452,7 @@ struct CodexHUDView: View {
             HStack(spacing: 6) {
                 if isUser { Spacer(minLength: 0) }
                 Text(label(for: entry.role))
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.system(size: 10, weight: .bold))
                     .foregroundColor(color(for: entry.role))
                 Text(Self.relativeTimeString(from: entry.createdAt, now: timestampNow))
                     .font(.system(size: 9, weight: .semibold))
@@ -485,9 +462,9 @@ struct CodexHUDView: View {
             .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
 
             Text(entry.text)
-                .font(.system(size: 11, design: entry.role == .command ? .monospaced : .default))
+                .font(.system(size: entry.role == .command ? 10 : 12, weight: .medium, design: entry.role == .command ? .monospaced : .default))
                 .foregroundColor(DS.Colors.textPrimary)
-                .multilineTextAlignment(isUser ? .trailing : .leading)
+                .multilineTextAlignment(.leading)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -505,8 +482,8 @@ struct CodexHUDView: View {
                         .foregroundColor(DS.Colors.textPrimary)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 5)
-                        .background(Capsule().fill(Color.white.opacity(0.08)))
-                        .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 0.5))
+                        .background(Capsule().fill(DS.Colors.surface3))
+                        .overlay(Capsule().stroke(DS.Colors.borderSubtle, lineWidth: 0.5))
                         .pointerCursor()
                     }
                     if isUser { Spacer(minLength: 0) }
@@ -520,14 +497,14 @@ struct CodexHUDView: View {
                     prompt = Self.replyDraft(for: entry)
                 } label: {
                     Label("Reply", systemImage: "arrowshape.turn.up.left")
-                        .font(.system(size: 9, weight: .heavy))
+                        .font(.system(size: 9, weight: .semibold))
                 }
                 .buttonStyle(.plain)
                 .foregroundColor(DS.Colors.textSecondary)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 4)
-                .background(Capsule(style: .continuous).fill(Color.white.opacity(0.055)))
-                .overlay(Capsule(style: .continuous).stroke(Color.white.opacity(0.09), lineWidth: 0.5))
+                .background(Capsule(style: .continuous).fill(DS.Colors.surface3))
+                .overlay(Capsule(style: .continuous).stroke(DS.Colors.borderSubtle, lineWidth: 0.5))
                 .pointerCursor()
                 .accessibilityLabel("Reply to \(label(for: entry.role).lowercased()) message")
                 if !isUser { Spacer(minLength: 0) }
@@ -542,7 +519,7 @@ struct CodexHUDView: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .stroke(isUser ? DS.Colors.accentText.opacity(0.20) : Color.white.opacity(0.075), lineWidth: 0.8)
+                .stroke(isUser ? DS.Colors.accentText.opacity(0.24) : DS.Colors.borderSubtle, lineWidth: 0.8)
         )
     }
 
@@ -554,7 +531,7 @@ struct CodexHUDView: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(reasoningStatusTitle)
-                        .font(.system(size: 10, weight: .heavy))
+                        .font(.system(size: 11, weight: .bold))
                         .foregroundColor(DS.Colors.textPrimary)
                     Text(Self.relativeTimeString(from: session.entries.last?.createdAt ?? Date(), now: timestampNow))
                         .font(.system(size: 9, weight: .semibold))
@@ -563,7 +540,7 @@ struct CodexHUDView: View {
 
                 if let latest = session.latestActivityDisplaySummary ?? session.latestActivitySummary {
                     Text(latest)
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundColor(DS.Colors.textSecondary)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
@@ -575,17 +552,11 @@ struct CodexHUDView: View {
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [DS.Colors.accentText.opacity(0.11), Color.white.opacity(0.045)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
+                .fill(DS.Colors.surface2)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(DS.Colors.accentText.opacity(0.16), lineWidth: 0.7)
+                .stroke(DS.Colors.borderSubtle, lineWidth: 0.7)
         )
         .frame(maxWidth: 430, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -641,18 +612,18 @@ struct CodexHUDView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(
                                 RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                    .fill(Color.white.opacity(0.045))
+                                    .fill(DS.Colors.surface2)
                             )
                     }
                 }
                 .padding(7)
                 .background(
                     RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(Color.yellow.opacity(0.055))
+                        .fill(DS.Colors.surface1)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .stroke(Color.white.opacity(0.055), lineWidth: 0.5)
+                        .stroke(DS.Colors.borderSubtle, lineWidth: 0.5)
                 )
             }
         }
@@ -671,7 +642,7 @@ struct CodexHUDView: View {
                     HStack(spacing: 5) {
                         Text("\(chip.count)x \(chip.label)")
                         Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 8, weight: .heavy))
+                            .font(.system(size: 8, weight: .semibold))
                     }
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(DS.Colors.textPrimary)
@@ -679,11 +650,11 @@ struct CodexHUDView: View {
                     .padding(.vertical, 4)
                     .background(
                         Capsule(style: .continuous)
-                            .fill(Color.white.opacity(isExpanded ? 0.14 : 0.10))
+                            .fill(isExpanded ? DS.Colors.surface3 : DS.Colors.surface2)
                     )
                     .overlay(
                         Capsule(style: .continuous)
-                            .stroke(Color.white.opacity(isExpanded ? 0.20 : 0.12), lineWidth: 0.5)
+                            .stroke(isExpanded ? DS.Colors.borderStrong : DS.Colors.borderSubtle, lineWidth: 0.5)
                     )
                 }
                 .buttonStyle(.plain)
@@ -698,18 +669,18 @@ struct CodexHUDView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: "tray.and.arrow.down.fill")
-                    .font(.system(size: 10, weight: .heavy))
+                    .font(.system(size: 10, weight: .bold))
                     .foregroundColor(DS.Colors.accentText)
                 Text("Queued follow-ups")
-                    .font(.system(size: 10, weight: .heavy))
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(DS.Colors.textSecondary)
                 Spacer()
                 Text("\(session.queuedFollowUpPrompts.count)")
-                    .font(.system(size: 9, weight: .heavy))
+                    .font(.system(size: 9, weight: .bold))
                     .foregroundColor(DS.Colors.textTertiary)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(Capsule().fill(Color.white.opacity(0.07)))
+                    .background(Capsule().fill(DS.Colors.surface2))
             }
 
             ScrollView(.horizontal, showsIndicators: false) {
@@ -717,12 +688,12 @@ struct CodexHUDView: View {
                     ForEach(Array(session.queuedFollowUpPrompts.enumerated()), id: \.offset) { _, queuedPrompt in
                         HStack(spacing: 6) {
                             Text(queuedPrompt)
-                                .font(.system(size: 10, weight: .semibold))
+                                .font(.system(size: 11, weight: .medium))
                                 .foregroundColor(DS.Colors.textPrimary)
                                 .lineLimit(1)
                             Button(action: { session.removeQueuedFollowUp(queuedPrompt) }) {
                                 Image(systemName: "xmark")
-                                    .font(.system(size: 8, weight: .heavy))
+                                    .font(.system(size: 8, weight: .semibold))
                                     .foregroundColor(DS.Colors.textTertiary)
                             }
                             .buttonStyle(.plain)
@@ -731,8 +702,8 @@ struct CodexHUDView: View {
                         }
                         .padding(.horizontal, 8)
                         .padding(.vertical, 5)
-                        .background(Capsule(style: .continuous).fill(Color.white.opacity(0.085)))
-                        .overlay(Capsule(style: .continuous).stroke(Color.white.opacity(0.11), lineWidth: 0.5))
+                        .background(Capsule(style: .continuous).fill(DS.Colors.surface2))
+                        .overlay(Capsule(style: .continuous).stroke(DS.Colors.borderSubtle, lineWidth: 0.5))
                     }
                 }
             }
@@ -741,12 +712,11 @@ struct CodexHUDView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(.ultraThinMaterial)
-                .opacity(0.88)
+                .fill(DS.Colors.surface1)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(DS.Colors.accentText.opacity(0.18), lineWidth: 0.7)
+                .stroke(DS.Colors.borderSubtle, lineWidth: 0.7)
         )
     }
 
@@ -760,14 +730,14 @@ struct CodexHUDView: View {
                 TextField(droppedAttachments.isEmpty ? "Ask Chat..." : "Ask Chat about the attachment...", text: $prompt, axis: .vertical)
                     .lineLimit(1...4)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundColor(DS.Colors.textPrimary)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 9)
-                    .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.white.opacity(0.065)))
+                    .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(DS.Colors.surface2))
                     .overlay(
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(isDropTargeted ? DS.Colors.accentText.opacity(0.55) : Color.white.opacity(0.08), lineWidth: isDropTargeted ? 1 : 0.8)
+                            .stroke(isDropTargeted ? DS.Colors.accentText.opacity(0.55) : DS.Colors.borderSubtle, lineWidth: isDropTargeted ? 1 : 0.8)
                     )
                     .onSubmit(send)
 
@@ -782,14 +752,14 @@ struct CodexHUDView: View {
         .padding(10)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color.white.opacity(0.045))
+                .fill(DS.Colors.surface1)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color.white.opacity(0.065), lineWidth: 1)
+                .stroke(DS.Colors.borderSubtle, lineWidth: 1)
         )
-        .padding(.horizontal, 10)
-        .padding(.bottom, 10)
+        .padding(.horizontal, 14)
+        .padding(.bottom, 14)
     }
 
     private var attachmentChipRow: some View {
@@ -798,11 +768,11 @@ struct CodexHUDView: View {
                 ForEach(droppedAttachments) { attachment in
                     HStack(spacing: 7) {
                         Image(systemName: attachment.systemImage)
-                            .font(.system(size: 10, weight: .heavy))
+                            .font(.system(size: 10, weight: .bold))
                             .foregroundColor(attachment.kind == .image ? DS.Colors.accentText : DS.Colors.textSecondary)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(attachment.displayName)
-                                .font(.system(size: 10, weight: .heavy))
+                                .font(.system(size: 10, weight: .bold))
                                 .foregroundColor(DS.Colors.textPrimary)
                                 .lineLimit(1)
                             Text(attachment.kind == .image ? "Image" : "Document")
@@ -812,7 +782,7 @@ struct CodexHUDView: View {
                         }
                         Button(action: { removeAttachment(attachment) }) {
                             Image(systemName: "xmark")
-                                .font(.system(size: 8, weight: .heavy))
+                                .font(.system(size: 8, weight: .semibold))
                                 .foregroundColor(DS.Colors.textTertiary)
                         }
                         .buttonStyle(.plain)
@@ -822,8 +792,8 @@ struct CodexHUDView: View {
                     .padding(.leading, 8)
                     .padding(.trailing, 7)
                     .padding(.vertical, 6)
-                    .background(Capsule(style: .continuous).fill(Color.white.opacity(0.085)))
-                    .overlay(Capsule(style: .continuous).stroke(Color.white.opacity(0.13), lineWidth: 0.6))
+                    .background(Capsule(style: .continuous).fill(DS.Colors.surface2))
+                    .overlay(Capsule(style: .continuous).stroke(DS.Colors.borderSubtle, lineWidth: 0.6))
                 }
             }
         }
@@ -831,7 +801,7 @@ struct CodexHUDView: View {
 
     private var dropTargetOverlay: some View {
         RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .fill(Color.black.opacity(0.30))
+            .fill(DS.Colors.background.opacity(0.92))
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .stroke(DS.Colors.accentText.opacity(0.50), style: StrokeStyle(lineWidth: 1.2, dash: [6, 5]))
@@ -839,10 +809,10 @@ struct CodexHUDView: View {
             .overlay(
                 VStack(spacing: 7) {
                     Image(systemName: "plus.rectangle.on.folder")
-                        .font(.system(size: 22, weight: .heavy))
+                        .font(.system(size: 22, weight: .bold))
                         .foregroundColor(DS.Colors.accentText)
                     Text("Drop images or docs into OpenClicky")
-                        .font(.system(size: 12, weight: .heavy))
+                        .font(.system(size: 12, weight: .bold))
                         .foregroundColor(DS.Colors.textPrimary)
                     Text("They’ll attach as chips before sending")
                         .font(.system(size: 10, weight: .semibold))
@@ -1006,18 +976,18 @@ struct CodexHUDView: View {
         case .user: return DS.Colors.accentText
         case .assistant: return DS.Colors.textSecondary
         case .system: return DS.Colors.destructiveText
-        case .command: return Color.yellow.opacity(0.9)
-        case .plan: return Color.purple.opacity(0.9)
+        case .command: return DS.Colors.warningText
+        case .plan: return DS.Colors.info
         }
     }
 
     private func background(for role: CodexTranscriptEntry.Role) -> Color {
         switch role {
-        case .user: return DS.Colors.accentText.opacity(0.14)
-        case .assistant: return Color.white.opacity(0.058)
+        case .user: return DS.Colors.accentSubtle
+        case .assistant: return DS.Colors.surface2
         case .system: return DS.Colors.destructive.opacity(0.12)
-        case .command: return Color.yellow.opacity(0.08)
-        case .plan: return Color.purple.opacity(0.10)
+        case .command: return DS.Colors.warning.opacity(0.12)
+        case .plan: return DS.Colors.info.opacity(0.12)
         }
     }
 
@@ -1026,7 +996,7 @@ struct CodexHUDView: View {
         case .entry(let entry):
             return background(for: entry.role)
         case .commandSummary:
-            return Color.yellow.opacity(0.08)
+            return DS.Colors.warning.opacity(0.12)
         }
     }
 
@@ -1142,16 +1112,16 @@ private struct HUDHeaderPill: View {
     var body: some View {
         HStack(spacing: 5) {
             Image(systemName: systemImageName)
-                .font(.system(size: 9, weight: .black))
+                .font(.system(size: 9, weight: .bold))
             Text(title)
-                .font(.system(size: 9, weight: .heavy))
+                .font(.system(size: 10, weight: .semibold))
                 .lineLimit(1)
         }
         .foregroundColor(DS.Colors.textPrimary)
         .padding(.horizontal, 9)
         .padding(.vertical, 6)
-        .background(Capsule(style: .continuous).fill(color.opacity(0.13)))
-        .overlay(Capsule(style: .continuous).stroke(color.opacity(0.24), lineWidth: 0.8))
+        .background(Capsule(style: .continuous).fill(DS.Colors.surface2))
+        .overlay(Capsule(style: .continuous).stroke(color.opacity(0.32), lineWidth: 0.8))
     }
 }
 
@@ -1168,11 +1138,11 @@ private struct HUDFloatingAgentButton: View {
                 HStack(spacing: 7) {
                     ZStack(alignment: .bottomTrailing) {
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(session.accentTheme.cursorColor.opacity(isSelected ? 0.20 : 0.13))
+                            .fill(isSelected ? session.accentTheme.accentSubtle : DS.Colors.surface3)
                             .frame(width: 28, height: 28)
 
                         Image(systemName: "cursorarrow")
-                            .font(.system(size: 12, weight: .heavy))
+                            .font(.system(size: 12, weight: .bold))
                             .foregroundColor(session.accentTheme.cursorColor)
                             .rotationEffect(.degrees(-18))
                             .offset(x: -1, y: 1)
@@ -1186,11 +1156,11 @@ private struct HUDFloatingAgentButton: View {
 
                     VStack(alignment: .leading, spacing: 1) {
                         Text(session.title)
-                            .font(.system(size: 10, weight: .heavy))
+                            .font(.system(size: 11, weight: .semibold))
                             .foregroundColor(DS.Colors.textPrimary)
                             .lineLimit(1)
                         Text(session.status.label)
-                            .font(.system(size: 8, weight: .black))
+                            .font(.system(size: 9, weight: .semibold))
                             .foregroundColor(DS.Colors.textTertiary)
                             .textCase(.uppercase)
                             .lineLimit(1)
@@ -1207,13 +1177,7 @@ private struct HUDFloatingAgentButton: View {
                     Capsule(style: .continuous)
                         .stroke(borderColor, lineWidth: isSelected ? 1.2 : 0.8)
                 )
-                .shadow(
-                    color: session.accentTheme.cursorColor.opacity(isSelected ? 0.20 : 0.06),
-                    radius: isSelected ? 8 : 3,
-                    x: 0,
-                    y: 2
-                )
-                .scaleEffect(isHovered ? 1.04 : 1)
+                .scaleEffect(isHovered ? 1.015 : 1)
                 .animation(.easeOut(duration: DS.Animation.fast), value: isHovered)
             }
             .buttonStyle(.plain)
@@ -1229,15 +1193,14 @@ private struct HUDFloatingAgentButton: View {
             if isHovered {
                 Button(action: close) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 8, weight: .heavy))
+                        .font(.system(size: 8, weight: .semibold))
                         .foregroundColor(DS.Colors.textPrimary)
                         .frame(width: 15, height: 15)
-                        .background(.ultraThinMaterial, in: Circle())
+                        .background(DS.Colors.surface3, in: Circle())
                         .overlay(
                             Circle()
-                                .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                                .stroke(DS.Colors.borderSubtle, lineWidth: 1)
                         )
-                        .shadow(color: Color.black.opacity(0.18), radius: 4, x: 0, y: 1)
                 }
                 .buttonStyle(.plain)
                 .pointerCursor()
@@ -1256,22 +1219,22 @@ private struct HUDFloatingAgentButton: View {
 
     private var backgroundColor: Color {
         if isSelected {
-            return session.accentTheme.cursorColor.opacity(0.18)
+            return session.accentTheme.accentSubtle
         }
-        return Color.white.opacity(isHovered ? 0.09 : 0.06)
+        return isHovered ? DS.Colors.surface3 : DS.Colors.surface2
     }
 
     private var borderColor: Color {
         if isSelected {
             return session.accentTheme.cursorColor.opacity(0.82)
         }
-        return DS.Colors.borderSubtle.opacity(isHovered ? 0.9 : 0.55)
+        return isHovered ? DS.Colors.borderStrong : DS.Colors.borderSubtle
     }
 
     private var statusColor: Color {
         switch session.status {
         case .starting, .running:
-            return Color.yellow
+            return DS.Colors.warning
         case .ready:
             return DS.Colors.success
         case .failed:
@@ -1301,7 +1264,7 @@ private struct HUDRunButton: View {
     var body: some View {
         Button(action: showsStop ? stop : send) {
             Image(systemName: showsStop ? "stop.fill" : "paperplane.fill")
-                .font(.system(size: 12, weight: .heavy))
+                .font(.system(size: 12, weight: .bold))
                 .foregroundColor(isEnabled ? DS.Colors.textPrimary : DS.Colors.disabledText)
                 .frame(width: 36, height: 32)
                 .background(
@@ -1331,10 +1294,10 @@ private struct HUDRunButton: View {
         }
 
         if showsStop {
-            return Color.white.opacity(isHovered ? 0.13 : 0.09)
+            return isHovered ? DS.Colors.surface3 : DS.Colors.surface2
         }
 
-        return Color.white.opacity(isHovered ? 0.15 : 0.10)
+        return isHovered ? DS.Colors.surface3 : DS.Colors.surface2
     }
 
     private var borderColor: Color {
@@ -1343,9 +1306,9 @@ private struct HUDRunButton: View {
         }
 
         if showsStop {
-            return Color.white.opacity(isHovered ? 0.22 : 0.12)
+            return isHovered ? DS.Colors.borderStrong : DS.Colors.borderSubtle
         }
 
-        return Color.white.opacity(isHovered ? 0.24 : 0.14)
+        return isHovered ? DS.Colors.borderStrong : DS.Colors.borderSubtle
     }
 }

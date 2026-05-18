@@ -51,7 +51,7 @@ struct OpenClickyNotchPanelView: View {
     @State private var isPanelPinned: Bool
 
     let setPanelPinned: (Bool) -> Void
-    let closePanel: () -> Void
+    let closePanel: @MainActor () -> Void
 
     @State private var selectedTab: OpenClickyNotchTab = .home
     @State private var quickPromptMode: OpenClickyQuickPromptMode = .ask
@@ -76,7 +76,7 @@ struct OpenClickyNotchPanelView: View {
         isPanelPinned: Bool,
         initialFocusedAgentSessionID: UUID? = nil,
         setPanelPinned: @escaping (Bool) -> Void,
-        closePanel: @escaping () -> Void = {
+        closePanel: @escaping @MainActor () -> Void = {
             NotificationCenter.default.post(name: .clickyDismissPanel, object: nil)
         }
     ) {
@@ -211,7 +211,7 @@ struct OpenClickyNotchPanelView: View {
         VStack(spacing: 0) {
             mainSurface
         }
-        .frame(width: 430)
+        .frame(minWidth: 356, maxWidth: .infinity, alignment: .topLeading)
         .fixedSize(horizontal: false, vertical: true)
         .background(Color.clear)
         .sheet(isPresented: $isShowingHatchSheet) {
@@ -271,6 +271,7 @@ struct OpenClickyNotchPanelView: View {
                 .animation(.spring(response: 0.24, dampingFraction: 0.90), value: selectedTab)
         }
         .padding(14)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(
             RoundedRectangle(cornerRadius: 28, style: .continuous)
                 .fill(
@@ -366,10 +367,16 @@ struct OpenClickyNotchPanelView: View {
                     .background(
                         Capsule(style: .continuous)
                             .fill(selectedTab == tab ? Color.white.opacity(0.12) : Color.white.opacity(0.045))
+                            .shadow(
+                                color: selectedTab == tab ? DS.Colors.accentText.opacity(0.20) : .clear,
+                                radius: selectedTab == tab ? 9 : 0,
+                                x: 0,
+                                y: 0
+                            )
                     )
                     .overlay(
                         Capsule(style: .continuous)
-                            .stroke(selectedTab == tab ? DS.Colors.accentText.opacity(0.32) : Color.white.opacity(0.05), lineWidth: 1)
+                            .stroke(selectedTab == tab ? Color.white.opacity(0.08) : Color.white.opacity(0.05), lineWidth: 1)
                     )
                 }
                 .buttonStyle(.plain)
@@ -534,19 +541,29 @@ struct OpenClickyNotchPanelView: View {
                     subtitle: agentSessionFilter.emptyStateSubtitle
                 )
             } else {
-                if expandedAgentSessionID == nil {
-                    ScrollView(.vertical, showsIndicators: true) {
-                        agentSessionRows
-                    }
-                    .frame(maxHeight: 224)
-                } else {
-                    agentSessionRows
-                        .frame(maxHeight: 430, alignment: .top)
-                        .clipped()
-                }
+                agentSessionScrollView
             }
 
             agentsFooter
+        }
+    }
+
+    private var agentSessionScrollView: some View {
+        let maxHeight: CGFloat = expandedAgentSessionID == nil ? 224 : 430
+
+        return ScrollViewReader { proxy in
+            ScrollView(.vertical, showsIndicators: true) {
+                agentSessionRows
+            }
+            .frame(maxHeight: maxHeight, alignment: .top)
+            .onChange(of: expandedAgentSessionID) { sessionID in
+                guard let sessionID else { return }
+                DispatchQueue.main.async {
+                    withAnimation(.easeOut(duration: 0.20)) {
+                        proxy.scrollTo(sessionID, anchor: .top)
+                    }
+                }
+            }
         }
     }
 
@@ -554,6 +571,7 @@ struct OpenClickyNotchPanelView: View {
         VStack(spacing: 6) {
             ForEach(visibleAgentSessions) { session in
                 agentRow(session)
+                    .id(session.id)
             }
         }
         .padding(.trailing, 2)
@@ -712,7 +730,7 @@ struct OpenClickyNotchPanelView: View {
                     .font(.system(size: 9, weight: .heavy))
                     .monospacedDigit()
             }
-            .foregroundColor(isSelected ? .white : DS.Colors.textSecondary)
+            .foregroundColor(isSelected ? DS.Colors.textOnAccent : DS.Colors.textSecondary)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 8)
             .background(
@@ -795,7 +813,7 @@ struct OpenClickyNotchPanelView: View {
                         Text("Send")
                             .font(.system(size: 11, weight: .heavy))
                     }
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.Colors.textOnAccent)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 7)
                     .background(
@@ -899,7 +917,7 @@ struct OpenClickyNotchPanelView: View {
                 Text(entry.text)
                     .font(.system(size: 10.5, weight: .medium))
                     .foregroundColor(DS.Colors.textPrimary)
-                    .multilineTextAlignment(isUser ? .trailing : .leading)
+                    .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(8)
@@ -1041,7 +1059,7 @@ struct OpenClickyNotchPanelView: View {
                 .font(.system(size: 12, weight: .heavy))
                 .foregroundColor(DS.Colors.textSecondary)
 
-            HStack(spacing: 6) {
+            LazyVGrid(columns: cursorColorGridColumns, spacing: 6) {
                 ForEach(cursorColorThemeOrder) { accentTheme in
                     cursorColorButton(accentTheme)
                 }
@@ -1119,7 +1137,11 @@ struct OpenClickyNotchPanelView: View {
     }
 
     private var cursorColorThemeOrder: [ClickyAccentTheme] {
-        [.rose, .blue, .amber, .mint, .white]
+        [.rose, .orange, .amber, .lime, .mint, .cyan, .blue, .violet, .white]
+    }
+
+    private var cursorColorGridColumns: [GridItem] {
+        [GridItem(.adaptive(minimum: 64), spacing: 6)]
     }
 
     private func cursorColorButton(_ accentTheme: ClickyAccentTheme) -> some View {
@@ -1248,6 +1270,8 @@ struct OpenClickyNotchPanelView: View {
                         .foregroundColor(isExpanded ? DS.Colors.accentText : DS.Colors.textTertiary)
                 }
                 .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
@@ -1357,7 +1381,7 @@ struct OpenClickyNotchPanelView: View {
                         Text("Send")
                             .font(.system(size: 11, weight: .heavy))
                     }
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.Colors.textOnAccent)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 7)
                     .background(
@@ -1509,7 +1533,7 @@ struct OpenClickyNotchPanelView: View {
                 Text(title)
                     .font(.system(size: 11, weight: .heavy))
             }
-            .foregroundColor(.white)
+            .foregroundColor(DS.Colors.textOnAccent)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 10)
             .background(

@@ -943,7 +943,7 @@ struct CompanionPanelView: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(DS.Colors.textSecondary)
 
-            HStack(spacing: 4) {
+            LazyVGrid(columns: cursorColorGridColumns, spacing: 4) {
                 ForEach(cursorColorThemeOrder) { accentTheme in
                     cursorColorButton(accentTheme)
                 }
@@ -1170,7 +1170,11 @@ struct CompanionPanelView: View {
     }
 
     private var cursorColorThemeOrder: [ClickyAccentTheme] {
-        [.rose, .blue, .amber, .mint, .white]
+        [.rose, .orange, .amber, .lime, .mint, .cyan, .blue, .violet, .white]
+    }
+
+    private var cursorColorGridColumns: [GridItem] {
+        [GridItem(.adaptive(minimum: 42), spacing: 4)]
     }
 
     private func cursorColorButton(_ accentTheme: ClickyAccentTheme) -> some View {

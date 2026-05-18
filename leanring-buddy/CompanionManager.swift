@@ -218,28 +218,40 @@ final class CompanionManager: ObservableObject {
     /// observed by BlueCursorView to trigger the flight animation.
     @Published var detectedElementScreenLocation: CGPoint? {
         didSet {
-            cursorOverlayState.detectedElementScreenLocation = detectedElementScreenLocation
+            let location = detectedElementScreenLocation
+            DispatchQueue.main.async { [cursorOverlayState] in
+                cursorOverlayState.detectedElementScreenLocation = location
+            }
         }
     }
     /// The display frame (global AppKit coords) of the screen the detected
     /// element is on, so BlueCursorView knows which screen overlay should animate.
     @Published var detectedElementDisplayFrame: CGRect? {
         didSet {
-            cursorOverlayState.detectedElementDisplayFrame = detectedElementDisplayFrame
+            let frame = detectedElementDisplayFrame
+            DispatchQueue.main.async { [cursorOverlayState] in
+                cursorOverlayState.detectedElementDisplayFrame = frame
+            }
         }
     }
     /// Custom speech bubble text for the pointing animation. When set,
     /// BlueCursorView uses this instead of a random pointer phrase.
     @Published var detectedElementBubbleText: String? {
         didSet {
-            cursorOverlayState.detectedElementBubbleText = detectedElementBubbleText
+            let text = detectedElementBubbleText
+            DispatchQueue.main.async { [cursorOverlayState] in
+                cursorOverlayState.detectedElementBubbleText = text
+            }
         }
     }
     /// True for task-start handoff flights that should tag the corner briefly
     /// and come straight back instead of holding a pointing caption.
     @Published var detectedElementReturnsImmediately: Bool = false {
         didSet {
-            cursorOverlayState.detectedElementReturnsImmediately = detectedElementReturnsImmediately
+            let returnsImmediately = detectedElementReturnsImmediately
+            DispatchQueue.main.async { [cursorOverlayState] in
+                cursorOverlayState.detectedElementReturnsImmediately = returnsImmediately
+            }
         }
     }
     private var lastPointedElementScreenLocation: CGPoint?
@@ -599,6 +611,30 @@ final class CompanionManager: ObservableObject {
             assistantResponse: trimmedAssistantResponse
         ))
         compactVoiceConversationHistoryIfNeeded(reason: reason)
+        OpenClickyMessageLogStore.shared.appendConversationTurn(
+            lane: "voice",
+            direction: "incoming",
+            role: "user",
+            text: trimmedUserTranscript,
+            source: reason,
+            title: "Voice conversation",
+            extraFields: [
+                "historyCount": conversationHistory.count,
+                "archiveSummaryLength": compactedVoiceConversationArchive?.count ?? 0
+            ]
+        )
+        OpenClickyMessageLogStore.shared.appendConversationTurn(
+            lane: "voice",
+            direction: "outgoing",
+            role: "assistant",
+            text: trimmedAssistantResponse,
+            source: reason,
+            title: "Voice conversation",
+            extraFields: [
+                "historyCount": conversationHistory.count,
+                "archiveSummaryLength": compactedVoiceConversationArchive?.count ?? 0
+            ]
+        )
         OpenClickyMessageLogStore.shared.append(
             lane: "voice",
             direction: "internal",
@@ -875,13 +911,30 @@ final class CompanionManager: ObservableObject {
         codexAgentSessions.first { $0.id == activeCodexAgentSessionID } ?? codexAgentSessions[0]
     }
 
+    private static func restoredArchivedSessions(from archivedSessionIDs: Set<UUID>) -> [CodexAgentSession] {
+        ChatWorkspaceArchiveStore.loadSnapshots().compactMap { snapshot in
+            guard archivedSessionIDs.contains(snapshot.id) else { return nil }
+            let accentTheme = ClickyAccentTheme(rawValue: snapshot.accentThemeRawValue) ?? .blue
+            let session = CodexAgentSession(id: snapshot.id, title: snapshot.title, accentTheme: accentTheme)
+            session.restoreArchivedState(
+                entries: snapshot.entries,
+                activeThreadID: snapshot.activeThreadID,
+                lastSubmittedPrompt: snapshot.lastSubmittedPrompt
+            )
+            return session
+        }
+    }
+
     private let runtimeMode: OpenClickyCompanionRuntimeMode
 
     init(runtimeMode: OpenClickyCompanionRuntimeMode = .menuBar) {
         self.runtimeMode = runtimeMode
 
         let initialAgentSession = CodexAgentSession(title: "Ask Agent", accentTheme: .blue)
-        codexAgentSessions = [initialAgentSession]
+        let restoredArchiveIDs = ChatWorkspaceArchiveStore.load()
+        archivedSessionIDs = restoredArchiveIDs
+        let restoredArchivedSessions = Self.restoredArchivedSessions(from: restoredArchiveIDs)
+        codexAgentSessions = [initialAgentSession] + restoredArchivedSessions
         activeCodexAgentSessionID = initialAgentSession.id
         OpenClickyMessageLogStore.shared.append(
             lane: "system",
@@ -1650,9 +1703,12 @@ final class CompanionManager: ObservableObject {
         }
     }
 
-    private func animateAgentSpawnProxyFromCursorToDock(accentTheme: ClickyAccentTheme, caption: String? = nil) {
+    private func animateAgentSpawnProxyFromCursorToDock(accentTheme: ClickyAccentTheme, caption: String? = nil, dockItemID: UUID? = nil) {
         let startPoint = Self.clampedExternalCursorPoint(NSEvent.mouseLocation)
-        let targetPoint = agentDockSpawnProxyTargetPoint(from: startPoint)
+        let targetPoint = dockItemID
+            .flatMap { agentDockWindowManager.dockIconCenter(for: $0, in: agentDockItems) }
+            .map(Self.clampedExternalCursorPoint)
+            ?? agentDockSpawnProxyTargetPoint(from: startPoint)
 
         // For agent starts, use the primary OpenClicky buddy itself rather
         // than a disposable proxy cursor: it should visibly fly to the agent
@@ -1676,8 +1732,8 @@ final class CompanionManager: ObservableObject {
     }
 
     private func agentDockSpawnProxyTargetPoint(from startPoint: CGPoint) -> CGPoint {
-        let screen = NSScreen.screens.first(where: { $0.frame.contains(startPoint) })
-            ?? agentDockTargetScreen()
+        let screen = agentDockTargetScreen()
+            ?? NSScreen.screens.first(where: { $0.frame.contains(startPoint) })
             ?? NSScreen.main
 
         guard let screen else { return startPoint }
@@ -1709,12 +1765,20 @@ final class CompanionManager: ObservableObject {
         switch accentTheme {
         case .blue:
             return "#3380FF"
+        case .cyan:
+            return "#22D3EE"
         case .mint:
             return "#35D39A"
+        case .lime:
+            return "#A3E635"
         case .amber:
             return "#FACC15"
+        case .orange:
+            return "#FB923C"
         case .rose:
             return "#FF4F5E"
+        case .violet:
+            return "#A78BFA"
         case .white:
             return "#F8FAFC"
         }
@@ -2188,6 +2252,26 @@ final class CompanionManager: ObservableObject {
         return session
     }
 
+    private func resolvedNewAgentTaskPrompt(from prompt: String) -> String {
+        let explicitInstruction = Self.agentTaskCreationInstruction(from: prompt)
+            ?? Self.permissiveAgentInstruction(from: prompt)
+            ?? Self.clickyAgentInstruction(from: prompt)
+        guard let explicitInstruction else { return prompt }
+
+        var instruction = Self.normalizedAgentTaskInstruction(from: explicitInstruction)
+        if Self.isReferentialAgentInstruction(instruction),
+           let resolvedInstruction = referentialAgentInstructionContext(excluding: prompt) {
+            instruction = resolvedInstruction
+        }
+
+        instruction = Self.cleanedAgentTaskInstruction(instruction)
+        guard !instruction.isEmpty,
+              !Self.isAgentTaskPlaceholderInstruction(instruction) else {
+            return prompt
+        }
+        return instruction
+    }
+
     /// Creates a brand-new agent session, stages it into the same dock/menu
     /// surfaces as a normal agent task, then submits the initial prompt.
     @discardableResult
@@ -2234,9 +2318,10 @@ final class CompanionManager: ObservableObject {
     /// Mark a session as archived. Keeps the session alive so its transcript and state
     /// are preserved; the sidebar groups archived sessions under a separate header.
     func archiveSession(_ sessionID: UUID) {
-        guard codexAgentSessions.contains(where: { $0.id == sessionID }) else { return }
+        guard let session = codexAgentSessions.first(where: { $0.id == sessionID }) else { return }
         archivedSessionIDs.insert(sessionID)
         ChatWorkspaceArchiveStore.save(archivedSessionIDs)
+        ChatWorkspaceArchiveStore.saveSnapshot(for: session)
         if activeCodexAgentSessionID == sessionID {
             if let next = codexAgentSessions.first(where: { !archivedSessionIDs.contains($0.id) }) {
                 selectCodexAgentSession(next.id)
@@ -2251,6 +2336,7 @@ final class CompanionManager: ObservableObject {
         guard archivedSessionIDs.contains(sessionID) else { return }
         archivedSessionIDs.remove(sessionID)
         ChatWorkspaceArchiveStore.save(archivedSessionIDs)
+        ChatWorkspaceArchiveStore.removeSnapshot(for: sessionID)
     }
 
     /// Pop the currently active session into a floating mini-chat NSPanel scoped to that session.
@@ -2289,6 +2375,10 @@ final class CompanionManager: ObservableObject {
         agentRequestTimingsBySessionID.removeValue(forKey: sessionID)
         agentExecutionStartDatesBySessionID.removeValue(forKey: sessionID)
         lastNarratedAgentOutcomeBySessionID.removeValue(forKey: sessionID)
+
+        archivedSessionIDs.remove(sessionID)
+        ChatWorkspaceArchiveStore.save(archivedSessionIDs)
+        ChatWorkspaceArchiveStore.removeSnapshot(for: sessionID)
 
         codexAgentSessions.remove(at: closingIndex)
         agentDockItems.removeAll { $0.sessionID == sessionID }
@@ -2587,11 +2677,6 @@ final class CompanionManager: ObservableObject {
             // Dismiss the menu bar panel so it doesn't cover the screen
             NotificationCenter.default.post(name: .clickyDismissPanel, object: nil)
 
-            // Cancel any in-progress response and TTS from a previous utterance
-            interruptCurrentVoiceResponse()
-            clearDetectedElementLocation()
-            liveHandledComputerUseFingerprints.removeAll()
-
             // Dismiss the onboarding prompt if it's showing
             if showOnboardingPrompt {
                 withAnimation(.easeOut(duration: 0.3)) {
@@ -2621,6 +2706,14 @@ final class CompanionManager: ObservableObject {
                 startBidirectionalRealtimeVoiceCapture(source: "keyboardShortcut")
                 return
             }
+
+            // Cancel any in-progress response and TTS from a previous utterance.
+            // Realtime capture handles this above so its "still speaking"
+            // defer guard can run before anything stops playback.
+            interruptCurrentVoiceResponse()
+            clearDetectedElementLocation()
+            liveHandledComputerUseFingerprints.removeAll()
+
             pendingKeyboardShortcutStartTask = Task {
                 await buddyDictationManager.startPushToTalkFromKeyboardShortcut(
                     currentDraftText: "",
@@ -2700,6 +2793,8 @@ final class CompanionManager: ObservableObject {
             return
         }
 
+        clearDetectedElementLocation()
+        liveHandledComputerUseFingerprints.removeAll()
         isRealtimeBidirectionalVoiceCaptureActive = true
         isRealtimeBidirectionalVoiceInputReady = false
         realtimeBidirectionalVoiceCaptureStartedAt = Date()
@@ -6941,10 +7036,10 @@ final class CompanionManager: ObservableObject {
             .trimmingCharacters(in: CharacterSet(charactersIn: ".,:;!?- "))
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // Strip a leading "to/that/which/who/and/please" connector
-        // ("ask an agent to X" -> "X", "have an agent please X" -> "X").
+        // Strip a leading connector
+        // ("ask an agent to X" -> "X", "task an agent with X" -> "X").
         let lowercased = cleaned.lowercased()
-        let connectors = ["to ", "that ", "which ", "who ", "and ", "please ", "could you ", "can you "]
+        let connectors = ["to ", "for ", "with ", "that ", "which ", "who ", "and ", "please ", "could you ", "can you "]
         var instruction = cleaned
         var strippedLeadingConnector = false
         for connector in connectors where lowercased.hasPrefix(connector) {
@@ -6959,7 +7054,7 @@ final class CompanionManager: ObservableObject {
         let normalizedBeforeAgent = normalizedSpokenCommandText(beforeAgent)
         let normalizedInstruction = normalizedSpokenCommandText(instruction)
 
-        let delegationCuePattern = #"\b(?:ask|tell|have|get|use|start|create|spin\s+up|spawn|run|launch|kick\s+off|set\s+up|send|route|hand|pass)\b"#
+        let delegationCuePattern = #"\b(?:ask|tell|have|get|task|use|start|create|spin\s+up|spawn|run|launch|kick\s+off|set\s+up|send|route|hand|pass)\b"#
         let hasDelegationCueBefore = normalizedBeforeAgent.range(
             of: delegationCuePattern,
             options: .regularExpression
@@ -7082,7 +7177,8 @@ final class CompanionManager: ObservableObject {
             #"(?i)^\s*(?:(?:clicky|openclicky)\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:create|start|spin\s+up|spawn|run|launch|kick\s+off|set\s+up)\s+(?:an?\s+|the\s+)?(?:new\s+)?(?:background\s+)?(?:agent|agenty|codex)\s*(?:task|job|session)?\s+(?:to|for|that|which|who)?\s*(.+?)\s*$"#,
             #"(?i)^\s*(?:(?:clicky|openclicky)\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?set\s+(?:an?\s+|the\s+)?(?:new\s+)?(?:background\s+)?(?:agent|agenty|codex)\s*(?:task|job|session)?\s+(?:off|going)\s+(?:to|for|that|which|who)?\s*(.+?)\s*$"#,
             #"(?i)^\s*(?:the\s+)?(?:agent|agenty|codex)\s+(?:create|start|spin\s+up|spawn|run|launch|kick\s+off|set\s+up)\s+(?:an?\s+|the\s+)?(?:new\s+)?(?:background\s+)?(?:agent|agenty|codex)?\s*(?:task|job|session)?\s*(?:to|for|that|which|who)?\s*(.+?)\s*$"#,
-            #"(?i)^\s*(?:(?:clicky|openclicky)\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:ask|tell|have|get)\s+(?:an?\s+|the\s+)?(?:agent|agenty|codex)\s+to\s+(.+?)\s*$"#,
+            #"(?i)^\s*(?:(?:clicky|openclicky)\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:ask|tell|have|get|task)\s+(?:an?\s+|the\s+)?(?:agent|agenty|codex)\s+(?:to|for|with)\s+(.+?)\s*$"#,
+            #"(?i)^\s*(?:(?:clicky|openclicky)\s+)?(?:agent|agenty|codex)\s+(?:with|for)\s+(.+?)\s*$"#,
             #"(?i)^\s*(?:an?\s+|the\s+)?(?:new\s+|background\s+)?(?:agent|agenty|codex)\s*(?:task|job|session)?\s+(?:to|for|that|which|who)\s+(.+?)\s*$"#
         ]
 
@@ -8663,7 +8759,6 @@ final class CompanionManager: ObservableObject {
 
         Task { @MainActor in
             let accentTheme = Self.nextAgentDockAccentTheme(existingCount: codexAgentSessions.count)
-            animateAgentSpawnProxyFromCursorToDock(accentTheme: accentTheme)
             let agentSession = createAndSelectNewCodexAgentSession(
                 title: Self.shortAgentInstructionSummary(instruction),
                 accentTheme: accentTheme
@@ -8734,6 +8829,7 @@ final class CompanionManager: ObservableObject {
             } else {
                 showAgentDockWindowNearCurrentScreen()
             }
+            animateAgentSpawnProxyFromCursorToDock(accentTheme: accentTheme, dockItemID: dockItem.id)
             submitAgentPrompt(
                 instruction,
                 to: agentSession,
@@ -9851,10 +9947,12 @@ final class CompanionManager: ObservableObject {
             ]
         )
 
+        let launchPrompt = resolvedNewAgentTaskPrompt(from: trimmedPrompt)
+
         let session = createAndLaunchCodexAgentSession(
-            title: Self.shortAgentInstructionSummary(trimmedPrompt),
-            prompt: trimmedPrompt,
-            includeScreenContext: Self.shouldAttachScreenContext(to: trimmedPrompt)
+            title: Self.shortAgentInstructionSummary(launchPrompt),
+            prompt: launchPrompt,
+            includeScreenContext: Self.shouldAttachScreenContext(to: launchPrompt)
         )
         agentRequestTimingsBySessionID[session.id] = timing
         agentExecutionStartDatesBySessionID[session.id] = executionStartedAt
@@ -9870,7 +9968,8 @@ final class CompanionManager: ObservableObject {
                 "model": session.model,
                 "sessionID": session.id.uuidString,
                 "title": session.title,
-                "instruction": trimmedPrompt,
+                "instruction": launchPrompt,
+                "originalInstruction": trimmedPrompt,
                 "requestID": timing.requestID,
                 "source": source
             ]
@@ -9962,6 +10061,7 @@ final class CompanionManager: ObservableObject {
         clearDetectedElementLocation()
 
         let spawnAccentTheme: ClickyAccentTheme
+        let spawnDockItemID: UUID
         if let itemIndex = agentDockItems.lastIndex(where: { $0.sessionID == session.id }) {
             agentDockItems[itemIndex].title = summary
             agentDockItems[itemIndex].userInstruction = prompt
@@ -9971,6 +10071,7 @@ final class CompanionManager: ObservableObject {
             agentDockItems[itemIndex].activityStatusLines = [activity]
             agentDockItems[itemIndex].caption = "on it."
             spawnAccentTheme = agentDockItems[itemIndex].accentTheme
+            spawnDockItemID = agentDockItems[itemIndex].id
         } else {
             let accentTheme = Self.nextAgentDockAccentTheme(existingCount: agentDockItems.count)
             let dockItem = ClickyAgentDockItem(
@@ -9992,9 +10093,9 @@ final class CompanionManager: ObservableObject {
                 agentDockItems.removeFirst(agentDockItems.count - 6)
             }
             spawnAccentTheme = accentTheme
+            spawnDockItemID = dockItem.id
         }
 
-        animateAgentSpawnProxyFromCursorToDock(accentTheme: spawnAccentTheme)
         refreshAgentDockFollowBehavior()
         scheduleWidgetSnapshotPublish()
 
@@ -10007,6 +10108,7 @@ final class CompanionManager: ObservableObject {
         } else {
             showAgentDockWindowNearCurrentScreen()
         }
+        animateAgentSpawnProxyFromCursorToDock(accentTheme: spawnAccentTheme, dockItemID: spawnDockItemID)
     }
 
     private func submitAgentPrompt(_ prompt: String, to session: CodexAgentSession, includeScreenContext: Bool = true) {
@@ -10018,6 +10120,13 @@ final class CompanionManager: ObservableObject {
         let baselinePasteboardChangeCount = NSPasteboard.general.changeCount
         OpenClickyApplicationUsageLogStore.shared.recordFrontmostApplication(source: "agent_prompt")
         Task {
+            // Agent allocation should not make the main OpenClicky panel feel
+            // frozen. Stage the dock card synchronously, then let the run loop
+            // render pending panel/window changes before screen-context capture
+            // and Codex process startup begin.
+            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(120))
+
             let screenContext = includeScreenContext ? await prepareAgentScreenContextForNextTurn(minimumPasteboardChangeCount: baselinePasteboardChangeCount) : nil
             if !includeScreenContext {
                 OpenClickyMessageLogStore.shared.append(
@@ -12434,8 +12543,6 @@ final class CompanionManager: ObservableObject {
         transientHideTask?.cancel()
         transientHideTask = nil
         voiceFollowUpStopTask?.cancel()
-        interruptCurrentVoiceResponse()
-        clearDetectedElementLocation()
         ClickyAnalytics.trackPushToTalkStarted()
 
         if shouldUseBidirectionalRealtimeVoiceInput {
@@ -12450,6 +12557,9 @@ final class CompanionManager: ObservableObject {
             }
             return
         }
+
+        interruptCurrentVoiceResponse()
+        clearDetectedElementLocation()
 
         Task {
             await buddyDictationManager.startAutoSubmittingDictationFromMicrophoneButton(

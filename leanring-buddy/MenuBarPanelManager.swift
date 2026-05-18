@@ -871,6 +871,14 @@ final class AgentMenuBarStatusManager: NSObject {
         case .amber: return NSColor(calibratedRed: 0.98, green: 0.80, blue: 0.08, alpha: 1)
         case .rose: return NSColor(calibratedRed: 1.00, green: 0.31, blue: 0.37, alpha: 1)
         case .white: return NSColor(calibratedWhite: 0.97, alpha: 1)
+        case .cyan:
+            return NSColor(calibratedWhite: 0.97, alpha: 1)
+        case .lime:
+            return NSColor(calibratedWhite: 0.97, alpha: 1)
+        case .orange:
+            return NSColor(calibratedWhite: 0.97, alpha: 1)
+        case .violet:
+            return NSColor(calibratedWhite: 0.97, alpha: 1)
         }
     }
 }

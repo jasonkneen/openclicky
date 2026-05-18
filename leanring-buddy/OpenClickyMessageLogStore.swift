@@ -179,6 +179,39 @@ nonisolated final class OpenClickyMessageLogStore: @unchecked Sendable {
         }
     }
 
+    func appendConversationTurn(
+        lane: String,
+        direction: String,
+        role: String,
+        text: String,
+        source: String,
+        sessionID: String? = nil,
+        title: String? = nil,
+        extraFields: [String: Any] = [:]
+    ) {
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedText.isEmpty else { return }
+
+        var fields = extraFields
+        fields["role"] = role
+        fields["source"] = source
+        fields["text"] = trimmedText
+        fields["textLength"] = trimmedText.count
+        if let sessionID, !sessionID.isEmpty {
+            fields["sessionID"] = sessionID
+        }
+        if let title, !title.isEmpty {
+            fields["title"] = title
+        }
+
+        append(
+            lane: lane,
+            direction: direction,
+            event: "openclicky.conversation.turn",
+            fields: fields
+        )
+    }
+
     private func append(_ data: Data, to fileURL: URL) throws {
         if fileManager.fileExists(atPath: fileURL.path) {
             let handle = try FileHandle(forWritingTo: fileURL)

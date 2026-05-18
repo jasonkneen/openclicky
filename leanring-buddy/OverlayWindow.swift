@@ -2322,6 +2322,29 @@ final class ClickyAgentDockWindowManager {
         )
     }
 
+    func dockIconCenter(for itemID: UUID, in items: [ClickyAgentDockItem]) -> CGPoint? {
+        guard let panel,
+              let itemIndex = items.firstIndex(where: { $0.id == itemID }) else {
+            return nil
+        }
+
+        // Mirror `ClickyAgentDockStackView`'s row placement so cursor handoff
+        // flights land on the real parked avatar instead of an approximate
+        // parking edge. AppKit frames are bottom-left based; SwiftUI rows are
+        // measured down from the panel's top edge.
+        let avatarTopOverdrawPadding: CGFloat = 64
+        let rowSpacing: CGFloat = dockIconWidth + dockRowSpacing
+        let iconCenterX = layoutState.opensPanelsToRight
+            ? panel.frame.minX + dockTrailingInset + dockIconWidth / 2
+            : panel.frame.maxX - dockTrailingInset - dockIconWidth / 2
+        let iconCenterY = panel.frame.maxY
+            - avatarTopOverdrawPadding
+            - CGFloat(itemIndex) * rowSpacing
+            - dockIconWidth / 2
+
+        return CGPoint(x: iconCenterX, y: iconCenterY)
+    }
+
     private func createPanel(companionManager: CompanionManager, initialSize: NSSize) {
         let dockPanel = ClickyAgentDockPanel(
             contentRect: NSRect(origin: .zero, size: initialSize),

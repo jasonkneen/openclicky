@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OpenClicky Tutor Skills Mockup</title>
+<style>
+  :root {
+    --bg: #050708;
+    --panel: rgba(9, 12, 14, .88);
+    --glass: rgba(255,255,255,.08);
+    --stroke: rgba(255,255,255,.14);
+    --text: #f8fbff;
+    --muted: rgba(248,251,255,.72);
+    --blue: #00c8ff;
+    --cyan: #31f4ff;
+    --teal: #00ffc2;
+    --purple: #8e63ff;
+    --amber: #ffc35b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    width: 2400px;
+    height: 1350px;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", system-ui, sans-serif;
+    color: var(--text);
+    background:
+      radial-gradient(circle at 84% 8%, rgba(109, 255, 205, .38), transparent 18%),
+      radial-gradient(circle at 18% 30%, rgba(0, 210, 255, .55), transparent 28%),
+      radial-gradient(circle at 69% 78%, rgba(130, 74, 255, .36), transparent 28%),
+      linear-gradient(135deg, #041016, #071015 48%, #151008);
+  }
+  .desktop-grid {
+    position: absolute; inset: 0;
+    background-image: linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px);
+    background-size: 46px 46px;
+    opacity: .35;
+  }
+  .mock-notion {
+    position:absolute; left:0; right:0; top:215px; height:910px;
+    background: rgba(255,255,255,.9);
+    color:#1b1b1b;
+    box-shadow: 0 40px 140px rgba(0,0,0,.5);
+    opacity:.88;
+  }
+  .sidebar { position:absolute; left:0; top:0; bottom:0; width:330px; background:#f4f0e8; padding:70px 42px; font-size:33px; font-weight:700; }
+  .doc { margin-left:430px; padding-top:88px; width:1500px; }
+  .doc h1 { font-size:72px; margin:0 0 34px; }
+  .doc p { font-size:38px; line-height:1.45; color:#4a4a4a; width:1180px; }
+  .notch {
+    position:absolute; top:0; left:50%; transform:translateX(-50%);
+    width: 870px; height:116px;
+    background: linear-gradient(180deg, rgba(13,15,18,.96), rgba(10,12,14,.94));
+    border-radius: 0 0 48px 48px;
+    box-shadow: 0 18px 80px rgba(0,0,0,.65), inset 0 -1px 0 rgba(255,255,255,.12);
+    display:flex; align-items:center; justify-content:center; gap:22px;
+    font-size:32px; font-weight:800;
+  }
+  .orb { width:46px; height:46px; border-radius:15px; background:linear-gradient(135deg,var(--cyan),var(--purple)); box-shadow:0 0 38px rgba(0,220,255,.7); }
+  .main-card {
+    position:absolute; top:148px; left:50%; transform:translateX(-50%);
+    width: 2030px; min-height: 430px; border-radius: 54px;
+    background: linear-gradient(90deg, rgba(8,10,12,.95) 0%, rgba(8,10,12,.94) 58%, rgba(5,176,225,.88) 100%);
+    border:1px solid rgba(255,255,255,.16);
+    box-shadow: 0 34px 110px rgba(0,0,0,.72), inset 0 1px 0 rgba(255,255,255,.16);
+    padding: 54px 64px 50px;
+  }
+  .header { display:grid; grid-template-columns:auto 1fr auto; gap:34px; align-items:center; }
+  .icons { display:flex; gap:20px; }
+  .app-icon, .clicky-icon { width:102px; height:102px; border-radius:28px; display:grid; place-items:center; font-size:54px; font-weight:900; background:#fff; color:#111; box-shadow:0 0 32px rgba(255,255,255,.32); }
+  .clicky-icon { color:#fff; background:linear-gradient(135deg,#0ff,#784cff); }
+  .title h2 { margin:0; font-size:48px; letter-spacing:-.02em; }
+  .title p { margin:14px 0 0; color:var(--muted); font-size:32px; font-weight:650; }
+  .actions { display:flex; gap:22px; align-items:center; }
+  .button { height:74px; padding:0 34px; border-radius:36px; background:rgba(255,255,255,.09); border:1px solid rgba(255,255,255,.12); display:flex; gap:14px; align-items:center; font-size:30px; font-weight:800; white-space:nowrap; }
+  .button.primary { background:linear-gradient(90deg,#06d8ff,#12f1c8); color:#051012; box-shadow:0 0 60px rgba(0,224,255,.45); }
+  .suggestions { display:grid; grid-template-columns: 1fr 1fr 1fr; gap:22px; margin-top:46px; }
+  .chip { min-height:82px; border-radius:34px; border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.08); padding:21px 28px; font-size:29px; font-weight:800; display:flex; align-items:center; gap:18px; }
+  .lower {
+    position:absolute; left:50%; transform:translateX(-50%); top:620px; width:2030px; display:grid; grid-template-columns: 1.05fr .95fr; gap:28px;
+  }
+  .pane { border-radius:44px; background:rgba(7,10,12,.9); border:1px solid rgba(255,255,255,.13); box-shadow:0 24px 90px rgba(0,0,0,.55); padding:42px; min-height:560px; }
+  .pane h3 { margin:0 0 16px; font-size:38px; }
+  .pane .sub { font-size:27px; color:var(--muted); margin-bottom:28px; }
+  .skill-list { display:grid; gap:20px; }
+  .skill { display:grid; grid-template-columns:76px 1fr auto; gap:22px; align-items:center; padding:24px; background:linear-gradient(90deg, rgba(0,190,255,.13), rgba(255,255,255,.045)); border:1px solid rgba(255,255,255,.12); border-radius:30px; }
+  .skill .badge { width:76px; height:76px; border-radius:24px; display:grid; place-items:center; font-size:35px; background:rgba(255,255,255,.12); }
+  .skill strong { display:block; font-size:30px; margin-bottom:7px; }
+  .skill span { font-size:24px; color:var(--muted); }
+  .pill { padding:14px 20px; border-radius:22px; font-size:22px; font-weight:900; background:rgba(0,255,194,.15); color:#84ffe5; border:1px solid rgba(132,255,229,.25); }
+  .flow { display:grid; gap:18px; margin-top:22px; }
+  .step { display:grid; grid-template-columns:58px 1fr; gap:20px; align-items:start; padding:21px; border-radius:26px; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.1); }
+  .num { width:58px; height:58px; border-radius:18px; display:grid; place-items:center; font-size:25px; font-weight:900; background:linear-gradient(135deg,var(--purple),var(--blue)); }
+  .step b { font-size:29px; display:block; margin:0 0 6px; }
+  .step span { font-size:24px; color:var(--muted); line-height:1.3; }
+  .footer-note { position:absolute; left:50%; transform:translateX(-50%); bottom:62px; width:2030px; height:92px; border-radius:34px; background:rgba(0,0,0,.58); border:1px solid rgba(255,255,255,.12); display:flex; align-items:center; justify-content:space-between; padding:0 34px; font-size:28px; font-weight:750; }
+  .status { display:flex; gap:16px; align-items:center; color:#bdfcff; }
+  .dot { width:18px; height:18px; border-radius:50%; background:#00ffd0; box-shadow:0 0 24px #00ffd0; }
+</style>
+</head>
+<body>
+  <div class="desktop-grid"></div>
+  <div class="mock-notion"><div class="sidebar">Notion<br><br>Project notes<br>Meeting plan<br>Design links</div><div class="doc"><h1>Landing page brief</h1><p>Draft copy, competitor references, and open tasks for the redesign. OpenClicky notices the active app and can offer focused coaching or connect a skill when it would help.</p></div></div>
+  <div class="notch"><div class="orb"></div><div>OpenClicky Tutor Mode</div></div>
+
+  <section class="main-card">
+    <div class="header">
+      <div class="icons"><div class="clicky-icon">›</div><div class="app-icon">N</div></div>
+      <div class="title"><h2>Let OpenClicky tutor inside Notion?</h2><p>Use the Notion skill only when it helps: explain the page, build a checklist, or turn this into a structured task.</p></div>
+      <div class="actions"><div class="button">✕ No</div><div class="button">◷ Not now</div><div class="button primary">⌁ Connect skill</div></div>
+    </div>
+    <div class="suggestions">
+      <div class="chip">✦ Explain this page</div>
+      <div class="chip">✓ Create next-step checklist</div>
+      <div class="chip">↗ Attach screenshot to notes</div>
+    </div>
+  </section>
+
+  <section class="lower">
+    <div class="pane">
+      <h3>Contextual tutor prompt</h3>
+      <div class="sub">A compact, app-aware prompt appears only when the current screen suggests a useful skill.</div>
+      <div class="flow">
+        <div class="step"><div class="num">1</div><div><b>Detect active app and intent</b><span>Screen context says Notion is open and the page looks like work OpenClicky can help structure.</span></div></div>
+        <div class="step"><div class="num">2</div><div><b>Offer reversible connection</b><span>Clear No, Not now, and Connect actions keep Tutor Mode quiet unless the user opts in.</span></div></div>
+        <div class="step"><div class="num">3</div><div><b>Route to real skills</b><span>The selected action launches the Notion skill with the page context, screenshot, and user-approved permission.</span></div></div>
+      </div>
+    </div>
+    <div class="pane">
+      <h3>Available app skills</h3>
+      <div class="sub">Shows what OpenClicky can do in the focused app before starting an agent or integration.</div>
+      <div class="skill-list">
+        <div class="skill"><div class="badge">N</div><div><strong>Notion tutor</strong><span>Read page context, create notes, summarize docs.</span></div><div class="pill">Ready</div></div>
+        <div class="skill"><div class="badge">☰</div><div><strong>Task builder</strong><span>Turn visible work into an agent task with scoped files.</span></div><div class="pill">Local</div></div>
+        <div class="skill"><div class="badge">⌕</div><div><strong>Research helper</strong><span>Search related docs and attach sources to the page.</span></div><div class="pill">Ask first</div></div>
+        <div class="skill"><div class="badge">◉</div><div><strong>Watch and coach</strong><span>Stay quiet until there is a clear coaching moment.</span></div><div class="pill">Tutor</div></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="footer-note"><div class="status"><div class="dot"></div><span>Tutor Mode stays silent by default; prompts appear only when a skill can act on the current app.</span></div><span>Settings → Tutor Mode → App Skills</span></div>
+</body>
+</html>
