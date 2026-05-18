@@ -22,6 +22,7 @@ nonisolated enum AppBundleConfiguration {
     static let userDeepgramVoiceAgentThinkModelDefaultsKey = "openClickyDeepgramVoiceAgentThinkModel"
     static let userTTSProviderDefaultsKey = "openClickyTTSProvider"
     static let openClickyVoicePlaybackVolumeDefaultsKey = "openClickyVoicePlaybackVolume"
+    static let defaultVoicePlaybackVolume = 0.45
     static let userSpeculativePreFireDefaultsKey = "openClickySpeculativePreFireEnabled"
     static let userVoiceResponseCaptionsEnabledDefaultsKey = "openClickyVoiceResponseCaptionsEnabled"
     static let userVoiceResponseCaptionFontDefaultsKey = "openClickyVoiceResponseCaptionFont"
@@ -149,10 +150,10 @@ nonisolated enum AppBundleConfiguration {
     static func voicePlaybackVolume() -> Double {
         let defaults = UserDefaults.standard
         guard defaults.object(forKey: openClickyVoicePlaybackVolumeDefaultsKey) != nil else {
-            return 0.45
+            return defaultVoicePlaybackVolume
         }
         let volume = defaults.double(forKey: openClickyVoicePlaybackVolumeDefaultsKey)
-        guard volume.isFinite else { return 0.45 }
+        guard volume.isFinite else { return defaultVoicePlaybackVolume }
         return min(max(volume, 0.0), 1.0)
     }
 

@@ -11013,6 +11013,8 @@ final class CompanionManager: ObservableObject {
         return false
     }
 
+    private static let visualFollowUpHistoryDepth = 3
+
     private static func shouldAttachScreenContext(
         to transcript: String,
         recentConversationHistory: [(userPlaceholder: String, assistantResponse: String)] = []
@@ -11060,7 +11062,7 @@ final class CompanionManager: ObservableObject {
         ]
         if visualFollowUps.contains(commandText),
            recentConversationHistory
-           .suffix(3)
+           .suffix(visualFollowUpHistoryDepth)
            .contains(where: { turn in
                let recentText = "\(turn.userPlaceholder) \(turn.assistantResponse)"
                    .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
