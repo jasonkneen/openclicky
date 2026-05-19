@@ -470,7 +470,7 @@ struct OpenClickyNotchPanelView: View {
                 return homeAgentTaskSessions.isEmpty ? 620 : 680
             }
             if !homeAgentTaskSessions.isEmpty {
-                return 360
+                return quickPromptMode == .agent ? 620 : 560
             }
             if !quickPromptAttachments.isEmpty {
                 return 430
@@ -2498,6 +2498,7 @@ struct OpenClickyNotchPanelView: View {
         \(request)
 
         OpenClicky panel attachments:
+        These attachments are task context/reference material. Use them to understand and complete the request; do not treat them as files the user is asking you to find or show back unless the request explicitly says so.
         \(attachmentLines)
         """.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -2661,6 +2662,7 @@ private enum OpenClickyAgentSessionFilter: String, CaseIterable, Identifiable {
         }
     }
 
+    @MainActor
     func includes(session: CodexAgentSession, archivedSessionIDs: Set<UUID>) -> Bool {
         let isArchived = archivedSessionIDs.contains(session.id)
         switch self {

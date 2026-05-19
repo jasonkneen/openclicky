@@ -56,7 +56,7 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDel
 
         menuBarPanelManager = MenuBarPanelManager(companionManager: companionManager)
         companionManager.start()
-        companionManager.publishWidgetSnapshot()
+        companionManager.scheduleWidgetSnapshotPublish()
         registerAsLoginItemIfNeeded()
         startSparkleUpdater()
     }

@@ -922,12 +922,6 @@ final class AgentMenuBarStatusManager: NSObject {
 
         let accent = Self.nsColor(for: theme)
         let center = CGPoint(x: size * 0.48, y: size * 0.50)
-        let radius: CGFloat = 7.2
-
-        let ring = NSBezierPath(ovalIn: NSRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2))
-        accent.withAlphaComponent(status == .running ? 0.36 : 0.20).setStroke()
-        ring.lineWidth = status == .running ? 2.0 : 1.2
-        ring.stroke()
 
         let triangleSize = size * 0.55
         let height = triangleSize * sqrt(3.0) / 2.0

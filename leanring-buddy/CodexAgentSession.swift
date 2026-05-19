@@ -129,7 +129,8 @@ struct CodexAgentScreenContext: Equatable {
             "OpenClicky screen context:",
             "- Source: \(source)",
             "- Captured at: \(ISO8601DateFormatter().string(from: capturedAt))",
-            "- Screenshot files are saved locally. Inspect them if your runtime exposes image/file viewing; otherwise be explicit that screenshot inspection is unavailable."
+            "- Screenshot files are saved locally as task context. Inspect them if your runtime exposes image/file viewing; otherwise be explicit that screenshot inspection is unavailable.",
+            "- Treat these screenshots as visual reference material for the task, not as files the user is asking you to find or show back to them."
         ]
 
         if let selectedText, !selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -621,7 +622,8 @@ final class CodexAgentSession: ObservableObject, Identifiable {
         - Proceed autonomously. Choose sensible defaults and keep working without asking the user unless critical information is truly missing or the action would be destructive, credential-related, or permission-sensitive.
         - Voice is the primary interaction path. Keep user-facing progress and final answers concise enough to be spoken aloud, and put detailed logs or code context in the transcript when needed.
         - Final user-facing answers should sound like a capable coworker over the user's shoulder: one or two plain sentences, no bullets, no markdown, no headings, and no code blocks unless the user explicitly asks for them.
-        - When you find a local document, image, or other user file, include its exact local path in your final answer so OpenClicky can show it.
+        - When you discover a local document, image, or other user file as the object of the user's request, include its exact local path in your final answer so OpenClicky can show it.
+        - Do not restate paths for OpenClicky-provided screen-context images or dropped task attachments in the final answer unless the user specifically asks for the file location; those images are evidence to assist the task, not search results.
         - If blocked, report the exact blocker and the smallest user action needed. If not blocked, finish the task and summarize what changed or what you found.
         - After the final user-facing answer, include a `<NEXT_ACTIONS>` block with one or two overlay button suggestions. Each suggestion must be a `- ` bullet, under about 40 characters, self-contained, and executable without more user input. Prefer concrete follow-ups like "Review the Swift diff" or "Test the cursor label". Omit weak suggestions instead of padding.
         - The `<NEXT_ACTIONS>` block is machine-readable metadata. Do not mention it in prose, and do not put anything after the closing `</NEXT_ACTIONS>` tag except the `TASK_TITLE:` metadata line below.

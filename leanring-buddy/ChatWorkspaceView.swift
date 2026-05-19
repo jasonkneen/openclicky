@@ -335,6 +335,7 @@ struct ChatWorkspaceView: View {
     \(request)
 
     OpenClicky chat attachments:
+    These attachments are task context/reference material. Use them to understand and complete the request; do not treat them as files the user is asking you to find or show back unless the request explicitly says so.
     \(attachmentLines)
     """.trimmingCharacters(in: .whitespacesAndNewlines)
   }

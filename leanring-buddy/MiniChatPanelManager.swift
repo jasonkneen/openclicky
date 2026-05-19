@@ -41,6 +41,7 @@ enum ChatWorkspaceArchiveStore {
     return (try? JSONDecoder().decode([Snapshot].self, from: data)) ?? []
   }
 
+  @MainActor
   static func saveSnapshot(for session: CodexAgentSession) {
     var snapshots = loadSnapshots().filter { $0.id != session.id }
     snapshots.append(
@@ -65,6 +66,7 @@ enum ChatWorkspaceArchiveStore {
     return (try? JSONDecoder().decode([Snapshot].self, from: data)) ?? []
   }
 
+  @MainActor
   static func saveRelaunchableSnapshots(for sessions: [CodexAgentSession], archivedSessionIDs: Set<UUID>) {
     let snapshots = sessions.compactMap { session -> Snapshot? in
       guard !archivedSessionIDs.contains(session.id),

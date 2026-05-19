@@ -129,7 +129,7 @@ struct ClickyCodexConfigTemplate: Equatable {
     }
 }
 
-enum CuaDriverMCPConfiguration {
+nonisolated enum CuaDriverMCPConfiguration {
     static let environmentOverrideKey = "OPENCLICKY_CUA_DRIVER_MCP_COMMAND"
     static let knownCommandPaths = [
         "/Applications/CuaDriver.app/Contents/MacOS/cua-driver",

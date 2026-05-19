@@ -38,7 +38,12 @@ final class OpenClickyWidgetStateStore {
 
         pendingWriteTask?.cancel()
         pendingWriteTask = Task { [weak self, weak companionManager] in
-            try? await Task.sleep(nanoseconds: 350_000_000)
+            // Agent transcript/activity updates can arrive many times per
+            // second. Keep WidgetKit publishing out of that hot path so the
+            // main actor remains free for cursor tracking, panel dragging, and
+            // SwiftUI input.
+            try? await Task.sleep(for: .milliseconds(1200))
+            guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard let self, let companionManager else { return }
                 self.publishSnapshot(from: companionManager)
@@ -198,7 +203,7 @@ final class OpenClickyWidgetStateStore {
 
     private func todayStats(from now: Date) -> OpenClickyWidgetTodayStats {
         let logURL = OpenClickyMessageLogStore.shared.currentLogFile
-        let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+        let logText = Self.readTailText(from: logURL, byteLimit: 128 * 1024)
         let reviewText = (try? String(contentsOf: OpenClickyMessageLogStore.shared.reviewCommentsFile, encoding: .utf8)) ?? ""
 
         return OpenClickyWidgetTodayStats(
@@ -208,6 +213,19 @@ final class OpenClickyWidgetStateStore {
             agentFailures: countOccurrences(of: "\"event\":\"codex.stderr\"", in: logText) + countOccurrences(of: "\"method\":\"error\"", in: logText),
             logReviewComments: reviewText.split(separator: "\n", omittingEmptySubsequences: true).count
         )
+    }
+
+    private nonisolated static func readTailText(from url: URL, byteLimit: UInt64) -> String {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return "" }
+        defer { try? handle.close() }
+        let fileSize = (try? handle.seekToEnd()) ?? 0
+        let offset = fileSize > byteLimit ? fileSize - byteLimit : 0
+        do {
+            try handle.seek(toOffset: offset)
+            return String(data: handle.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        } catch {
+            return ""
+        }
     }
 
     private func latestMemorySummary(from fileURL: URL) -> String? {

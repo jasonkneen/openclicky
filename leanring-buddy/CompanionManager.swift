@@ -111,6 +111,7 @@ private struct OpenClickyWebOpenRequest {
     let url: URL
     let displayName: String
     let instruction: String
+    let browserAppName: String?
 }
 
 private struct OpenClickyReminderAddRequest {
@@ -1016,6 +1017,7 @@ final class CompanionManager: ObservableObject {
     private var agentProgressStageCancellables: [UUID: AnyCancellable] = [:]
     private var agentTitleCancellables: [UUID: AnyCancellable] = [:]
     private var pendingAgentActivityRefreshTasks: [UUID: Task<Void, Never>] = [:]
+    private var pendingRelaunchableSnapshotPersistTask: Task<Void, Never>?
     private var tutorIdleCancellable: AnyCancellable?
     private var accessibilityCheckTimer: Timer?
     private var pendingKeyboardShortcutStartTask: Task<Void, Never>?
@@ -1406,21 +1408,12 @@ final class CompanionManager: ObservableObject {
 
     func publishWidgetSnapshot() {
         agentMenuBarStatusManager.scheduleSync(companionManager: self)
-        // Temporarily disabled while stabilizing Agent Mode. Widget publishing
-        // touches filesystem state and asks WidgetKit to reload timelines; if
-        // it runs during Codex startup/streaming it can add more main-thread
-        // pressure. The voice/agent experience is the priority.
-        return
-        // widgetStateStore.publishSnapshot(from: self)
+        widgetStateStore.publishSnapshot(from: self)
     }
 
     func scheduleWidgetSnapshotPublish() {
         agentMenuBarStatusManager.scheduleSync(companionManager: self)
-        // Temporarily disabled while stabilizing Agent Mode. Agent status and
-        // transcript deltas call this frequently, so keep widgets out of the
-        // hot path until the lockup is fully gone.
-        return
-        // widgetStateStore.scheduleSnapshotPublish(from: self)
+        widgetStateStore.scheduleSnapshotPublish(from: self)
     }
 
     func handleWidgetDeepLink(_ url: URL) {
@@ -2083,6 +2076,8 @@ final class CompanionManager: ObservableObject {
         externalSecondaryCursorClearTasks.removeAll()
         pendingAgentActivityRefreshTasks.values.forEach { $0.cancel() }
         pendingAgentActivityRefreshTasks.removeAll()
+        pendingRelaunchableSnapshotPersistTask?.cancel()
+        pendingRelaunchableSnapshotPersistTask = nil
         pendingAgentDockItemRemovalTasks.values.forEach { $0.cancel() }
         pendingAgentDockItemRemovalTasks.removeAll()
         agentStatusCancellables.removeAll()
@@ -2203,18 +2198,26 @@ final class CompanionManager: ObservableObject {
     // MARK: - Private
 
     private func loadBundledKnowledgeIndex() {
-        let bundledIndex = WikiManager.Index.loadForAppBundle()
         let memoriesDirectory = codexHomeManager.memoriesDirectory
         let learnedSkillsDirectory = codexHomeManager.learnedSkillsDirectory
 
-        do {
-            try FileManager.default.createDirectory(at: memoriesDirectory, withIntermediateDirectories: true)
-            try FileManager.default.createDirectory(at: learnedSkillsDirectory, withIntermediateDirectories: true)
-            let memoryIndex = try WikiManager.Index.load(articleRoots: [memoriesDirectory], skillRoots: [learnedSkillsDirectory])
-            bundledKnowledgeIndex = bundledIndex.combined(with: memoryIndex)
-        } catch {
-            print("⚠️ OpenClicky memory index load failed: \(error)")
-            bundledKnowledgeIndex = bundledIndex
+        Task.detached(priority: .utility) {
+            let bundledIndex = WikiManager.Index.loadForAppBundle()
+            let resolvedIndex: WikiManager.Index
+
+            do {
+                try FileManager.default.createDirectory(at: memoriesDirectory, withIntermediateDirectories: true)
+                try FileManager.default.createDirectory(at: learnedSkillsDirectory, withIntermediateDirectories: true)
+                let memoryIndex = try WikiManager.Index.load(articleRoots: [memoriesDirectory], skillRoots: [learnedSkillsDirectory])
+                resolvedIndex = bundledIndex.combined(with: memoryIndex)
+            } catch {
+                print("⚠️ OpenClicky memory index load failed: \(error)")
+                resolvedIndex = bundledIndex
+            }
+
+            await MainActor.run {
+                self.bundledKnowledgeIndex = resolvedIndex
+            }
         }
     }
 
@@ -2344,7 +2347,7 @@ final class CompanionManager: ObservableObject {
                 }
                 self.updateAgentDockItem(for: sessionID, status: status)
                 self.scheduleWidgetSnapshotPublish()
-                self.persistRelaunchableAgentSessions()
+                self.scheduleRelaunchableAgentSessionsPersist()
                 self.updateAgentProgressNarration()
             }
 
@@ -2352,7 +2355,7 @@ final class CompanionManager: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self, sessionID = session.id] _ in
                 self?.scheduleAgentActivityRefresh(for: sessionID)
-                self?.persistRelaunchableAgentSessions()
+                self?.scheduleRelaunchableAgentSessionsPersist()
             }
 
         agentLoopActivityCancellables[session.id] = session.$activityStatusLines
@@ -2364,22 +2367,36 @@ final class CompanionManager: ObservableObject {
         agentProgressStageCancellables[session.id] = session.$progressStage
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
-                self?.persistRelaunchableAgentSessions()
+                self?.scheduleRelaunchableAgentSessionsPersist()
             }
 
         agentTitleCancellables[session.id] = session.$title
             .receive(on: DispatchQueue.main)
             .sink { [weak self, sessionID = session.id] title in
                 self?.updateAgentDockTitle(for: sessionID, title: title)
-                self?.persistRelaunchableAgentSessions()
+                self?.scheduleRelaunchableAgentSessionsPersist()
             }
     }
 
     private func persistRelaunchableAgentSessions() {
+        pendingRelaunchableSnapshotPersistTask?.cancel()
+        pendingRelaunchableSnapshotPersistTask = nil
         ChatWorkspaceArchiveStore.saveRelaunchableSnapshots(
             for: codexAgentSessions,
             archivedSessionIDs: archivedSessionIDs
         )
+    }
+
+    private func scheduleRelaunchableAgentSessionsPersist() {
+        pendingRelaunchableSnapshotPersistTask?.cancel()
+        pendingRelaunchableSnapshotPersistTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(900))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard let self else { return }
+                self.persistRelaunchableAgentSessions()
+            }
+        }
     }
 
     private func updateAgentDockTitle(for sessionID: UUID, title: String) {
@@ -2421,7 +2438,7 @@ final class CompanionManager: ObservableObject {
         activeCodexAgentSessionID = session.id
         lastAgentContextSessionID = session.id
         scheduleWidgetSnapshotPublish()
-        persistRelaunchableAgentSessions()
+        scheduleRelaunchableAgentSessionsPersist()
         return session
     }
 
@@ -2986,43 +3003,43 @@ final class CompanionManager: ObservableObject {
 
     private func startBidirectionalRealtimeVoiceCapture(source: String) {
         guard !isRealtimeBidirectionalVoiceCaptureActive else { return }
-        let isPlayingResponse = voiceState == .responding || voiceTTSClient.isPlaying || openAIRealtimeSpeechClient.isPlaying || deepgramVoiceAgentClient.isPlaying
-        if isPlayingResponse {
+        let audioPlaybackActive = voiceTTSClient.isPlaying || openAIRealtimeSpeechClient.isPlaying || deepgramVoiceAgentClient.isPlaying
+        if voiceState == .responding, !audioPlaybackActive {
             OpenClickyMessageLogStore.shared.append(
                 lane: "voice",
                 direction: "internal",
-                event: "voice.realtime_bidirectional.start_deferred",
+                event: "voice.state.stale_responding_recovered",
+                fields: [
+                    "source": source,
+                    "speechModel": selectedModel,
+                    "speechVoice": activeRealtimeSpeechVoiceID,
+                    "inputPath": activeRealtimeInputPath
+                ]
+            )
+            clearVoiceResponseCaption()
+            currentAudioPowerLevel = 0
+            voiceState = .idle
+        }
+        let isPlayingResponse = audioPlaybackActive
+        if isPlayingResponse || voiceState == .processing {
+            let priorVoiceState = voiceState
+            OpenClickyMessageLogStore.shared.append(
+                lane: "voice",
+                direction: "internal",
+                event: "voice.realtime_bidirectional.previous_turn_interrupted",
                 fields: [
                     "source": source,
                     "speechModel": selectedModel,
                     "speechVoice": activeRealtimeSpeechVoiceID,
                     "inputPath": activeRealtimeInputPath,
-                    "voiceState": voiceState.rawValue,
+                    "voiceState": priorVoiceState.rawValue,
                     "ttsPlaying": voiceTTSClient.isPlaying,
                     "openAIRealtimePlaying": openAIRealtimeSpeechClient.isPlaying,
                     "deepgramVoiceAgentPlaying": deepgramVoiceAgentClient.isPlaying,
-                    "reason": "previous_voice_turn_still_speaking"
+                    "reason": isPlayingResponse ? "previous_voice_turn_still_speaking" : "previous_voice_turn_still_processing"
                 ]
             )
-            return
-        } else if voiceState == .processing {
-            OpenClickyMessageLogStore.shared.append(
-                lane: "voice",
-                direction: "internal",
-                event: "voice.realtime_bidirectional.start_deferred",
-                fields: [
-                    "source": source,
-                    "speechModel": selectedModel,
-                    "speechVoice": activeRealtimeSpeechVoiceID,
-                    "inputPath": activeRealtimeInputPath,
-                    "voiceState": voiceState.rawValue,
-                    "ttsPlaying": voiceTTSClient.isPlaying,
-                    "openAIRealtimePlaying": openAIRealtimeSpeechClient.isPlaying,
-                    "deepgramVoiceAgentPlaying": deepgramVoiceAgentClient.isPlaying,
-                    "reason": "previous_voice_turn_still_processing"
-                ]
-            )
-            return
+            interruptCurrentVoiceResponse()
         }
 
         clearDetectedElementLocation()
@@ -3225,6 +3242,14 @@ final class CompanionManager: ObservableObject {
                         self.updateVoiceResponseCaption(assistantText)
                         self.voiceState = .idle
                     }
+                    if routedByApp {
+                        // App-routed realtime turns (for example “get an agent on it”)
+                        // intentionally skip assistant playback, so no playback
+                        // callback will reset the notch/cursor out of the active
+                        // voice phase. Explicitly release the realtime capture
+                        // UI back to idle once the route has been handed off.
+                        self.releaseRealtimeVoiceConversationMode(reason: "routed_by_app")
+                    }
                     self.lastVoiceInteractionCompletedAt = Date()
                     self.scheduleWidgetSnapshotPublish()
                     OpenClickyMessageLogStore.shared.append(
@@ -3267,6 +3292,26 @@ final class CompanionManager: ObservableObject {
         }
         realtimeBidirectionalVoiceCaptureStartedAt = nil
         return true
+    }
+
+    private func releaseRealtimeVoiceConversationMode(reason: String) {
+        isRealtimeBidirectionalVoiceCaptureActive = false
+        isRealtimeBidirectionalVoiceInputReady = false
+        realtimeBidirectionalVoiceCaptureStartedAt = nil
+        clearVoiceResponseCaption()
+        currentAudioPowerLevel = 0
+        voiceState = .idle
+        OpenClickyMessageLogStore.shared.append(
+            lane: "voice",
+            direction: "internal",
+            event: "voice.realtime_bidirectional.released",
+            fields: [
+                "reason": reason,
+                "speechModel": selectedModel,
+                "speechVoice": activeRealtimeSpeechVoiceID,
+                "inputPath": activeRealtimeInputPath
+            ]
+        )
     }
 
     private func routeCompletedRealtimeVoiceTranscriptIfNeeded(_ transcript: String) -> Bool {
@@ -3331,10 +3376,7 @@ final class CompanionManager: ObservableObject {
     private func handleBidirectionalRealtimeVoiceFailure(_ error: Error, source: String, stage: String) {
         openAIRealtimeSpeechClient.cancelBidirectionalVoiceTurn()
         deepgramVoiceAgentClient.cancelBidirectionalVoiceTurn()
-        isRealtimeBidirectionalVoiceCaptureActive = false
-        isRealtimeBidirectionalVoiceInputReady = false
-        realtimeBidirectionalVoiceCaptureStartedAt = nil
-        voiceState = .idle
+        releaseRealtimeVoiceConversationMode(reason: "failure_\(stage)")
         OpenClickyMessageLogStore.shared.append(
             lane: "voice",
             direction: "internal",
@@ -3918,17 +3960,49 @@ final class CompanionManager: ObservableObject {
     }
 
     private func openRequestedWebsite(_ request: OpenClickyWebOpenRequest, shouldSpeak: Bool = true) {
+        let executionMethod = request.browserAppName == nil
+            ? "NSWorkspace.open"
+            : "NSWorkspace.open_withApplication"
         let executionStartedAt = markRequestExecutionStarted(
             route: "native_cua.open_url",
             extra: [
                 "executor": "native_cua",
-                "executionMethod": "NSWorkspace.open",
+                "executionMethod": executionMethod,
                 "controller": "NSWorkspace",
                 "url": request.url.absoluteString,
+                "browserAppName": request.browserAppName ?? "",
                 "shouldSpeak": shouldSpeak
             ]
         )
-        NSWorkspace.shared.open(request.url)
+        var openedInRequestedBrowser = false
+        if let browserAppName = request.browserAppName,
+           let browserURL = Self.resolvedApplicationURL(named: browserAppName) {
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = true
+            NSWorkspace.shared.open(
+                [request.url],
+                withApplicationAt: browserURL,
+                configuration: configuration
+            ) { _, error in
+                if let error {
+                    OpenClickyMessageLogStore.shared.append(
+                        lane: "computer-use",
+                        direction: "error",
+                        event: "native_cua.open_url.browser_activation_failed",
+                        fields: [
+                            "browserAppName": browserAppName,
+                            "path": browserURL.path,
+                            "url": request.url.absoluteString,
+                            "error": error.localizedDescription
+                        ]
+                    )
+                }
+            }
+            openedInRequestedBrowser = true
+        }
+        if !openedInRequestedBrowser {
+            NSWorkspace.shared.open(request.url)
+        }
         latestVoiceResponseCard = ClickyResponseCard(
             source: .voice,
             rawText: "opening \(request.displayName).",
@@ -3940,9 +4014,10 @@ final class CompanionManager: ObservableObject {
             event: "native_cua.open_url",
             fields: [
                 "executor": "native_cua",
-                "executionMethod": "NSWorkspace.open",
+                "executionMethod": openedInRequestedBrowser ? "NSWorkspace.open_withApplication" : "NSWorkspace.open",
                 "controller": "NSWorkspace",
                 "url": request.url.absoluteString,
+                "browserAppName": request.browserAppName ?? "",
                 "instruction": request.instruction
             ]
         )
@@ -3954,9 +4029,10 @@ final class CompanionManager: ObservableObject {
             executionStartedAt: executionStartedAt,
             extra: [
                 "executor": "native_cua",
-                "executionMethod": "NSWorkspace.open",
+                "executionMethod": openedInRequestedBrowser ? "NSWorkspace.open_withApplication" : "NSWorkspace.open",
                 "controller": "NSWorkspace",
-                "url": request.url.absoluteString
+                "url": request.url.absoluteString,
+                "browserAppName": request.browserAppName ?? ""
             ]
         )
     }
@@ -5182,19 +5258,22 @@ final class CompanionManager: ObservableObject {
     }
 
     private func launchApplication(named appName: String) -> Bool {
-        for bundleIdentifier in Self.applicationBundleIdentifiers(for: appName) {
-            if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) {
-                Self.openApplication(at: appURL, appName: appName)
-                return true
-            }
-        }
-
-        if let appURL = Self.standardApplicationURL(named: appName) {
+        if let appURL = Self.resolvedApplicationURL(named: appName) {
             Self.openApplication(at: appURL, appName: appName)
             return true
         }
 
         return runOpenApplication(arguments: ["-a", appName])
+    }
+
+    private static func resolvedApplicationURL(named appName: String) -> URL? {
+        for bundleIdentifier in applicationBundleIdentifiers(for: appName) {
+            if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) {
+                return appURL
+            }
+        }
+
+        return standardApplicationURL(named: appName)
     }
 
     private static func openApplication(at appURL: URL, appName: String) {
@@ -7721,6 +7800,43 @@ final class CompanionManager: ObservableObject {
         let trimmedTranscript = normalizedCommandCandidate(from: transcript)
         guard !trimmedTranscript.isEmpty else { return nil }
 
+        let browserNavigationPatterns: [(pattern: String, browserGroup: Int, targetGroup: Int)] = [
+            (
+                #"(?i)^\s*(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:open|launch|start|switch\s+to)\s+(?:the\s+)?((?:google\s+)?chrome|safari)\s*(?:,|\band\b|\bthen\b)?\s*(?:go\s+to|visit|browse\s+to|navigate\s+to|pull\s+up|show|open)\s+(?:the\s+)?(.+?)(?:\s+(?:website|web\s+site|webpage|web\s+page|url|site))?(?:\s+for\s+me)?[\.\!\?]*\s*$"#,
+                1,
+                2
+            ),
+            (
+                #"(?i)^\s*(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:go\s+to|visit|browse\s+to|navigate\s+to|pull\s+up|show|open)\s+(?:the\s+)?(.+?)(?:\s+(?:website|web\s+site|webpage|web\s+page|url|site))?\s+(?:in|on|using|with)\s+(?:the\s+)?((?:google\s+)?chrome|safari)(?:\s+for\s+me)?[\.\!\?]*\s*$"#,
+                2,
+                1
+            )
+        ]
+
+        for browserNavigationPattern in browserNavigationPatterns {
+            guard let regex = try? NSRegularExpression(pattern: browserNavigationPattern.pattern) else { continue }
+            let range = NSRange(trimmedTranscript.startIndex..<trimmedTranscript.endIndex, in: trimmedTranscript)
+            guard let match = regex.firstMatch(in: trimmedTranscript, range: range),
+                  let browserRange = Range(match.range(at: browserNavigationPattern.browserGroup), in: trimmedTranscript),
+                  let targetRange = Range(match.range(at: browserNavigationPattern.targetGroup), in: trimmedTranscript) else {
+                continue
+            }
+
+            let rawBrowser = String(trimmedTranscript[browserRange])
+            let browserAppName = normalizedApplicationName(from: rawBrowser)
+            guard ["Google Chrome", "Safari"].contains(browserAppName) else { continue }
+
+            let rawTarget = String(trimmedTranscript[targetRange])
+                .trimmingCharacters(in: CharacterSet(charactersIn: " \n\t.,!?"))
+            guard let url = normalizedWebOpenURL(from: rawTarget) else { continue }
+            return OpenClickyWebOpenRequest(
+                url: url,
+                displayName: displayNameForWebOpenTarget(rawTarget, url: url),
+                instruction: trimmedTranscript,
+                browserAppName: browserAppName
+            )
+        }
+
         let patterns = [
             #"(?i)^\s*(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:open|go\s+to|visit|browse\s+to|navigate\s+to|pull\s+up|show)\s+(?:the\s+)?(.+?)(?:\s+(?:website|web\s+site|webpage|web\s+page|url|site))?(?:\s+for\s+me)?[\.\!\?]*\s*$"#,
             #"(?i)^\s*(?:the\s+)?(.+?)\s+(?:website|web\s+site|webpage|web\s+page|url|site)[\.\!\?]*\s*$"#
@@ -7740,7 +7856,8 @@ final class CompanionManager: ObservableObject {
             return OpenClickyWebOpenRequest(
                 url: url,
                 displayName: displayNameForWebOpenTarget(rawTarget, url: url),
-                instruction: trimmedTranscript
+                instruction: trimmedTranscript,
+                browserAppName: nil
             )
         }
 
@@ -8251,6 +8368,7 @@ final class CompanionManager: ObservableObject {
         let normalized = normalizedSpokenCommandText(candidate)
         guard wordCount(in: normalized) >= 3 else { return nil }
         guard !isMetaAgentRoutingQuestion(candidate) else { return nil }
+        guard !isConversationalPreferenceOrDesignReflection(candidate) else { return nil }
         guard !isLikelyPureConversation(candidate) else { return nil }
         guard !isSensitiveOrDestructiveAgentTaskRequest(normalized) else { return nil }
 
@@ -8264,6 +8382,40 @@ final class CompanionManager: ObservableObject {
         guard !isLikelyDirectLocalOnlyRequest(candidate) else { return nil }
 
         return cleanedAgentTaskInstruction(candidate)
+    }
+
+    private static func isConversationalPreferenceOrDesignReflection(_ transcript: String) -> Bool {
+        let normalized = normalizedSpokenCommandText(transcript)
+        guard !normalized.isEmpty else { return true }
+
+        let conversationStarters = [
+            "i like",
+            "i love",
+            "i dont like",
+            "i don t like",
+            "i don't like",
+            "i want",
+            "i only want",
+            "i think",
+            "i feel",
+            "it feels",
+            "it would be",
+            "that would be",
+            "would be",
+            "could we",
+            "can we",
+            "could you talk",
+            "can you talk",
+            "lets talk",
+            "let s talk",
+            "let's talk"
+        ]
+        guard conversationStarters.contains(where: { normalized.hasPrefix($0) }) else {
+            return false
+        }
+
+        let explicitExecutionPattern = #"\b(?:agent|start\s+(?:an?\s+)?agent|spin\s+up|get\s+(?:an?\s+)?agent|implement|patch|change\s+the\s+code|edit\s+the\s+file|write\s+the\s+file|make\s+the\s+change|do\s+the\s+change|fix\s+it\s+now)\b"#
+        return normalized.range(of: explicitExecutionPattern, options: .regularExpression) == nil
     }
 
     private static func isLikelyPureConversation(_ transcript: String) -> Bool {
@@ -8949,13 +9101,7 @@ final class CompanionManager: ObservableObject {
     }
 
     private static func canResolveApplicationWithoutShellOpen(named appName: String) -> Bool {
-        for bundleIdentifier in applicationBundleIdentifiers(for: appName) {
-            if NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) != nil {
-                return true
-            }
-        }
-
-        return standardApplicationURL(named: appName) != nil
+        resolvedApplicationURL(named: appName) != nil
     }
 
     private static func activateRunningApplication(named appName: String) {
@@ -9392,12 +9538,12 @@ final class CompanionManager: ObservableObject {
         case .ready:
             // Codex briefly reports `.ready` after thread startup and before
             // the actual turn starts. Do not turn that preflight ready state
-            // into "done"; it caused "the red agent is done" followed by
-            // "working" while the task had not begun yet.
+            // into "done"; assigning/queueing an agent is not task completion.
             let isCompletedTurn = session?.progressStage == .completed || responseDisplaySummary != nil
-            guard isCompletedTurn || (activitySummary?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false) else {
-                // Preflight ready with nothing to report: leave caption alone
-                // so the acknowledgement / streaming affordance stays visible.
+            guard isCompletedTurn else {
+                // Preflight ready, even with the acknowledgement/activity text
+                // we seeded at assignment time, should stay visibly queued or
+                // working until a real completed turn arrives.
                 return
             }
             if agentDockItems[itemIndex].status == .running
@@ -10285,10 +10431,12 @@ final class CompanionManager: ObservableObject {
             ]
         )
 
-        markRequestCompleted(
+        markRequestStageCompleted(
             route: "agent.new_task",
-            executionStartedAt: executionStartedAt,
+            stage: "agent_queued",
+            stageStartedAt: executionStartedAt,
             timing: timing,
+            status: "queued",
             extra: [
                 "executor": "agent_mode",
                 "executionMethod": "CompanionManager.createAndLaunchCodexAgentSession",
@@ -10345,10 +10493,12 @@ final class CompanionManager: ObservableObject {
             stageDashboardAgentSubmission(prompt: trimmedPrompt, session: codexAgentSession)
             submitAgentPrompt(trimmedPrompt, to: codexAgentSession)
         }
-        markRequestCompleted(
+        markRequestStageCompleted(
             route: "agent.followup",
-            executionStartedAt: executionStartedAt,
+            stage: "prompt_queued",
+            stageStartedAt: executionStartedAt,
             timing: timing,
+            status: "queued",
             extra: [
                 "executor": "agent_mode",
                 "executionMethod": "CodexAgentSession.submitPromptFromUI",
@@ -10939,7 +11089,7 @@ final class CompanionManager: ObservableObject {
     1. POINT and ANNOTATE things on the user's screen using the [POINT:...] tag.
     2. GIVE ADVICE, EXPLAIN, and ANSWER QUESTIONS conversationally — including conceptual coding questions, walkthroughs, "what does this mean", "how would i", etc.
     3. SEARCH THE WEB conversationally when the user asks. answer from your own general knowledge; if the user explicitly wants live/current data (today's weather, latest price, breaking news), give a brief handoff-style acknowledgement; OpenClicky routes that kind of task to Agent Mode.
-    4. ROUTE WORK NATURALLY — simple conversational help stays in voice, direct computer-control is handled by OpenClicky's computer-use path, and file/code/research/settings/log work is handed to Agent Mode without making the user say a special agent phrase.
+    4. ROUTE WORK NATURALLY — simple conversational help stays in voice, direct computer-control is handled by OpenClicky's computer-use path, and concrete file/code/research/settings/log work is handed to Agent Mode only when the user is asking for real tool work rather than talking through an idea.
 
     YOU DO NOT, EVER:
     - run code, run commands, run shell, run terminal, run python, run scripts
@@ -10948,7 +11098,9 @@ final class CompanionManager: ObservableObject {
     - perform any filesystem, git, build, install, or refactor work
     - take any local action beyond pointing at things on screen
 
-    if the user asks you to do anything in the "DO NOT" list and OpenClicky has not already routed it before you see the turn, be honest that no action has started. do not say "i’ll take care of that in the background", "on it", or "starting an agent" unless the app has actually routed the turn to Agent Mode or direct computer-use before it reaches you. say briefly: "that needs OpenClicky's agent route, but it didn't start from this voice turn." OpenClicky should route clear file, code, log, settings, current-research, and other tool-heavy work to Agent Mode automatically.
+    keep the user's normal conversation in this voice lane. if they are reflecting, brainstorming, asking whether something is possible, saying "i like this", "i want it to feel like this", "could we", or "can we make sure", answer conversationally first. don't turn that into background work unless they clearly ask for an agent, a direct computer action, or a concrete change that truly needs tools.
+
+    if the user asks you to do anything in the "DO NOT" list and OpenClicky has not already routed it before you see the turn, be honest that no action has started. do not say "i’ll take care of that in the background", "on it", or "starting an agent" unless the app has actually routed the turn to Agent Mode or direct computer-use before it reaches you. say briefly: "that needs OpenClicky's agent route, but it didn't start from this voice turn."
 
     when the user clearly mentions "agent" / "start an agent" / "spin up an agent" / "ask an agent", or when the app has already decided the task needs Agent Mode, your job is just to confirm briefly: "on it, starting an agent for that."
 
@@ -10988,7 +11140,7 @@ final class CompanionManager: ObservableObject {
     YOUR JOB IS NARROW. you only do these things:
     1. GIVE ADVICE, EXPLAIN, and ANSWER QUESTIONS conversationally — including conceptual coding questions, walkthroughs, "what does this mean", "how would i", etc.
     2. SEARCH THE WEB conversationally when the user asks. answer from your own general knowledge; if the user explicitly wants live/current data (today's weather, latest price, breaking news), give a brief handoff-style acknowledgement; OpenClicky routes that kind of task to Agent Mode.
-    3. ROUTE WORK NATURALLY — simple conversational help stays in voice, direct computer-control is handled by OpenClicky's computer-use path, and file/code/research/settings/log work is handed to Agent Mode without making the user say a special agent phrase.
+    3. ROUTE WORK NATURALLY — simple conversational help stays in voice, direct computer-control is handled by OpenClicky's computer-use path, and concrete file/code/research/settings/log work is handed to Agent Mode only when the user is asking for real tool work rather than talking through an idea.
 
     YOU DO NOT, EVER:
     - run code, run commands, run shell, run terminal, run python, run scripts
@@ -10997,7 +11149,9 @@ final class CompanionManager: ObservableObject {
     - perform any filesystem, git, build, install, or refactor work
     - include any control tags, point tags, coordinate tags, markdown, brackets, or hidden routing markers in your answer
 
-    if the user asks you to do anything in the "DO NOT" list and OpenClicky has not already routed it before you see the turn, be honest that no action has started. do not say "i’ll take care of that in the background", "on it", or "starting an agent" unless the app has actually routed the turn to Agent Mode or direct computer-use before it reaches you. say briefly: "that needs OpenClicky's agent route, but it didn't start from this voice turn." OpenClicky should route clear file, code, log, settings, current-research, and other tool-heavy work to Agent Mode automatically.
+    keep the user's normal conversation in this voice lane. if they are reflecting, brainstorming, asking whether something is possible, saying "i like this", "i want it to feel like this", "could we", or "can we make sure", answer conversationally first. don't turn that into background work unless they clearly ask for an agent, a direct computer action, or a concrete change that truly needs tools.
+
+    if the user asks you to do anything in the "DO NOT" list and OpenClicky has not already routed it before you see the turn, be honest that no action has started. do not say "i’ll take care of that in the background", "on it", or "starting an agent" unless the app has actually routed the turn to Agent Mode or direct computer-use before it reaches you. say briefly: "that needs OpenClicky's agent route, but it didn't start from this voice turn."
 
     when the user clearly mentions "agent" / "start an agent" / "spin up an agent" / "ask an agent", or when the app has already decided the task needs Agent Mode, your job is just to confirm briefly: "on it, starting an agent for that."
 

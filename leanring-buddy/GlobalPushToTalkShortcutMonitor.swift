@@ -21,6 +21,7 @@ final class GlobalPushToTalkShortcutMonitor: ObservableObject {
     private var globalEventTap: CFMachPort?
     private var globalEventTapRunLoopSource: CFRunLoopSource?
     private var isShiftCurrentlyPressed = false
+    private var isShiftTapStandaloneCandidate = false
     private var lastStandaloneShiftTapDate: Date?
     private let maximumShiftDoubleTapInterval: TimeInterval = 0.42
     /// Mutated exclusively from the CGEvent tap callback, which runs on
@@ -158,6 +159,15 @@ final class GlobalPushToTalkShortcutMonitor: ObservableObject {
     }
 
     private func handleStandaloneShiftTapIfNeeded(eventType: CGEventType, event: CGEvent) {
+        if eventType == .keyDown && isShiftCurrentlyPressed {
+            // Shift was used as a real typing modifier, not as the standalone
+            // double-tap shortcut. Without this guard, typing two capital
+            // letters or symbols quickly can open the OpenClicky panel.
+            isShiftTapStandaloneCandidate = false
+            lastStandaloneShiftTapDate = nil
+            return
+        }
+
         guard eventType == .flagsChanged else { return }
 
         let flags = event.flags
@@ -168,6 +178,19 @@ final class GlobalPushToTalkShortcutMonitor: ObservableObject {
             && !flags.contains(.maskCommand)
 
         if isShiftOnly && !isShiftCurrentlyPressed {
+            isShiftCurrentlyPressed = true
+            isShiftTapStandaloneCandidate = true
+            return
+        }
+
+        if isShiftCurrentlyPressed && !isShiftDown {
+            defer {
+                isShiftCurrentlyPressed = false
+                isShiftTapStandaloneCandidate = false
+            }
+
+            guard isShiftTapStandaloneCandidate else { return }
+
             let now = Date()
             if let lastStandaloneShiftTapDate,
                now.timeIntervalSince(lastStandaloneShiftTapDate) <= maximumShiftDoubleTapInterval {
@@ -176,6 +199,12 @@ final class GlobalPushToTalkShortcutMonitor: ObservableObject {
             } else {
                 lastStandaloneShiftTapDate = now
             }
+            return
+        }
+
+        if isShiftCurrentlyPressed && !isShiftOnly {
+            isShiftTapStandaloneCandidate = false
+            lastStandaloneShiftTapDate = nil
         }
 
         isShiftCurrentlyPressed = isShiftDown
