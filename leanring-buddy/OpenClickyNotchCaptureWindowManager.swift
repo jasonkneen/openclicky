@@ -2477,7 +2477,7 @@ private final class OpenClickyLiquidGlassBackdropView: NSView {
             
             let sheenPath = NSBezierPath()
             sheenPath.move(to: NSPoint(x: bounds.minX, y: bounds.minY))
-            sheenPath.lineTo(NSPoint(x: bounds.maxX, y: bounds.maxY))
+            sheenPath.line(to: NSPoint(x: bounds.maxX, y: bounds.maxY))
             NSColor.white.withAlphaComponent(0.03).setStroke()
             sheenPath.lineWidth = 4.0
             sheenPath.stroke()
