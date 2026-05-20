@@ -679,11 +679,12 @@ struct OpenClickyNotchPanelView: View {
                             .transition(.opacity.combined(with: .move(edge: .top)))
                     } else {
                         homePromptSuggestions
+                            .transition(homeContentTransition)
                     }
 
                     if !homeAgentTaskSessions.isEmpty {
                         homeAgentTaskChipRow
-                            .transition(.opacity.combined(with: .move(edge: .top)))
+                            .transition(homeContentTransition)
                     }
 
                     Spacer(minLength: 18)
@@ -705,6 +706,10 @@ struct OpenClickyNotchPanelView: View {
             topStatusRail
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var homeContentTransition: AnyTransition {
+        .opacity.combined(with: .move(edge: .bottom))
     }
 
     private var homeAgentTaskChipRow: some View {
@@ -781,15 +786,25 @@ struct OpenClickyNotchPanelView: View {
             }
 
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 112), spacing: 7)], spacing: 7) {
-                homeSuggestionButton("Summarise screen", systemImageName: "rectangle.and.text.magnifyingglass")
-                homeSuggestionButton("Start an agent", systemImageName: "terminal.fill")
-                homeSuggestionButton("Open settings", systemImageName: "gearshape.fill")
+                ForEach(homeSuggestionItems, id: \.title) { suggestion in
+                    homeSuggestionButton(suggestion.title, systemImageName: suggestion.systemImageName)
+                        .transition(homeContentTransition)
+                }
             }
+            .transition(homeContentTransition)
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 15, style: .continuous).fill(Color.white.opacity(0.045)))
         .overlay(RoundedRectangle(cornerRadius: 15, style: .continuous).stroke(Color.white.opacity(0.07), lineWidth: 1))
+    }
+
+    private var homeSuggestionItems: [(title: String, systemImageName: String)] {
+        [
+            ("Summarise screen", "rectangle.and.text.magnifyingglass"),
+            ("Start an agent", "terminal.fill"),
+            ("Open settings", "gearshape.fill")
+        ]
     }
 
     private func homeSuggestionButton(_ title: String, systemImageName: String) -> some View {
