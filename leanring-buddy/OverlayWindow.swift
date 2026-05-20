@@ -458,6 +458,7 @@ struct BlueCursorView: View {
     @AppStorage(ClickyAccentTheme.userDefaultsKey) private var selectedAccentThemeID = ClickyAccentTheme.blue.rawValue
     @AppStorage(ClickyCursorAvatarSizePreference.userDefaultsKey) private var cursorAvatarSizeScale = ClickyCursorAvatarSizePreference.defaultScale
     @AppStorage(AppBundleConfiguration.userVoiceResponseCaptionFontDefaultsKey) private var voiceResponseCaptionFontRawValue = OpenClickyResponseCaptionFont.fallback.rawValue
+    @AppStorage(AppBundleConfiguration.userVoiceResponseCaptionOpacityDefaultsKey) private var voiceResponseCaptionOpacity = AppBundleConfiguration.defaultVoiceResponseCaptionOpacity
 
     @State private var cursorPosition: CGPoint
     @State private var isCursorOnThisScreen: Bool
@@ -488,7 +489,6 @@ struct BlueCursorView: View {
     @State private var showWelcome: Bool = true
     @State private var bubbleSize: CGSize = .zero
     @State private var agentTaskBubbleSize: CGSize = .zero
-    @State private var externalProxyBubbleSize: CGSize = .zero
     @State private var bubbleOpacity: Double = 1.0
     @State private var cursorOpacity: Double = 0.0
 
@@ -592,6 +592,9 @@ struct BlueCursorView: View {
     private var captionBubbleBackgroundColor: Color { .white }
     private var captionBubbleTextColor: Color { .black }
     private var captionBubbleShadowColor: Color { Color.black.opacity(0.22) }
+    private var normalizedVoiceResponseCaptionOpacity: Double {
+        min(max(voiceResponseCaptionOpacity, 0.55), 1.0)
+    }
 
     private let navigationPointerPhrases = [
         "right here!",
@@ -920,7 +923,7 @@ struct BlueCursorView: View {
     private func externalCaption(_ caption: String, at position: CGPoint, color: Color) -> some View {
         let bubblePosition = anchoredBubblePosition(
             for: position,
-            bubbleSize: externalProxyBubbleSize,
+            bubbleSize: estimatedExternalCaptionBubbleSize(for: caption),
             horizontalOffset: 12,
             verticalOffset: 20
         )
@@ -934,23 +937,31 @@ struct BlueCursorView: View {
             .padding(.vertical, 5)
             .background(
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(captionBubbleBackgroundColor)
-                    .shadow(color: captionBubbleShadowColor, radius: 8, x: 0, y: 2)
+                    .fill(captionBubbleBackgroundColor.opacity(normalizedVoiceResponseCaptionOpacity))
+                    .shadow(color: captionBubbleShadowColor.opacity(normalizedVoiceResponseCaptionOpacity), radius: 8, x: 0, y: 2)
             )
             .frame(maxWidth: 340, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
-            .overlay(
-                GeometryReader { geo in
-                    Color.clear
-                        .preference(key: ExternalProxyBubbleSizePreferenceKey.self, value: geo.size)
-                }
-            )
             .position(x: bubblePosition.x, y: bubblePosition.y)
-            .onPreferenceChange(ExternalProxyBubbleSizePreferenceKey.self) { newSize in
-                externalProxyBubbleSize = newSize
+            .transition(.opacity)
+            .transaction { transaction in
+                transaction.animation = nil
             }
-            .transition(.opacity.combined(with: .move(edge: .leading)))
-            .animation(.easeOut(duration: 0.12), value: caption)
+    }
+
+    private func estimatedExternalCaptionBubbleSize(for caption: String) -> CGSize {
+        let trimmed = caption.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return CGSize(width: 72, height: 28) }
+
+        let averageGlyphWidth: CGFloat = 6.6
+        let horizontalPadding: CGFloat = 18
+        let maxWidth: CGFloat = 340
+        let minWidth: CGFloat = 72
+        let rawWidth = CGFloat(trimmed.count) * averageGlyphWidth + horizontalPadding
+        let width = min(max(rawWidth, minWidth), maxWidth)
+        let lineCount = max(1, Int(ceil(rawWidth / maxWidth)))
+        let height = CGFloat(min(lineCount, 5)) * 15 + 10
+        return CGSize(width: width, height: height)
     }
 
     private func colorFromHex(_ rawHex: String?) -> Color? {

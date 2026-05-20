@@ -1235,6 +1235,9 @@ struct OpenClickyNotchPanelView: View {
             return "Preconfigured schedule will be added automatically."
         }
         let enabled = automation.enabled ? "enabled" : "paused"
+        if let appName = skillDiscoveryStore.activeApplicationName, !appName.isEmpty {
+            return "\(enabled) · tuned for \(appName)"
+        }
         if let next = automation.nextRun, automation.enabled {
             return "\(enabled) · next \(next.formatted(.dateTime.weekday().hour().minute()))"
         }
@@ -1243,7 +1246,7 @@ struct OpenClickyNotchPanelView: View {
 
     private func skillDiscoverySuggestionRow(_ suggestion: OpenClickySkillDiscoverySuggestion) -> some View {
         HStack(alignment: .top, spacing: 9) {
-            Image(systemName: suggestion.source.lowercased() == "online" ? "globe" : "wand.and.stars")
+            Image(systemName: skillDiscoverySuggestionIcon(for: suggestion))
                 .font(panelUIFont(size: 13, weight: .black))
                 .foregroundColor(DS.Colors.accentText)
                 .frame(width: 28, height: 28)
@@ -1273,7 +1276,7 @@ struct OpenClickyNotchPanelView: View {
             Button {
                 installSkillSuggestion(suggestion)
             } label: {
-                Text(suggestion.source.lowercased() == "installed" ? "Connect" : "Install")
+                Text(suggestion.actionLabel)
                     .font(panelUIFont(size: 9, weight: .heavy))
                     .foregroundColor(DS.Colors.textOnAccent)
                     .padding(.horizontal, 8)
@@ -1281,12 +1284,25 @@ struct OpenClickyNotchPanelView: View {
                     .background(Capsule(style: .continuous).fill(DS.Colors.accent))
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("\(suggestion.source.lowercased() == "installed" ? "Connect" : "Install") \(suggestion.title)")
-            .help("Start an OpenClicky agent to \(suggestion.source.lowercased() == "installed" ? "connect" : "install") \(suggestion.title)")
+            .accessibilityLabel("\(suggestion.actionLabel) \(suggestion.title)")
+            .help("Start an OpenClicky agent to \(suggestion.actionLabel.lowercased()) \(suggestion.title)")
         }
         .padding(9)
         .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(Color.white.opacity(0.052)))
         .overlay(RoundedRectangle(cornerRadius: 13, style: .continuous).stroke(Color.white.opacity(0.065), lineWidth: 1))
+    }
+
+    private func skillDiscoverySuggestionIcon(for suggestion: OpenClickySkillDiscoverySuggestion) -> String {
+        switch suggestion.source.lowercased() {
+        case "online":
+            return "globe"
+        case "mcp":
+            return "point.3.connected.trianglepath.dotted"
+        case "app":
+            return "app.fill"
+        default:
+            return "wand.and.stars"
+        }
     }
 
     private func runSkillDiscoveryNow() {

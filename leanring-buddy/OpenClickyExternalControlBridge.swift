@@ -51,10 +51,19 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.jkneen.openclicky.external-control-bridge")
     private var listener: NWListener?
     private var sseConnections: [UUID: NWConnection] = [:]
+    private let proxySession: URLSession
 
     init(port: UInt16 = 32123, handler: @escaping OpenClickyExternalControlHandler) {
         self.port = port
         self.handler = handler
+
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 120
+        config.timeoutIntervalForResource = 600
+        config.waitsForConnectivity = true
+        config.urlCache = nil
+        config.httpCookieStorage = nil
+        self.proxySession = URLSession(configuration: config)
     }
 
     func start() {
@@ -128,7 +137,7 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
                 return
             }
 
-            if isComplete || nextBuffer.count > 512 * 1024 {
+            if isComplete || nextBuffer.count > 10 * 1024 * 1024 {
                 self.sendJSON(["ok": false, "error": "Malformed HTTP request"], statusCode: 400, on: connection)
                 return
             }
@@ -149,7 +158,8 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
                 "name": "OpenClicky External Control Bridge",
                 "port": port,
                 "transport": "local-http+sse",
-                "tools": ["show_cursor", "show_cursors", "show_caption", "screenshot", "clear", "speak", "notify"]
+                "tools": ["show_cursor", "show_cursors", "show_caption", "screenshot", "clear", "speak", "notify"],
+                "proxyEndpoints": ["/v1/messages", "/v1/responses", "/v1/chat/completions"]
             ], statusCode: 200, on: connection)
             return
         }
@@ -161,6 +171,11 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
 
         if request.method == "GET", request.path == "/events" {
             attachSSE(connection)
+            return
+        }
+
+        if isInferenceProxyEndpoint(request.path) {
+            proxyInferenceRequest(request, on: connection)
             return
         }
 
@@ -222,6 +237,104 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
         }
     }
 
+
+    private func isInferenceProxyEndpoint(_ path: String) -> Bool {
+        path == "/v1/responses" || path == "/v1/chat/completions" || path == "/v1/messages"
+    }
+
+    private func proxyInferenceRequest(_ request: HTTPRequest, on connection: NWConnection) {
+        guard request.method == "POST" else {
+            sendJSON(["ok": false, "error": "Use POST for inference proxy endpoints"], statusCode: 405, on: connection)
+            return
+        }
+
+        guard let proxyRequest = makeInferenceProxyURLRequest(from: request) else {
+            let provider = request.path == "/v1/messages" ? "Anthropic" : "OpenAI"
+            sendJSON(["ok": false, "error": "OpenClicky \(provider) API key is not configured"], statusCode: 401, on: connection)
+            return
+        }
+
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let (data, response) = try await self.proxySession.data(for: proxyRequest)
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    self.queue.async {
+                        self.sendJSON(["ok": false, "error": "Invalid upstream response"], statusCode: 502, on: connection)
+                    }
+                    return
+                }
+                self.queue.async {
+                    self.sendRawResponse(
+                        data,
+                        statusCode: httpResponse.statusCode,
+                        contentType: httpResponse.value(forHTTPHeaderField: "Content-Type") ?? "application/json",
+                        extraHeaders: Self.proxyResponseHeaders(from: httpResponse),
+                        on: connection
+                    )
+                }
+            } catch {
+                self.queue.async {
+                    self.sendJSON(["ok": false, "error": "Inference proxy failed: \(error.localizedDescription)"], statusCode: 502, on: connection)
+                }
+            }
+        }
+    }
+
+    private func makeInferenceProxyURLRequest(from request: HTTPRequest) -> URLRequest? {
+        let targetBase: String
+        let apiKey: String?
+        if request.path == "/v1/messages" {
+            targetBase = "https://api.anthropic.com"
+            apiKey = AppBundleConfiguration.anthropicAPIKey()
+        } else {
+            targetBase = "https://api.openai.com"
+            apiKey = AppBundleConfiguration.openAIAPIKey()
+        }
+
+        guard let apiKey, !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let url = URL(string: targetBase + request.path) else { return nil }
+
+        var upstream = URLRequest(url: url)
+        upstream.httpMethod = request.method
+        upstream.timeoutInterval = 120
+        upstream.httpBody = request.body
+        upstream.setValue(request.headers["content-type"] ?? "application/json", forHTTPHeaderField: "Content-Type")
+        if let accept = request.headers["accept"] {
+            upstream.setValue(accept, forHTTPHeaderField: "Accept")
+        }
+
+        if request.path == "/v1/messages" {
+            upstream.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+            upstream.setValue(request.headers["anthropic-version"] ?? "2023-06-01", forHTTPHeaderField: "anthropic-version")
+            if let beta = request.headers["anthropic-beta"] {
+                upstream.setValue(beta, forHTTPHeaderField: "anthropic-beta")
+            }
+        } else {
+            upstream.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            if let organization = request.headers["openai-organization"] {
+                upstream.setValue(organization, forHTTPHeaderField: "OpenAI-Organization")
+            }
+            if let project = request.headers["openai-project"] {
+                upstream.setValue(project, forHTTPHeaderField: "OpenAI-Project")
+            }
+            if let beta = request.headers["openai-beta"] {
+                upstream.setValue(beta, forHTTPHeaderField: "OpenAI-Beta")
+            }
+        }
+        return upstream
+    }
+
+    private static func proxyResponseHeaders(from response: HTTPURLResponse) -> [String: String] {
+        var headers: [String: String] = [:]
+        for key in ["request-id", "x-request-id", "openai-processing-ms", "anthropic-ratelimit-requests-remaining", "anthropic-ratelimit-tokens-remaining"] {
+            if let value = response.value(forHTTPHeaderField: key) {
+                headers[key] = value
+            }
+        }
+        return headers
+    }
+
     private func attachSSE(_ connection: NWConnection) {
         let id = UUID()
         sseConnections[id] = connection
@@ -253,8 +366,16 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
 
     private func sendJSON(_ body: [String: Any], statusCode: Int, on connection: NWConnection) {
         let responseData = (try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])) ?? Data("{}".utf8)
+        sendRawResponse(responseData, statusCode: statusCode, contentType: "application/json", on: connection)
+    }
+
+    private func sendRawResponse(_ responseData: Data, statusCode: Int, contentType: String, extraHeaders: [String: String] = [:], on connection: NWConnection) {
         let reason = Self.reasonPhrase(for: statusCode)
-        let headers = "HTTP/1.1 \(statusCode) \(reason)\r\nContent-Type: application/json\r\nContent-Length: \(responseData.count)\r\nConnection: close\r\nAccess-Control-Allow-Origin: http://127.0.0.1\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\n\r\n"
+        var headers = "HTTP/1.1 \(statusCode) \(reason)\r\nContent-Type: \(contentType)\r\nContent-Length: \(responseData.count)\r\nConnection: close\r\nAccess-Control-Allow-Origin: http://127.0.0.1\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type, Authorization, x-api-key, anthropic-version, anthropic-beta, OpenAI-Organization, OpenAI-Project, OpenAI-Beta\r\n"
+        for (key, value) in extraHeaders.sorted(by: { $0.key < $1.key }) {
+            headers += "\(key): \(value)\r\n"
+        }
+        headers += "\r\n"
         var data = Data(headers.utf8)
         data.append(responseData)
         connection.send(content: data, completion: .contentProcessed { _ in
@@ -514,6 +635,16 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
         case 404: return "Not Found"
         case 405: return "Method Not Allowed"
         case 409: return "Conflict"
+        case 401: return "Unauthorized"
+        case 403: return "Forbidden"
+        case 408: return "Request Timeout"
+        case 413: return "Payload Too Large"
+        case 415: return "Unsupported Media Type"
+        case 429: return "Too Many Requests"
+        case 500: return "Internal Server Error"
+        case 502: return "Bad Gateway"
+        case 503: return "Service Unavailable"
+        case 504: return "Gateway Timeout"
         default: return "OK"
         }
     }

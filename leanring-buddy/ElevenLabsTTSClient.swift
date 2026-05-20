@@ -2268,6 +2268,7 @@ final class OpenAIRealtimeSpeechClient: OpenClickyTTSClient {
         var transcript = ""
         var scheduledFrameCount: AVAudioFramePosition = 0
         var didStartPlayback = false
+        let playbackStartThresholdFrames = AVAudioFramePosition(Self.streamSampleRate * 0.12)
 
         while true {
             try Task.checkCancellation()
@@ -2278,11 +2279,20 @@ final class OpenAIRealtimeSpeechClient: OpenClickyTTSClient {
                let chunk = Data(base64Encoded: delta) {
                 let samples = Self.int16Samples(fromLittleEndianPCM: chunk)
                 let frames = await MainActor.run {
-                    ElevenLabsTTSClient.scheduleSamples(samples, on: player, format: streamFormat)
+                    ElevenLabsTTSClient.scheduleSamples(
+                        samples,
+                        on: player,
+                        format: streamFormat,
+                        startPlaybackIfNeeded: false
+                    )
                 }
                 scheduledFrameCount += frames
-                if frames > 0, !didStartPlayback {
+                if frames > 0,
+                   !didStartPlayback,
+                   scheduledFrameCount >= playbackStartThresholdFrames,
+                   player.engine?.isRunning == true {
                     didStartPlayback = true
+                    await MainActor.run { player.play() }
                     await MainActor.run { onPlaybackStarted() }
                 }
             } else if (type == "response.output_audio_transcript.delta" || type == "response.audio_transcript.delta"),
@@ -2309,6 +2319,11 @@ final class OpenAIRealtimeSpeechClient: OpenClickyTTSClient {
         }
 
         if scheduledFrameCount > 0 {
+            if !didStartPlayback, player.engine?.isRunning == true {
+                didStartPlayback = true
+                await MainActor.run { player.play() }
+                await MainActor.run { onPlaybackStarted() }
+            }
             await ElevenLabsTTSClient.waitForPlaybackToDrain(
                 player,
                 scheduledFrameCount: scheduledFrameCount,
@@ -2622,6 +2637,7 @@ final class OpenAIRealtimeSpeechClient: OpenClickyTTSClient {
             var userTranscript = ""
             var assistantTranscript = ""
             var scheduledFrameCount: AVAudioFramePosition = 0
+            let playbackStartThresholdFrames = AVAudioFramePosition(OpenAIRealtimeSpeechClient.streamSampleRate * 0.12)
 
             while true {
                 try Task.checkCancellation()
@@ -2634,11 +2650,20 @@ final class OpenAIRealtimeSpeechClient: OpenClickyTTSClient {
                    let chunk = Data(base64Encoded: delta) {
                     let samples = OpenAIRealtimeSpeechClient.int16Samples(fromLittleEndianPCM: chunk)
                     let frames = await MainActor.run {
-                        ElevenLabsTTSClient.scheduleSamples(samples, on: playerNode, format: streamFormat)
+                        ElevenLabsTTSClient.scheduleSamples(
+                            samples,
+                            on: playerNode,
+                            format: streamFormat,
+                            startPlaybackIfNeeded: false
+                        )
                     }
                     scheduledFrameCount += frames
-                    if frames > 0, !didStartPlayback {
+                    if frames > 0,
+                       !didStartPlayback,
+                       scheduledFrameCount >= playbackStartThresholdFrames,
+                       playerNode.engine?.isRunning == true {
                         didStartPlayback = true
+                        await MainActor.run { playerNode.play() }
                         await MainActor.run { onPlaybackStarted() }
                     }
                 } else if (type == "response.output_audio_transcript.delta" || type == "response.audio_transcript.delta"),
@@ -2689,6 +2714,11 @@ final class OpenAIRealtimeSpeechClient: OpenClickyTTSClient {
             }
 
             if scheduledFrameCount > 0 {
+                if !didStartPlayback, playerNode.engine?.isRunning == true {
+                    didStartPlayback = true
+                    await MainActor.run { playerNode.play() }
+                    await MainActor.run { onPlaybackStarted() }
+                }
                 await ElevenLabsTTSClient.waitForPlaybackToDrain(
                     playerNode,
                     scheduledFrameCount: scheduledFrameCount,

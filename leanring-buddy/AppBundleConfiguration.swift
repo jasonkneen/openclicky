@@ -26,6 +26,8 @@ nonisolated enum AppBundleConfiguration {
     static let userSpeculativePreFireDefaultsKey = "openClickySpeculativePreFireEnabled"
     static let userVoiceResponseCaptionsEnabledDefaultsKey = "openClickyVoiceResponseCaptionsEnabled"
     static let userVoiceResponseCaptionFontDefaultsKey = "openClickyVoiceResponseCaptionFont"
+    static let userVoiceResponseCaptionOpacityDefaultsKey = "openClickyVoiceResponseCaptionOpacity"
+    static let defaultVoiceResponseCaptionOpacity = 0.92
     static let userAppFontDefaultsKey = "openClickyAppFont"
     static let userAppTitleFontSizeDefaultsKey = "openClickyAppTitleFontSize"
     static let userAppBodyFontSizeDefaultsKey = "openClickyAppBodyFontSize"

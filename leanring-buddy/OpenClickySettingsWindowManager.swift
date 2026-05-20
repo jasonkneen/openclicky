@@ -159,6 +159,7 @@ struct OpenClickySettingsView: View {
     @AppStorage(AppBundleConfiguration.userDeepgramVoiceAgentThinkModelDefaultsKey) private var userDeepgramVoiceAgentThinkModel = "gpt-4o-mini"
     @AppStorage(AppBundleConfiguration.userVoiceResponseCaptionsEnabledDefaultsKey) private var voiceResponseCaptionsEnabled = false
     @AppStorage(AppBundleConfiguration.userVoiceResponseCaptionFontDefaultsKey) private var voiceResponseCaptionFontRawValue = OpenClickyResponseCaptionFont.fallback.rawValue
+    @AppStorage(AppBundleConfiguration.userVoiceResponseCaptionOpacityDefaultsKey) private var voiceResponseCaptionOpacity = AppBundleConfiguration.defaultVoiceResponseCaptionOpacity
     @AppStorage(AppBundleConfiguration.userAppFontDefaultsKey) private var appFontRawValue = OpenClickyResponseCaptionFont.fallback.rawValue
     @AppStorage(AppBundleConfiguration.userAppTitleFontSizeDefaultsKey) private var appTitleFontSize = 26.0
     @AppStorage(AppBundleConfiguration.userAppBodyFontSizeDefaultsKey) private var appBodyFontSize = 13.0
@@ -623,6 +624,27 @@ struct OpenClickySettingsView: View {
                             action: { voiceResponseCaptionFontRawValue = captionFont.rawValue }
                         )
                     }
+                }
+                .padding(.horizontal, 14)
+                .padding(.bottom, 11)
+
+                HStack(spacing: 12) {
+                    Image(systemName: "circle.lefthalf.filled")
+                        .font(appUIFont(size: max(11, bodyFontSize - 1), weight: .semibold))
+                        .foregroundColor(.accentColor)
+                        .frame(width: 18)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Caption bubble opacity")
+                            .font(appUIFont(size: bodyFontSize, weight: .semibold))
+                            .foregroundColor(.primary)
+                        Text("\(Int(voiceResponseCaptionOpacity * 100))%")
+                            .font(appUIFont(size: subtextFontSize, weight: .medium))
+                            .foregroundColor(.secondary)
+                    }
+
+                    Slider(value: $voiceResponseCaptionOpacity, in: 0.55...1.0, step: 0.05)
+                        .frame(maxWidth: 180)
                 }
                 .padding(.horizontal, 14)
                 .padding(.bottom, 11)
