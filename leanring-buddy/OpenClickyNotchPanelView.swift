@@ -448,11 +448,7 @@ struct OpenClickyNotchPanelView: View {
         VStack(spacing: 12) {
             tabStrip
 
-            tabContent
-                .id(selectedTab)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .transition(.opacity.combined(with: .move(edge: .bottom)))
-                .animation(isPanelUserResizing ? nil : .spring(response: 0.24, dampingFraction: 0.90), value: selectedTab)
+            tabContentLayer
         }
         .padding(14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -485,6 +481,24 @@ struct OpenClickyNotchPanelView: View {
         .animation(.easeOut(duration: 0.16), value: isPanelDropTargeted)
         .animation(isPanelUserResizing ? nil : .spring(response: 0.24, dampingFraction: 0.88), value: quickPromptMode)
         .animation(isPanelUserResizing ? nil : .spring(response: 0.24, dampingFraction: 0.88), value: isCompactChatExpanded)
+    }
+
+    private var tabContentLayer: some View {
+        ZStack(alignment: .topLeading) {
+            tabContent
+                .id(selectedTab.rawValue)
+                .transition(tabSwitchTransition)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .clipped()
+        .animation(isPanelUserResizing ? nil : .spring(response: 0.24, dampingFraction: 0.90), value: selectedTab)
+    }
+
+    private var tabSwitchTransition: AnyTransition {
+        .asymmetric(
+            insertion: .opacity.combined(with: .move(edge: .bottom)),
+            removal: .opacity.combined(with: .move(edge: .top))
+        )
     }
 
     private var preferredPanelHeightForSelectedTab: CGFloat {
@@ -679,12 +693,10 @@ struct OpenClickyNotchPanelView: View {
                             .transition(.opacity.combined(with: .move(edge: .top)))
                     } else {
                         homePromptSuggestions
-                            .transition(homeContentTransition)
                     }
 
                     if !homeAgentTaskSessions.isEmpty {
                         homeAgentTaskChipRow
-                            .transition(homeContentTransition)
                     }
 
                     Spacer(minLength: 18)
@@ -706,10 +718,6 @@ struct OpenClickyNotchPanelView: View {
             topStatusRail
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-
-    private var homeContentTransition: AnyTransition {
-        .opacity.combined(with: .move(edge: .bottom))
     }
 
     private var homeAgentTaskChipRow: some View {
@@ -788,10 +796,8 @@ struct OpenClickyNotchPanelView: View {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 112), spacing: 7)], spacing: 7) {
                 ForEach(homeSuggestionItems, id: \.title) { suggestion in
                     homeSuggestionButton(suggestion.title, systemImageName: suggestion.systemImageName)
-                        .transition(homeContentTransition)
                 }
             }
-            .transition(homeContentTransition)
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
