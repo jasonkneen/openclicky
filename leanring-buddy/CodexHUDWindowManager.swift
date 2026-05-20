@@ -22,6 +22,26 @@ private final class OpenClickyHUDPanel: NSPanel {
 @MainActor
 final class CodexHUDWindowManager: NSObject, NSWindowDelegate {
     private var panel: NSPanel?
+    private var themeObserver: NSObjectProtocol?
+
+    override init() {
+        super.init()
+        themeObserver = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification,
+            object: UserDefaults.standard,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.refreshThemeAppearance()
+            }
+        }
+    }
+
+    deinit {
+        if let observer = themeObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
 
     nonisolated func windowShouldClose(_ sender: NSWindow) -> Bool {
         // Route the red traffic-light close through hide() so the panel
@@ -112,7 +132,29 @@ final class CodexHUDWindowManager: NSObject, NSWindowDelegate {
         for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
             panel.standardWindowButton(button)?.isHidden = true
         }
-        return panel
+        let result = panel
+        self.panel = result
+        refreshThemeAppearance()
+        return result
+    }
+
+    private func refreshThemeAppearance() {
+        let theme = ClickyTheme.current
+        let appearanceName: NSAppearance.Name?
+        switch theme {
+        case .system:
+            appearanceName = nil
+        case .light:
+            appearanceName = .aqua
+        case .dark:
+            appearanceName = .darkAqua
+        }
+        
+        if let appearanceName = appearanceName {
+            panel?.appearance = NSAppearance(named: appearanceName)
+        } else {
+            panel?.appearance = nil
+        }
     }
 
     private func enforceMinimumSize() {
