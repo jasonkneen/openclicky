@@ -37,6 +37,7 @@ final class MenuBarPanelManager: NSObject {
     private var contentSizeObserver: NSObjectProtocol?
     private var contentResizeWorkItem: DispatchWorkItem?
     private var isPanelPinned = false
+    private var themeObserver: NSObjectProtocol?
 
     private let companionManager: CompanionManager
     private let panelWidth: CGFloat = 356
@@ -79,9 +80,22 @@ final class MenuBarPanelManager: NSObject {
                 self?.resizeVisiblePanelToCurrentContent()
             }
         }
+
+        themeObserver = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification,
+            object: UserDefaults.standard,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.refreshThemeAppearance()
+            }
+        }
     }
 
     deinit {
+        if let observer = themeObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
         if let monitor = clickOutsideMonitor {
             NSEvent.removeMonitor(monitor)
         }
@@ -339,6 +353,26 @@ final class MenuBarPanelManager: NSObject {
         menuBarPanel.contentView = hostingView
         panel = menuBarPanel
         applyPinnedPanelBehavior()
+        refreshThemeAppearance()
+    }
+
+    private func refreshThemeAppearance() {
+        let theme = ClickyTheme.current
+        let appearanceName: NSAppearance.Name?
+        switch theme {
+        case .system:
+            appearanceName = nil
+        case .light:
+            appearanceName = .aqua
+        case .dark:
+            appearanceName = .darkAqua
+        }
+        
+        if let appearanceName = appearanceName {
+            panel?.appearance = NSAppearance(named: appearanceName)
+        } else {
+            panel?.appearance = nil
+        }
     }
 
     private func positionPanelBelowStatusItem(allowFittingSize: Bool = true) {
