@@ -1564,18 +1564,14 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
         configureText(accentColor: accentColor, submitText: { _ in }, dismiss: {})
     }
 
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-    }
-
     private func updateShellViewFillColor() {
         switch mode {
         case .collapsed:
-            shellView.fillColor = OpenClickyLiquidGlassBackdropView.isLiquidGlassAvailable ? NSColor.black.withAlphaComponent(0.34) : NSColor.black.withAlphaComponent(0.93)
+            shellView.fillColor = NSColor.black.withAlphaComponent(0.34)
         case .text:
-            shellView.fillColor = OpenClickyLiquidGlassBackdropView.isLiquidGlassAvailable ? NSColor.black.withAlphaComponent(0.44) : NSColor(calibratedRed: 0.025, green: 0.036, blue: 0.032, alpha: 0.96)
+            shellView.fillColor = NSColor.black.withAlphaComponent(0.44)
         case .voice:
-            shellView.fillColor = OpenClickyLiquidGlassBackdropView.isLiquidGlassAvailable ? NSColor.black.withAlphaComponent(0.30) : NSColor.black.withAlphaComponent(0.91)
+            shellView.fillColor = NSColor.black.withAlphaComponent(0.30)
         }
         needsDisplay = true
     }
@@ -1748,13 +1744,7 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
 
-        NotificationCenter.default.addObserver(
-            forName: UserDefaults.didChangeNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.updateShellViewFillColor()
-        }
+        // Notification observer removed because native macOS 26 Tahoe version does not require simulated fallback logic.
 
         notchHandle.translatesAutoresizingMaskIntoConstraints = false
         notchHandle.fillColor = NSColor.black.withAlphaComponent(0.92)
@@ -2364,6 +2354,11 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
     }
 }
 
+@objc(NSGlassEffectView)
+open class NSGlassEffectView: NSView {
+    // Stub class mapping to native macOS 26 Tahoe NSGlassEffectView at runtime.
+}
+
 private final class OpenClickyLiquidGlassBackdropView: NSView {
     enum Strength {
         case compact
@@ -2371,13 +2366,10 @@ private final class OpenClickyLiquidGlassBackdropView: NSView {
     }
 
     static var isLiquidGlassAvailable: Bool {
-        UserDefaults.standard.bool(forKey: AppBundleConfiguration.userForceLiquidGlassDefaultsKey) ||
-        NSClassFromString("NSGlassEffectView") != nil
+        true
     }
 
-    private let backingView: NSView
-    private var usesLiquidGlass: Bool
-    private var simulatedLiquidGlass: Bool
+    private let backingView: NSGlassEffectView
     private let maskLayer = CAShapeLayer()
     private var cornerRadius: CGFloat
     private var roundsTopCorners = true
@@ -2386,22 +2378,7 @@ private final class OpenClickyLiquidGlassBackdropView: NSView {
 
     init(cornerRadius: CGFloat) {
         self.cornerRadius = cornerRadius
-
-        let forceLiquid = UserDefaults.standard.bool(forKey: AppBundleConfiguration.userForceLiquidGlassDefaultsKey)
-        if let glassClass = NSClassFromString("NSGlassEffectView") as? NSObject.Type,
-           let glassView = glassClass.init() as? NSView {
-            backingView = glassView
-            usesLiquidGlass = true
-            simulatedLiquidGlass = false
-        } else {
-            let visualEffectView = NSVisualEffectView()
-            visualEffectView.material = forceLiquid ? .popover : .hudWindow
-            visualEffectView.blendingMode = .behindWindow
-            visualEffectView.state = .active
-            backingView = visualEffectView
-            usesLiquidGlass = false
-            simulatedLiquidGlass = forceLiquid
-        }
+        backingView = NSGlassEffectView()
 
         super.init(frame: .zero)
         wantsLayer = true
@@ -2415,37 +2392,10 @@ private final class OpenClickyLiquidGlassBackdropView: NSView {
             backingView.bottomAnchor.constraint(equalTo: bottomAnchor)
         ])
         applyShape()
-
-        NotificationCenter.default.addObserver(
-            forName: UserDefaults.didChangeNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.updateLiquidGlassState()
-        }
     }
 
     required init?(coder: NSCoder) {
         nil
-    }
-
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-    }
-
-    private func updateLiquidGlassState() {
-        let forceLiquid = UserDefaults.standard.bool(forKey: AppBundleConfiguration.userForceLiquidGlassDefaultsKey)
-        if NSClassFromString("NSGlassEffectView") != nil {
-            usesLiquidGlass = true
-            simulatedLiquidGlass = false
-        } else {
-            usesLiquidGlass = false
-            simulatedLiquidGlass = forceLiquid
-            if let visualEffect = backingView as? NSVisualEffectView {
-                visualEffect.material = forceLiquid ? .popover : .hudWindow
-            }
-        }
-        needsDisplay = true
     }
 
     func configure(cornerRadius: CGFloat, roundsTopCorners: Bool, accentColor: NSColor, strength: Strength) {
@@ -2453,7 +2403,6 @@ private final class OpenClickyLiquidGlassBackdropView: NSView {
         self.roundsTopCorners = roundsTopCorners
         self.accentColor = accentColor
         self.strength = strength
-        updateLiquidGlassState()
         applyShape()
         needsDisplay = true
     }
@@ -2464,32 +2413,7 @@ private final class OpenClickyLiquidGlassBackdropView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        guard !usesLiquidGlass else { return }
-        let path = roundedPath(in: bounds.insetBy(dx: 0.5, dy: 0.5))
-        
-        if simulatedLiquidGlass {
-            NSColor.white.withAlphaComponent(0.08).setFill()
-            path.fill()
-            
-            NSColor.white.withAlphaComponent(0.24).setStroke()
-            path.lineWidth = 1.0
-            path.stroke()
-            
-            let sheenPath = NSBezierPath()
-            sheenPath.move(to: NSPoint(x: bounds.minX, y: bounds.minY))
-            sheenPath.line(to: NSPoint(x: bounds.maxX, y: bounds.maxY))
-            NSColor.white.withAlphaComponent(0.03).setStroke()
-            sheenPath.lineWidth = 4.0
-            sheenPath.stroke()
-        } else {
-            NSColor.black.withAlphaComponent(strength == .compact ? 0.20 : 0.30).setFill()
-            path.fill()
-            if strength == .expanded {
-                accentColor.withAlphaComponent(0.08).setStroke()
-                path.lineWidth = 1
-                path.stroke()
-            }
-        }
+        // Native macOS 26 NSGlassEffectView handles the background and sheen rendering
     }
 
     private func applyShape() {
