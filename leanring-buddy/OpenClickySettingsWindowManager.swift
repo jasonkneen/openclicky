@@ -123,14 +123,11 @@ private enum OpenClickySettingsSection: String, CaseIterable, Identifiable {
     case general
     case voice
     case apiKeys
+    case computerUse
     case permissions
-    case tutorMode
-    case agentMode
     case agents
     case automations
     case connections
-    case memory
-    case app
 
     var id: String { rawValue }
 
@@ -138,15 +135,12 @@ private enum OpenClickySettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "General"
         case .voice: return "Voice"
-        case .apiKeys: return "API Keys"
+        case .apiKeys: return "AI Providers"
+        case .computerUse: return "Computer Use"
         case .permissions: return "Permissions"
-        case .tutorMode: return "Tutor Mode"
-        case .agentMode: return "Providers"
         case .agents: return "Agents"
         case .automations: return "Automations"
-        case .connections: return "Connections"
-        case .memory: return "Memory"
-        case .app: return "App"
+        case .connections: return "System & Logs"
         }
     }
 
@@ -155,14 +149,11 @@ private enum OpenClickySettingsSection: String, CaseIterable, Identifiable {
         case .general: return "gearshape"
         case .voice: return "waveform"
         case .apiKeys: return "key"
+        case .computerUse: return "macwindow.and.cursorarrow"
         case .permissions: return "hand.raised"
-        case .tutorMode: return "graduationcap"
-        case .agentMode: return "terminal"
         case .agents: return "person.2"
         case .automations: return "calendar.badge.clock"
-        case .connections: return "cable.connector"
-        case .memory: return "books.vertical"
-        case .app: return "app.badge"
+        case .connections: return "server.rack"
         }
     }
 }
@@ -173,6 +164,7 @@ struct OpenClickySettingsView: View {
     @ObservedObject private var nativeComputerUseController: OpenClickyNativeComputerUseController
     @ObservedObject private var backgroundComputerUseController: OpenClickyBackgroundComputerUseController
     @ObservedObject private var petLibrary = ClickyBuddyPetLibrary.shared
+    @StateObject private var openPetsCatalog = OpenPetsCatalogStore()
     @AppStorage(ClickyAccentTheme.userDefaultsKey) private var selectedAccentThemeID = ClickyAccentTheme.blue.rawValue
     @AppStorage(ClickyCursorAvatarStyle.userDefaultsKey) private var avatarStyleRawValue = ClickyCursorAvatarStyle.default.storageValue
     @AppStorage(AppBundleConfiguration.userAnthropicAPIKeyDefaultsKey) private var userAnthropicAPIKey = ""
@@ -359,23 +351,17 @@ struct OpenClickySettingsView: View {
         case .voice:
             return "Speech input, spoken response model, playback voice, and captions."
         case .apiKeys:
-            return "Provider credentials for voice, transcription, pointing, and Agent Mode."
+            return "Provider credentials and default model settings for OpenAI, Anthropic, ElevenLabs, Cartesia, and Deepgram."
+        case .computerUse:
+            return "In-app Native Computer Use, pointing models, and cuaDriver configuration."
         case .permissions:
-            return "macOS access needed for voice, screen context, pointing, and app control."
-        case .tutorMode:
-            return "Tutor behavior, pause guidance, and the future skill-powered tutoring surface."
-        case .agentMode:
-            return "Provider credentials, Codex runtime configuration, model defaults, and working directory."
+            return "macOS access permissions for voice, screen content, pointing, and system automation."
         case .agents:
             return "Specialist agents with their own soul, memory, instructions, and inherited or custom skills and tools."
         case .automations:
             return "Scheduled prompts and workflows. Interval (every N minutes) or 5-field cron, optionally bound to a specialist agent."
         case .connections:
-            return "Local app and MCP connections OpenClicky can expose to Agent Mode."
-        case .memory:
-            return "Persistent memory, learned workflow skills, and local knowledge tools."
-        case .app:
-            return "Onboarding, support, and app-level actions."
+            return "Google Workspace, persistent memory folders, logs, widgets, and utilities."
         }
     }
 
@@ -434,22 +420,16 @@ struct OpenClickySettingsView: View {
             voicePanel
         case .apiKeys:
             apiKeysPanel
+        case .computerUse:
+            computerUsePanel
         case .permissions:
             permissionsPanel
-        case .tutorMode:
-            tutorModePanel
-        case .agentMode:
-            agentModePanel
         case .agents:
             agentsPanel
         case .automations:
             automationsPanel
         case .connections:
             connectionsPanel
-        case .memory:
-            memoryPanel
-        case .app:
-            appPanel
         }
     }
 
@@ -463,6 +443,16 @@ struct OpenClickySettingsView: View {
                     isOn: Binding(
                         get: { companionManager.isClickyCursorEnabled },
                         set: { companionManager.setClickyCursorEnabled($0) }
+                    )
+                )
+
+                toggleRow(
+                    title: "Tutor mode",
+                    subtitle: "Watches for short pauses and offers small next-step guidance.",
+                    systemImageName: "graduationcap",
+                    isOn: Binding(
+                        get: { companionManager.isTutorModeEnabled },
+                        set: { companionManager.setTutorModeEnabled($0) }
                     )
                 )
 
@@ -536,54 +526,12 @@ struct OpenClickySettingsView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 11)
 
-                fontSizeSliderRow(
-                    title: "Headings",
-                    subtitle: "Controls large section titles in Settings.",
-                    systemImageName: "textformat.size.larger",
-                    value: $appTitleFontSize,
-                    range: 20...34
-                )
-
-                fontSizeSliderRow(
-                    title: "Main labels",
-                    subtitle: "Controls normal setting labels and sidebar text.",
-                    systemImageName: "textformat",
-                    value: $appBodyFontSize,
-                    range: 11...18
-                )
-
-                fontSizeSliderRow(
-                    title: "Subtext",
-                    subtitle: "Controls helper text under settings.",
-                    systemImageName: "text.alignleft",
-                    value: $appSubtextFontSize,
-                    range: 9...15
-                )
-
-                fontSizeSliderRow(
-                    title: "Line height",
-                    subtitle: "Adds breathing room to multiline OpenClicky text.",
-                    systemImageName: "line.3.horizontal.decrease",
-                    value: $appLineSpacing,
-                    range: 0...8,
-                    suffix: " px"
-                )
-
                 toggleRow(
                     title: "Bold interface text",
                     subtitle: "Makes normal OpenClicky labels and messages use a stronger weight.",
                     systemImageName: "bold",
                     isOn: $appBoldTextEnabled
                 )
-
-                actionRow(title: "Reset font settings", systemImageName: "arrow.counterclockwise") {
-                    appFontRawValue = OpenClickyResponseCaptionFont.fallback.rawValue
-                    appTitleFontSize = 26.0
-                    appBodyFontSize = 13.0
-                    appSubtextFontSize = 11.0
-                    appLineSpacing = 2.0
-                    appBoldTextEnabled = false
-                }
             }
 
             settingsGroup("Cursor appearance") {
@@ -612,45 +560,12 @@ struct OpenClickySettingsView: View {
                             cursorColorButton(accentTheme)
                         }
                     }
+
+                    Divider()
+                        .opacity(0.45)
+
+                    openPetsCatalogSection
                 }
-            }
-        }
-    }
-
-    private var tutorModePanel: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            settingsGroup("Tutor Mode") {
-                toggleRow(
-                    title: "Tutor mode",
-                    subtitle: "Watches for short pauses and offers small next-step guidance.",
-                    systemImageName: "graduationcap",
-                    isOn: Binding(
-                        get: { companionManager.isTutorModeEnabled },
-                        set: { companionManager.setTutorModeEnabled($0) }
-                    )
-                )
-            }
-
-            settingsGroup("Tutor skills") {
-                HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: "wand.and.stars")
-                        .font(appUIFont(size: bodyFontSize + 5, weight: .semibold))
-                        .foregroundColor(.secondary)
-                        .frame(width: 24)
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Skill-powered tutoring")
-                            .font(.system(size: 13, weight: .semibold))
-                        Text("This section is ready for the tutor skills controls that will be wired in next.")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
             }
         }
     }
@@ -976,18 +891,6 @@ struct OpenClickySettingsView: View {
             ?? companionManager.selectedModel
     }
 
-    private var pointingPanel: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            settingsGroup("Screen pointing model") {
-                modelOptionGrid(
-                    options: OpenClickyModelCatalog.computerUseModels,
-                    selectedModelID: companionManager.selectedComputerUseModel,
-                    select: { companionManager.setSelectedComputerUseModel($0) }
-                )
-            }
-        }
-    }
-
     private var apiKeysPanel: some View {
         VStack(alignment: .leading, spacing: 14) {
             settingsGroup("OpenAI and Claude") {
@@ -1061,6 +964,71 @@ struct OpenClickySettingsView: View {
                     )
                 )
             }
+
+            settingsGroup("Agent Mode Model") {
+                modelOptionGrid(
+                    options: OpenClickyModelCatalog.codexActionsModels,
+                    selectedModelID: session.model,
+                    select: { session.setModel($0) }
+                )
+
+                textFieldRow(
+                    title: "Working directory",
+                    subtitle: "Default folder used by new agent turns.",
+                    systemImageName: "folder",
+                    placeholder: FileManager.default.homeDirectoryForCurrentUser.path,
+                    text: Binding(
+                        get: { session.workingDirectoryPath },
+                        set: { newValue in
+                            session.workingDirectoryPath = newValue
+                            UserDefaults.standard.set(newValue, forKey: "clickyCodexWorkingDirectory")
+                        }
+                    ),
+                    openPath: { session.workingDirectoryPath }
+                )
+            }
+
+            settingsGroup("Agent dock position") {
+                AgentParkingPositionPicker(
+                    selection: Binding(
+                        get: { companionManager.agentParkingPosition },
+                        set: { companionManager.setAgentParkingPosition($0) }
+                    ),
+                    calibrationChanged: { position, offset in
+                        companionManager.setAgentParkingCalibrationOffset(offset, for: position)
+                    }
+                )
+                .padding(.horizontal, 4)
+                .padding(.vertical, 10)
+            }
+
+            if companionManager.isAdvancedModeEnabled {
+                settingsGroup("Agent tools") {
+                    actionRow(title: "Warm up Agent Mode", systemImageName: "bolt") {
+                        companionManager.warmUpCodexAgentMode()
+                    }
+                }
+
+                #if DEBUG
+                settingsGroup("Developer tools") {
+                    actionRow(title: "Open Agent HUD", systemImageName: "message") {
+                        companionManager.showDeveloperCodexHUD()
+                    }
+                    actionRow(title: "Test cursor flight", systemImageName: "arrow.up.right") {
+                        companionManager.debugTestCursorFlight()
+                    }
+                    actionRow(title: "Show response card", systemImageName: "text.bubble") {
+                        companionManager.debugShowResponseCard()
+                    }
+                    actionRow(title: "Capture screen context", systemImageName: "camera") {
+                        companionManager.debugCaptureAgentScreenContext()
+                    }
+                    actionRow(title: "Reset transient UI", systemImageName: "xmark.circle", role: .destructive) {
+                        companionManager.debugResetTransientUI()
+                    }
+                }
+                #endif
+            }
         }
     }
 
@@ -1116,6 +1084,14 @@ struct OpenClickySettingsView: View {
 
     private var computerUsePanel: some View {
         VStack(alignment: .leading, spacing: 14) {
+            settingsGroup("Screen pointing model") {
+                modelOptionGrid(
+                    options: OpenClickyModelCatalog.computerUseModels,
+                    selectedModelID: companionManager.selectedComputerUseModel,
+                    select: { companionManager.setSelectedComputerUseModel($0) }
+                )
+            }
+
             settingsGroup("Computer use backend") {
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
                     ForEach(OpenClickyComputerUseBackendID.allCases) { backend in
@@ -1201,79 +1177,6 @@ struct OpenClickySettingsView: View {
                     subtitle: "macOS grants Automation per target app when OpenClicky first sends an Apple Event.",
                     systemImageName: "terminal"
                 )
-            }
-        }
-    }
-
-    private var agentModePanel: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            settingsGroup("Agent Mode") {
-                modelOptionGrid(
-                    options: OpenClickyModelCatalog.codexActionsModels,
-                    selectedModelID: session.model,
-                    select: { session.setModel($0) }
-                )
-
-                textFieldRow(
-                    title: "Working directory",
-                    subtitle: "Default folder used by new agent turns.",
-                    systemImageName: "folder",
-                    placeholder: FileManager.default.homeDirectoryForCurrentUser.path,
-                    text: Binding(
-                        get: { session.workingDirectoryPath },
-                        set: { newValue in
-                            session.workingDirectoryPath = newValue
-                            UserDefaults.standard.set(newValue, forKey: "clickyCodexWorkingDirectory")
-                        }
-                    ),
-                    openPath: { session.workingDirectoryPath }
-                )
-            }
-
-            pointingPanel
-
-            computerUsePanel
-
-            settingsGroup("Agent dock position") {
-                AgentParkingPositionPicker(
-                    selection: Binding(
-                        get: { companionManager.agentParkingPosition },
-                        set: { companionManager.setAgentParkingPosition($0) }
-                    ),
-                    calibrationChanged: { position, offset in
-                        companionManager.setAgentParkingCalibrationOffset(offset, for: position)
-                    }
-                )
-                .padding(.horizontal, 4)
-                .padding(.vertical, 10)
-            }
-
-            if companionManager.isAdvancedModeEnabled {
-                settingsGroup("Agent tools") {
-                    actionRow(title: "Warm up Agent Mode", systemImageName: "bolt") {
-                        companionManager.warmUpCodexAgentMode()
-                    }
-                }
-
-                #if DEBUG
-                settingsGroup("Developer tools") {
-                    actionRow(title: "Open Agent HUD", systemImageName: "message") {
-                        companionManager.showDeveloperCodexHUD()
-                    }
-                    actionRow(title: "Test cursor flight", systemImageName: "arrow.up.right") {
-                        companionManager.debugTestCursorFlight()
-                    }
-                    actionRow(title: "Show response card", systemImageName: "text.bubble") {
-                        companionManager.debugShowResponseCard()
-                    }
-                    actionRow(title: "Capture screen context", systemImageName: "camera") {
-                        companionManager.debugCaptureAgentScreenContext()
-                    }
-                    actionRow(title: "Reset transient UI", systemImageName: "xmark.circle", role: .destructive) {
-                        companionManager.debugResetTransientUI()
-                    }
-                }
-                #endif
             }
         }
     }
@@ -1369,7 +1272,7 @@ struct OpenClickySettingsView: View {
                 )
             }
 
-            settingsGroup("Actions") {
+            settingsGroup("Workspace Actions") {
                 actionRow(title: isRefreshingGogCLIStatus ? "Refresh Google status…" : "Refresh Google status", systemImageName: "arrow.clockwise") {
                     refreshGogCLIStatus()
                 }
@@ -1383,61 +1286,6 @@ struct OpenClickySettingsView: View {
                 }
             }
 
-            settingsGroup("Privacy") {
-                valueRow(
-                    title: "Local connector",
-                    subtitle: "Agents use gogcli on this Mac. OpenClicky does not host Google login or sync Google keys.",
-                    systemImageName: "lock.shield"
-                )
-            }
-        }
-    }
-
-    private var googleConnectionHeader: some View {
-        HStack(alignment: .top, spacing: 13) {
-            ZStack {
-                Circle()
-                    .fill(Color(nsColor: .windowBackgroundColor))
-                    .overlay(
-                        Circle()
-                            .stroke(
-                                AngularGradient(
-                                    colors: [.blue, .red, .yellow, .green, .blue],
-                                    center: .center
-                                ),
-                                lineWidth: 3
-                            )
-                    )
-                Text("G")
-                    .font(.system(size: 18, weight: .bold, design: .rounded))
-                    .foregroundStyle(.primary)
-            }
-            .frame(width: 38, height: 38)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(gogCLIStatus.readinessTitle)
-                    .font(.system(size: 14, weight: .semibold))
-                Text(gogCLIStatus.readinessDetail)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer()
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-    }
-
-    private var agentsPanel: some View {
-        OpenClickyAgentsSettingsSection(companion: companionManager)
-    }
-
-    private var automationsPanel: some View {
-        OpenClickyAutomationsSettingsSection(companion: companionManager)
-    }
-
-    private var memoryPanel: some View {
-        VStack(alignment: .leading, spacing: 14) {
             settingsGroup("Persistent memory") {
                 valueRow(
                     title: "Memory file",
@@ -1463,41 +1311,13 @@ struct OpenClickySettingsView: View {
                     companionManager.showMemoryWindow()
                 }
                 actionRow(title: "Open memory file", systemImageName: "doc.text") {
-                    NSWorkspace.shared.open(companionManager.codexHomeManager.persistentMemoryFile)
+                    companionManager.openOpenClickyDocument(companionManager.codexHomeManager.persistentMemoryFile)
                 }
                 actionRow(title: "Open memory archive folder", systemImageName: "archivebox") {
                     NSWorkspace.shared.open(companionManager.codexHomeManager.persistentMemoryArchivesDirectory)
                 }
                 actionRow(title: "Open learned skills folder", systemImageName: "folder") {
                     NSWorkspace.shared.open(companionManager.codexHomeManager.learnedSkillsDirectory)
-                }
-            }
-        }
-    }
-
-    private var appPanel: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            settingsGroup("Support") {
-                actionRow(title: "Report issues and star on GitHub", systemImageName: "star.bubble") {
-                    openFeedbackInbox()
-                }
-            }
-
-            settingsGroup("Logs") {
-                valueRow(
-                    title: "Message log",
-                    subtitle: OpenClickyMessageLogStore.shared.currentLogFile.path,
-                    systemImageName: "doc.text.magnifyingglass",
-                    openPath: OpenClickyMessageLogStore.shared.currentLogFile.path
-                )
-                actionRow(title: "Open log viewer", systemImageName: "list.bullet.rectangle") {
-                    companionManager.showLogViewerWindow()
-                }
-                actionRow(title: "Open raw message log", systemImageName: "doc.text") {
-                    openMessageLog()
-                }
-                actionRow(title: "Open logs folder", systemImageName: "folder") {
-                    openLogsFolder()
                 }
             }
 
@@ -1556,6 +1376,24 @@ struct OpenClickySettingsView: View {
                 }
             }
 
+            settingsGroup("Logs") {
+                valueRow(
+                    title: "Message log",
+                    subtitle: OpenClickyMessageLogStore.shared.currentLogFile.path,
+                    systemImageName: "doc.text.magnifyingglass",
+                    openPath: OpenClickyMessageLogStore.shared.currentLogFile.path
+                )
+                actionRow(title: "Open log viewer", systemImageName: "list.bullet.rectangle") {
+                    companionManager.showLogViewerWindow()
+                }
+                actionRow(title: "Open raw message log", systemImageName: "doc.text") {
+                    openMessageLog()
+                }
+                actionRow(title: "Open logs folder", systemImageName: "folder") {
+                    openLogsFolder()
+                }
+            }
+
             settingsGroup("Onboarding") {
                 actionRow(title: "Show OpenClicky cursor now", systemImageName: "cursorarrow.rays") {
                     companionManager.triggerOnboarding()
@@ -1565,12 +1403,61 @@ struct OpenClickySettingsView: View {
                 }
             }
 
+            settingsGroup("Support") {
+                actionRow(title: "Report issues and star on GitHub", systemImageName: "star.bubble") {
+                    openFeedbackInbox()
+                }
+            }
+
             settingsGroup("App") {
                 actionRow(title: "Quit OpenClicky", systemImageName: "power", role: .destructive) {
                     NSApp.terminate(nil)
                 }
             }
         }
+    }
+
+    private var googleConnectionHeader: some View {
+        HStack(alignment: .top, spacing: 13) {
+            ZStack {
+                Circle()
+                    .fill(Color(nsColor: .windowBackgroundColor))
+                    .overlay(
+                        Circle()
+                            .stroke(
+                                AngularGradient(
+                                    colors: [.blue, .red, .yellow, .green, .blue],
+                                    center: .center
+                                ),
+                                lineWidth: 3
+                            )
+                    )
+                Text("G")
+                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .foregroundStyle(.primary)
+            }
+            .frame(width: 38, height: 38)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(gogCLIStatus.readinessTitle)
+                    .font(.system(size: 14, weight: .semibold))
+                Text(gogCLIStatus.readinessDetail)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+    }
+
+    private var agentsPanel: some View {
+        OpenClickyAgentsSettingsSection(companion: companionManager)
+    }
+
+    private var automationsPanel: some View {
+        OpenClickyAutomationsSettingsSection(companion: companionManager)
     }
 
     private var mcpCuaDriverEffectiveCommand: String {
@@ -1651,7 +1538,7 @@ struct OpenClickySettingsView: View {
             return
         }
 
-        openSettingsFileInTextEditor(url)
+        openSettingsFile(url)
     }
 
     private func normalizedSettingsPath(_ rawPath: String) -> String {
@@ -1663,7 +1550,12 @@ struct OpenClickySettingsView: View {
         return (path as NSString).expandingTildeInPath
     }
 
-    private func openSettingsFileInTextEditor(_ url: URL) {
+    private func openSettingsFile(_ url: URL) {
+        if ["md", "markdown", "mdown", "mkd"].contains(url.pathExtension.lowercased()) {
+            companionManager.openOpenClickyDocument(url)
+            return
+        }
+
         let textEditURL = URL(fileURLWithPath: "/System/Applications/TextEdit.app")
         guard FileManager.default.fileExists(atPath: textEditURL.path) else {
             NSWorkspace.shared.open(url)
@@ -1892,6 +1784,9 @@ struct OpenClickySettingsView: View {
         if FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue {
             return "folder"
         }
+        if ["md", "markdown", "mdown", "mkd"].contains(URL(fileURLWithPath: path).pathExtension.lowercased()) {
+            return "doc.richtext"
+        }
         return "square.and.pencil"
     }
 
@@ -1900,6 +1795,9 @@ struct OpenClickySettingsView: View {
         let path = normalizedSettingsPath(rawPath)
         if FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue {
             return "Open folder"
+        }
+        if ["md", "markdown", "mdown", "mkd"].contains(URL(fileURLWithPath: path).pathExtension.lowercased()) {
+            return "Open in OpenClicky Markdown viewer"
         }
         return "Open in TextEdit"
     }
@@ -2098,6 +1996,143 @@ struct OpenClickySettingsView: View {
         }
         .buttonStyle(.plain)
         .help(pet.petDescription)
+    }
+
+    private var openPetsCatalogSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("OpenPets gallery")
+                        .font(appUIFont(size: bodyFontSize, weight: .semibold))
+                    Text("Browse installable pets from openpets.dev. Installed packs land in the same local pet library OpenClicky already watches.")
+                        .font(appUIFont(size: subtextFontSize, weight: .regular))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer()
+
+                Button(openPetsCatalog.isLoading ? "Loading…" : "Refresh") {
+                    openPetsCatalog.refreshCatalog()
+                }
+                .disabled(openPetsCatalog.isLoading)
+                .controlSize(.small)
+            }
+
+            TextField("Search loaded OpenPets", text: $openPetsCatalog.searchText)
+                .textFieldStyle(.roundedBorder)
+                .font(appUIFont(size: bodyFontSize, weight: .regular))
+
+            if let error = openPetsCatalog.errorMessage {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .font(appUIFont(size: subtextFontSize, weight: .regular))
+                    .foregroundColor(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 10) {
+                ForEach(openPetsCatalog.visiblePets) { pet in
+                    openPetsCatalogCard(pet)
+                }
+            }
+
+            HStack {
+                let loaded = max(openPetsCatalog.pets.count, openPetsCatalog.visiblePets.count)
+                Text(openPetsCatalog.totalCount > 0 ? "\(loaded) of \(openPetsCatalog.totalCount) OpenPets loaded" : "OpenPets catalog")
+                    .font(appUIFont(size: subtextFontSize, weight: .regular))
+                    .foregroundColor(.secondary)
+
+                Spacer()
+
+                if openPetsCatalog.loadedPageCount < openPetsCatalog.pageCount {
+                    Button(openPetsCatalog.isLoading ? "Loading…" : "Load more") {
+                        openPetsCatalog.loadMore()
+                    }
+                    .disabled(openPetsCatalog.isLoading)
+                    .controlSize(.small)
+                }
+            }
+        }
+        .onAppear {
+            openPetsCatalog.loadInitialCatalogIfNeeded()
+        }
+    }
+
+    private func openPetsCatalogCard(_ pet: OpenPetsCatalogPet) -> some View {
+        let isInstalled = petLibrary.pet(withID: pet.id) != nil
+        let isInstalling = openPetsCatalog.installingPetIDs.contains(pet.id)
+        let accent = (ClickyAccentTheme(rawValue: selectedAccentThemeID) ?? .blue).cursorColor
+
+        return VStack(alignment: .leading, spacing: 8) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.primary.opacity(0.045))
+                    .frame(height: 76)
+
+                if let url = pet.previewURL {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .interpolation(.none)
+                                .scaledToFit()
+                        case .failure:
+                            Image(systemName: "pawprint")
+                                .foregroundColor(.secondary)
+                        case .empty:
+                            ProgressView()
+                                .controlSize(.small)
+                        @unknown default:
+                            EmptyView()
+                        }
+                    }
+                    .frame(width: 58, height: 62)
+                } else {
+                    Image(systemName: "pawprint")
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            Text(pet.displayName)
+                .font(appUIFont(size: max(10, subtextFontSize), weight: .semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+
+            Text(pet.description)
+                .font(appUIFont(size: max(9, subtextFontSize - 1), weight: .regular))
+                .foregroundColor(.secondary)
+                .lineLimit(2)
+
+            Button {
+                if isInstalled {
+                    avatarStyleRawValue = ClickyCursorAvatarStyle.pet(id: pet.id).storageValue
+                } else {
+                    openPetsCatalog.install(pet, into: petLibrary)
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: isInstalled ? "checkmark.circle.fill" : "arrow.down.circle")
+                    Text(isInstalled ? "Use" : isInstalling ? "Installing…" : "Install")
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(isInstalled ? accent : DS.Colors.accent)
+            .controlSize(.small)
+            .disabled(isInstalling)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.84))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        )
+        .help(pet.description)
     }
 
     private var emptyPetLibraryTile: some View {

@@ -192,7 +192,7 @@ struct OpenClickyLogViewerView: View {
                 }
                 Button {
                     OpenClickyMessageLogStore.shared.ensureAgentReviewCommentsFile()
-                    NSWorkspace.shared.open(OpenClickyMessageLogStore.shared.agentReviewCommentsFile)
+                    OpenClickyMarkdownViewerWindowManager.shared.show(fileURL: OpenClickyMessageLogStore.shared.agentReviewCommentsFile)
                 } label: {
                     Label("Agent Comments", systemImage: "checklist")
                 }

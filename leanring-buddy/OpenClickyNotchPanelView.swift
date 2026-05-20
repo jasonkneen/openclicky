@@ -46,6 +46,15 @@ struct OpenClickyNotchPanelView: View {
         }
     }
 
+    private struct HomeSuggestionItem: Identifiable, Equatable {
+        let id: String
+        let title: String
+        let systemImageName: String
+        let prompt: String?
+        let mode: OpenClickyQuickPromptMode?
+        let opensSettings: Bool
+    }
+
     @ObservedObject var companionManager: CompanionManager
     @ObservedObject private var agentStore = OpenClickyAgentStore.shared
     @ObservedObject private var automationStore = OpenClickyAutomationStore.shared
@@ -86,6 +95,22 @@ struct OpenClickyNotchPanelView: View {
     private var bodyFontSize: CGFloat { CGFloat(appBodyFontSize) }
     private var subtextFontSize: CGFloat { CGFloat(appSubtextFontSize) }
     private var appTextLineSpacing: CGFloat { CGFloat(appLineSpacing) }
+
+    private var quickPromptAutocompleteOptions: [OpenClickyPromptAutocompleteOption] {
+        OpenClickyPromptAutocomplete.options(
+            for: quickPrompt,
+            agents: agentStore.agents,
+            skillSuggestions: skillDiscoveryStore.suggestions
+        )
+    }
+
+    private var expandedAgentAutocompleteOptions: [OpenClickyPromptAutocompleteOption] {
+        OpenClickyPromptAutocomplete.options(
+            for: expandedAgentPrompt,
+            agents: agentStore.agents,
+            skillSuggestions: skillDiscoveryStore.suggestions
+        )
+    }
 
     private func appUIFont(size: CGFloat, weight: Font.Weight = .medium) -> Font {
         appFont.swiftUIFont(size: size, weight: appResolvedWeight(weight))
@@ -800,8 +825,8 @@ struct OpenClickyNotchPanelView: View {
             }
 
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 112), spacing: 7)], spacing: 7) {
-                ForEach(homeSuggestionItems, id: \.title) { suggestion in
-                    homeSuggestionButton(suggestion.title, systemImageName: suggestion.systemImageName)
+                ForEach(homeSuggestionItems) { suggestion in
+                    homeSuggestionButton(suggestion)
                 }
             }
         }
@@ -811,22 +836,56 @@ struct OpenClickyNotchPanelView: View {
         .overlay(RoundedRectangle(cornerRadius: 15, style: .continuous).stroke(Color.white.opacity(0.07), lineWidth: 1))
     }
 
-    private var homeSuggestionItems: [(title: String, systemImageName: String)] {
-        [
-            ("Summarise screen", "rectangle.and.text.magnifyingglass"),
-            ("Start an agent", "terminal.fill"),
-            ("Open settings", "gearshape.fill")
+    private var homeSuggestionItems: [HomeSuggestionItem] {
+        let configured = skillDiscoveryStore.suggestions.prefix(2).map { suggestion in
+            HomeSuggestionItem(
+                id: "skill-\(suggestion.id)",
+                title: suggestion.chipTitle?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? suggestion.chipTitle! : suggestion.title,
+                systemImageName: suggestion.systemImage?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? suggestion.systemImage! : skillDiscoverySuggestionIcon(for: suggestion),
+                prompt: suggestion.installPrompt,
+                mode: .agent,
+                opensSettings: false
+            )
+        }
+
+        let defaults = [
+            HomeSuggestionItem(
+                id: "summarise-screen",
+                title: "Summarise screen",
+                systemImageName: "rectangle.and.text.magnifyingglass",
+                prompt: "Summarise what’s on my screen.",
+                mode: .ask,
+                opensSettings: false
+            ),
+            HomeSuggestionItem(
+                id: "start-agent",
+                title: "Start an agent",
+                systemImageName: "terminal.fill",
+                prompt: "Look at the current OpenClicky screen context and fix the visible issue.",
+                mode: .agent,
+                opensSettings: false
+            ),
+            HomeSuggestionItem(
+                id: "open-settings",
+                title: "Open settings",
+                systemImageName: "gearshape.fill",
+                prompt: nil,
+                mode: nil,
+                opensSettings: true
+            )
         ]
+
+        return Array((configured + defaults).prefix(5))
     }
 
-    private func homeSuggestionButton(_ title: String, systemImageName: String) -> some View {
+    private func homeSuggestionButton(_ suggestion: HomeSuggestionItem) -> some View {
         Button {
-            applyHomeSuggestion(title)
+            applyHomeSuggestion(suggestion)
         } label: {
             HStack(spacing: 5) {
-                Image(systemName: systemImageName)
+                Image(systemName: suggestion.systemImageName)
                     .font(panelUIFont(size: 10, weight: .black))
-                Text(title)
+                Text(suggestion.title)
                     .font(panelUIFont(size: 9, weight: .heavy))
                     .lineLimit(1)
                     .minimumScaleFactor(0.82)
@@ -839,29 +898,22 @@ struct OpenClickyNotchPanelView: View {
             .overlay(Capsule(style: .continuous).stroke(Color.white.opacity(0.08), lineWidth: 1))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(title)
-        .help(title)
+        .accessibilityLabel(suggestion.title)
+        .help(suggestion.title)
     }
 
-    private func applyHomeSuggestion(_ title: String) {
-        switch title {
-        case "Summarise screen":
-            if quickPromptMode != .ask {
-                suppressNextHomeSuggestionResize = true
-            }
-            quickPromptMode = .ask
-            quickPrompt = "Summarise what’s on my screen."
-        case "Start an agent":
-            if quickPromptMode != .agent {
-                suppressNextHomeSuggestionResize = true
-            }
-            quickPromptMode = .agent
-            quickPrompt = "Look at the current OpenClicky screen context and fix the visible issue."
-        case "Open settings":
+    private func applyHomeSuggestion(_ suggestion: HomeSuggestionItem) {
+        if suggestion.opensSettings {
             selectedTab = .settings
-        default:
-            quickPrompt = title
+            return
         }
+        if let mode = suggestion.mode {
+            if quickPromptMode != mode {
+                suppressNextHomeSuggestionResize = true
+            }
+            quickPromptMode = mode
+        }
+        quickPrompt = suggestion.prompt ?? suggestion.title
         focusQuickPromptIfHome()
     }
 
@@ -1114,7 +1166,7 @@ struct OpenClickyNotchPanelView: View {
                     systemImageName: "doc.text",
                     accessibilityLabel: "Open OpenClicky memory file"
                 ) {
-                    NSWorkspace.shared.open(companionManager.codexHomeManager.persistentMemoryFile)
+                    companionManager.openOpenClickyDocument(companionManager.codexHomeManager.persistentMemoryFile)
                 }
 
                 agentUtilityIconButton(
@@ -1392,6 +1444,10 @@ struct OpenClickyNotchPanelView: View {
                 attachmentChipRow(attachments: quickPromptAttachments, remove: removeQuickPromptAttachment)
             }
 
+            OpenClickyPromptAutocompletePanel(options: quickPromptAutocompleteOptions) { option in
+                OpenClickyPromptAutocomplete.apply(option, to: &quickPrompt)
+            }
+
             HStack(spacing: 8) {
                 Image(systemName: quickPromptMode.fieldSystemImageName)
                     .font(panelUIFont(size: 15, weight: .bold))
@@ -1412,6 +1468,13 @@ struct OpenClickyNotchPanelView: View {
                         }
                         submitQuickPromptFromKeyboard()
                         return .handled
+                    }
+                    .onKeyPress(.tab, phases: .down) { _ in
+                        OpenClickyPromptAutocomplete.acceptFirstOption(
+                            in: &quickPrompt,
+                            agents: agentStore.agents,
+                            skillSuggestions: skillDiscoveryStore.suggestions
+                        ) ? .handled : .ignored
                     }
                 Button(action: submitQuickPrompt) {
                     HStack(spacing: 5) {
@@ -2099,6 +2162,10 @@ struct OpenClickyNotchPanelView: View {
                 attachmentChipRow(attachments: expandedAgentAttachments, remove: removeExpandedAgentAttachment)
             }
 
+            OpenClickyPromptAutocompletePanel(options: expandedAgentAutocompleteOptions) { option in
+                OpenClickyPromptAutocomplete.apply(option, to: &expandedAgentPrompt)
+            }
+
             HStack(spacing: 8) {
                 Image(systemName: "arrowshape.turn.up.left.fill")
                     .font(panelUIFont(size: 15, weight: .bold))
@@ -2119,6 +2186,13 @@ struct OpenClickyNotchPanelView: View {
                         }
                         submitExpandedAgentPromptFromKeyboard(to: session)
                         return .handled
+                    }
+                    .onKeyPress(.tab, phases: .down) { _ in
+                        OpenClickyPromptAutocomplete.acceptFirstOption(
+                            in: &expandedAgentPrompt,
+                            agents: agentStore.agents,
+                            skillSuggestions: skillDiscoveryStore.suggestions
+                        ) ? .handled : .ignored
                     }
                 Button {
                     submitExpandedAgentPrompt(to: session)

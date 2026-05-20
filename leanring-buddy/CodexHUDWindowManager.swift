@@ -285,6 +285,8 @@ struct CodexHUDView: View {
 
     enum ChromeMode { case standalone, embedded }
     @ObservedObject var companionManager: CompanionManager
+    @ObservedObject private var agentStore = OpenClickyAgentStore.shared
+    @ObservedObject private var skillDiscoveryStore = OpenClickySkillDiscoveryStore.shared
     @AppStorage(ClickyAccentTheme.userDefaultsKey) private var selectedAccentThemeID = ClickyAccentTheme.blue.rawValue
     @AppStorage(AppBundleConfiguration.userAppFontDefaultsKey) private var appFontRawValue = OpenClickyResponseCaptionFont.fallback.rawValue
     @AppStorage(AppBundleConfiguration.userAppBoldTextDefaultsKey) private var appBoldTextEnabled = false
@@ -315,6 +317,14 @@ struct CodexHUDView: View {
     private var bodyFontSize: CGFloat { CGFloat(appBodyFontSize) }
     private var subtextFontSize: CGFloat { CGFloat(appSubtextFontSize) }
     private var appTextLineSpacing: CGFloat { CGFloat(appLineSpacing) }
+
+    private var promptAutocompleteOptions: [OpenClickyPromptAutocompleteOption] {
+        OpenClickyPromptAutocomplete.options(
+            for: prompt,
+            agents: agentStore.agents,
+            skillSuggestions: skillDiscoveryStore.suggestions
+        )
+    }
 
     private func appUIFont(size: CGFloat, weight: Font.Weight = .medium) -> Font {
         appFont.swiftUIFont(size: size, weight: appResolvedWeight(weight))
@@ -974,6 +984,10 @@ struct CodexHUDView: View {
                 attachmentChipRow
             }
 
+            OpenClickyPromptAutocompletePanel(options: promptAutocompleteOptions) { option in
+                OpenClickyPromptAutocomplete.apply(option, to: &prompt)
+            }
+
             HStack(alignment: .bottom, spacing: 8) {
                 TextField(droppedAttachments.isEmpty ? "Ask Chat..." : "Ask Chat about the attachment...", text: $prompt, axis: .vertical)
                     .lineLimit(1...4)
@@ -990,6 +1004,13 @@ struct CodexHUDView: View {
                             .stroke(isDropTargeted ? DS.Colors.accentText.opacity(0.55) : DS.Colors.borderSubtle, lineWidth: isDropTargeted ? 1 : 0.8)
                     )
                     .onSubmit(send)
+                    .onKeyPress(.tab, phases: .down) { _ in
+                        OpenClickyPromptAutocomplete.acceptFirstOption(
+                            in: &prompt,
+                            agents: agentStore.agents,
+                            skillSuggestions: skillDiscoveryStore.suggestions
+                        ) ? .handled : .ignored
+                    }
 
                 HUDRunButton(
                     canSend: canSend,

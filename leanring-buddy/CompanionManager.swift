@@ -282,6 +282,7 @@ final class CompanionManager: ObservableObject {
     let agentMenuBarStatusManager = AgentMenuBarStatusManager()
     let settingsWindowManager = OpenClickySettingsWindowManager()
     let logViewerWindowManager = OpenClickyLogViewerWindowManager()
+    let markdownViewerWindowManager = OpenClickyMarkdownViewerWindowManager()
     let widgetStateStore = OpenClickyWidgetStateStore()
     let codexHomeManager = CodexHomeManager()
     let nativeComputerUseController = OpenClickyNativeComputerUseController()
@@ -1201,6 +1202,7 @@ final class CompanionManager: ObservableObject {
     private var isRealtimeBidirectionalVoiceInputReady = false
     private var realtimeBidirectionalVoiceCaptureStartedAt: Date?
     private var realtimeBidirectionalVoiceTask: Task<Void, Never>?
+    private var realtimeBidirectionalVoiceTurnGeneration: UInt64 = 0
 
     func setSelectedModel(_ model: String) {
         let selectedVoiceResponseModel = OpenClickyModelCatalog.voiceResponseModel(withID: model)
@@ -1392,6 +1394,24 @@ final class CompanionManager: ObservableObject {
 
     func showLogViewerWindow() {
         logViewerWindowManager.show()
+    }
+
+    func openOpenClickyDocument(_ url: URL) {
+        let standardizedURL = url.standardizedFileURL
+        if Self.isMarkdownDocument(standardizedURL) {
+            markdownViewerWindowManager.show(fileURL: standardizedURL)
+        } else {
+            NSWorkspace.shared.open(standardizedURL)
+        }
+    }
+
+    func handleApplicationOpenURL(_ url: URL) {
+        if url.isFileURL {
+            openOpenClickyDocument(url)
+            return
+        }
+
+        handleWidgetDeepLink(url)
     }
 
     func publishWidgetSnapshot() {
@@ -2473,8 +2493,12 @@ final class CompanionManager: ObservableObject {
         guard !announcedAgentFileURLs.contains(eventKey) else { return }
 
         announcedAgentFileURLs.insert(eventKey)
-        NSWorkspace.shared.open(standardizedURL)
+        openOpenClickyDocument(standardizedURL)
         speakShortSystemResponse("\(session.spokenAgentSentenceName) says it found \(Self.spokenFileName(for: standardizedURL)), showing it now.")
+    }
+
+    private static func isMarkdownDocument(_ url: URL) -> Bool {
+        ["md", "markdown", "mdown", "mkd"].contains(url.pathExtension.lowercased())
     }
 
     private static func spokenFileName(for fileURL: URL) -> String {
@@ -3040,6 +3064,8 @@ final class CompanionManager: ObservableObject {
         latestVoiceResponseCard = nil
         showCursorOverlayIfAvailable()
 
+        realtimeBidirectionalVoiceTurnGeneration &+= 1
+        let turnGeneration = realtimeBidirectionalVoiceTurnGeneration
         let startedAt = Date()
         let historyForAPI = voiceConversationHistoryForAPI()
         OpenClickyMessageLogStore.shared.append(
@@ -3062,9 +3088,11 @@ final class CompanionManager: ObservableObject {
             do {
                 guard let self else { return }
                 let onUserTranscript: @MainActor @Sendable (String) -> Void = { [weak self] transcript in
+                    guard self?.realtimeBidirectionalVoiceTurnGeneration == turnGeneration else { return }
                     self?.lastTranscript = transcript
                 }
                 let onAssistantTextChunk: @MainActor @Sendable (String) -> Void = { [weak self] accumulatedText in
+                    guard self?.realtimeBidirectionalVoiceTurnGeneration == turnGeneration else { return }
                     let trimmed = accumulatedText.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !trimmed.isEmpty else { return }
                     self?.latestVoiceResponseCard = ClickyResponseCard(
@@ -3075,6 +3103,7 @@ final class CompanionManager: ObservableObject {
                     self?.updateVoiceResponseCaption(trimmed)
                 }
                 let onPlaybackStarted: @MainActor @Sendable () -> Void = { [weak self] in
+                    guard self?.realtimeBidirectionalVoiceTurnGeneration == turnGeneration else { return }
                     self?.voiceState = .responding
                     OpenClickyMessageLogStore.shared.append(
                         lane: "voice",
@@ -3110,10 +3139,9 @@ final class CompanionManager: ObservableObject {
                     )
                 }
                 await MainActor.run {
-                    guard self.isRealtimeBidirectionalVoiceCaptureActive,
+                    guard self.realtimeBidirectionalVoiceTurnGeneration == turnGeneration,
+                          self.isRealtimeBidirectionalVoiceCaptureActive,
                           !Task.isCancelled else {
-                        self.openAIRealtimeSpeechClient.cancelBidirectionalVoiceTurn()
-                        self.deepgramVoiceAgentClient.cancelBidirectionalVoiceTurn()
                         return
                     }
                     self.isRealtimeBidirectionalVoiceInputReady = true
@@ -3169,6 +3197,7 @@ final class CompanionManager: ObservableObject {
 
         let finishedAt = Date()
         let captureStartedAt = realtimeBidirectionalVoiceCaptureStartedAt
+        let turnGeneration = realtimeBidirectionalVoiceTurnGeneration
         realtimeBidirectionalVoiceTask = Task { [weak self] in
             do {
                 guard let self else { return }
@@ -3204,8 +3233,27 @@ final class CompanionManager: ObservableObject {
                     : result.assistantTranscript
                 let userTranscript = result.userTranscript.isEmpty ? "Realtime voice input" : result.userTranscript
                 var wasRoutedByApp = result.wasRoutedByClient
+                var didApplyRealtimeResult = false
 
                 await MainActor.run {
+                    guard self.realtimeBidirectionalVoiceTurnGeneration == turnGeneration,
+                          !Task.isCancelled else {
+                        OpenClickyMessageLogStore.shared.append(
+                            lane: "voice",
+                            direction: "internal",
+                            event: "voice.realtime_bidirectional.stale_finish_ignored",
+                            fields: [
+                                "source": source,
+                                "speechModel": self.selectedModel,
+                                "speechVoice": self.activeRealtimeSpeechVoiceID,
+                                "inputPath": self.activeRealtimeInputPath,
+                                "captureDurationMs": Self.elapsedMilliseconds(since: captureStartedAt),
+                                "responseDurationMs": Self.elapsedMilliseconds(since: finishedAt)
+                            ]
+                        )
+                        return
+                    }
+                    didApplyRealtimeResult = true
                     self.lastTranscript = userTranscript
                     let routedByApp = wasRoutedByApp || self.routeCompletedRealtimeVoiceTranscriptIfNeeded(userTranscript)
                     wasRoutedByApp = routedByApp
@@ -3260,6 +3308,8 @@ final class CompanionManager: ObservableObject {
                         ]
                     )
                 }
+
+                guard didApplyRealtimeResult else { return }
 
                 if result.didCreateAssistantResponse && !result.userTranscript.isEmpty && !wasRoutedByApp {
                     do {
@@ -8356,8 +8406,11 @@ final class CompanionManager: ObservableObject {
         let normalized = normalizedSpokenCommandText(candidate)
         guard wordCount(in: normalized) >= 3 else { return nil }
         guard !isMetaAgentRoutingQuestion(candidate) else { return nil }
+        guard !isVoiceRouteCapabilityQuestion(candidate) else { return nil }
+        guard !isGenericWebSearchCapabilityQuestion(candidate) else { return nil }
         guard !isConversationalPreferenceOrDesignReflection(candidate) else { return nil }
         guard !isLikelyPureConversation(candidate) else { return nil }
+        guard !isInstantVoiceScreenContextRequest(candidate) else { return nil }
         guard !isSensitiveOrDestructiveAgentTaskRequest(normalized) else { return nil }
 
         let hasAction = containsAgentWorkAction(normalized)
@@ -8370,6 +8423,56 @@ final class CompanionManager: ObservableObject {
         guard !isLikelyDirectLocalOnlyRequest(candidate) else { return nil }
 
         return cleanedAgentTaskInstruction(candidate)
+    }
+
+    static func implicitFilesystemTaskInstruction(from transcript: String) -> String? {
+        let candidate = normalizedCommandCandidate(from: transcript)
+        let normalized = normalizedSpokenCommandText(candidate)
+        guard wordCount(in: normalized) >= 3 else { return nil }
+        guard isLocalFilesystemInspectionRequest(normalized) else { return nil }
+        guard !isInstantVoiceScreenContextRequest(candidate) else { return nil }
+
+        return """
+        Inspect the relevant local files or folders for this request, then answer succinctly: \(candidate)
+        """
+    }
+
+    static func filesystemTaskAcknowledgement(from transcript: String) -> String {
+        let normalized = normalizedSpokenCommandText(transcript)
+        if normalized.range(of: #"\bdesktop\b"#, options: .regularExpression) != nil {
+            return "i'm checking your desktop now."
+        }
+        if normalized.range(of: #"\bdownloads?\b"#, options: .regularExpression) != nil {
+            return "i'm checking your downloads now."
+        }
+        if normalized.range(of: #"\bdocuments?\b"#, options: .regularExpression) != nil {
+            return "i'm checking your documents now."
+        }
+        return "i'm checking those files now."
+    }
+
+    private static func isLocalFilesystemInspectionRequest(_ normalized: String) -> Bool {
+        let actionPattern = #"\b(?:what'?s\s+on|what\s+is\s+on|list|show|check|inspect|review|find|search|look\s+at|read|summari[sz]e)\b"#
+        let filesystemTargetPattern = #"\b(?:desktop|downloads?|documents?|folder|folders|file|files|directory|directories)\b"#
+        return normalized.range(of: actionPattern, options: .regularExpression) != nil
+            && normalized.range(of: filesystemTargetPattern, options: .regularExpression) != nil
+    }
+
+    private static func isVoiceRouteCapabilityQuestion(_ transcript: String) -> Bool {
+        let normalized = normalizedSpokenCommandText(transcript)
+        guard !normalized.isEmpty else { return false }
+
+        let routePattern = #"\b(?:voice\s+(?:route|lane|path)|realtime\s+(?:route|voice|path)|without\s+(?:starting\s+)?an?\s+agent|without\s+agent\s+mode|instead\s+of\s+(?:starting\s+)?an?\s+agent)\b"#
+        guard normalized.range(of: routePattern, options: .regularExpression) != nil else { return false }
+
+        let questionPattern = #"^(?:can|could|would|will)\s+you\b|^(?:can|could|would)\s+openclicky\b|^is\s+it\s+possible\b|^do\s+you\b|^does\s+openclicky\b"#
+        return normalized.range(of: questionPattern, options: .regularExpression) != nil
+    }
+
+    private static func isGenericWebSearchCapabilityQuestion(_ transcript: String) -> Bool {
+        let normalized = normalizedSpokenCommandText(transcript)
+        let pattern = #"^(?:can|could|would|will)\s+you\s+(?:search\s+(?:the\s+)?web|browse\s+(?:the\s+)?web|google|look\s+things?\s+up|look\s+up\s+things?)$"#
+        return normalized.range(of: pattern, options: .regularExpression) != nil
     }
 
     private static func isConversationalPreferenceOrDesignReflection(_ transcript: String) -> Bool {
@@ -8422,6 +8525,23 @@ final class CompanionManager: ObservableObject {
             && !isLikelyAgentToolWorkInstruction(transcript)
             && !containsDurableWorkTarget(normalized)
             && !containsFreshResearchRequest(normalized)
+    }
+
+    private static func isInstantVoiceScreenContextRequest(_ transcript: String) -> Bool {
+        let normalized = normalizedSpokenCommandText(transcript)
+        guard !normalized.isEmpty else { return false }
+
+        let visualReferencePatterns = [
+            #"\b(?:look at|take a look at|have a look at|check|inspect|review|summari[sz]e|describe)\s+(?:this|that|it|here|my screen|the screen|what'?s on screen|the current screen|the visible screen|the current page|this page|that page|this tab|that tab|the browser|this window|that window)\b"#,
+            #"\b(?:what do you think|what'?s this|what is this|what'?s that|what is that|can you see|do you see|are you seeing)\b"#
+        ]
+        let hasVisualReference = visualReferencePatterns.contains { pattern in
+            normalized.range(of: pattern, options: .regularExpression) != nil
+        }
+        guard hasVisualReference else { return false }
+
+        let longRunningSignals = #"\b(?:background|agent|task|later|keep working|while i|overnight|long|implement|patch|edit|write|code|repo|repository|github|issue|pull request|pr|file|files|folder|folders|desktop|downloads|email|gmail|calendar|research|browse|latest|web search|look up)\b"#
+        return normalized.range(of: longRunningSignals, options: .regularExpression) == nil
     }
 
     private static func containsAgentWorkAction(_ normalized: String) -> Bool {
@@ -10448,7 +10568,8 @@ final class CompanionManager: ObservableObject {
             return
         }
 
-        if handleDirectComputerUseRequest(from: trimmedPrompt, source: "agent_hud_prompt") {
+        if !Self.shouldSendAgentHUDPromptStraightToAgent(trimmedPrompt),
+           handleDirectComputerUseRequest(from: trimmedPrompt, source: "agent_hud_prompt") {
             OpenClickyMessageLogStore.shared.append(
                 lane: "agent",
                 direction: "incoming",
@@ -10497,6 +10618,26 @@ final class CompanionManager: ObservableObject {
                 "model": codexAgentSession.model
             ]
         )
+    }
+
+    private static func shouldSendAgentHUDPromptStraightToAgent(_ prompt: String) -> Bool {
+        let lineBreakCount = prompt.reduce(0) { partial, character in
+            partial + (character.isNewline ? 1 : 0)
+        }
+        guard lineBreakCount > 0 else { return false }
+
+        let normalized = prompt.lowercased()
+        let pastedDiagnosticSignals = [
+            "[openclickylog]",
+            "openclicky:",
+            "voice.realtime_bidirectional",
+            "codex.rpc",
+            "nw_read_request_report",
+            "error domain=",
+            "throwing -",
+            "failed!"
+        ]
+        return pastedDiagnosticSignals.contains { normalized.contains($0) }
     }
 
     /// Keeps chat-driven turns aligned with the same corner-dock UX as
@@ -10601,6 +10742,7 @@ final class CompanionManager: ObservableObject {
         currentResponseTask = nil
         realtimeBidirectionalVoiceTask?.cancel()
         realtimeBidirectionalVoiceTask = nil
+        realtimeBidirectionalVoiceTurnGeneration &+= 1
         isRealtimeBidirectionalVoiceCaptureActive = false
         isRealtimeBidirectionalVoiceInputReady = false
         codexVoiceSession.cancelActiveTurn(reason: "voice_response_interrupted")

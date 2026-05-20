@@ -7,6 +7,7 @@
 //  opens a floating panel with companion voice controls.
 //
 
+import AppKit
 import Carbon
 import ServiceManagement
 import SwiftUI
@@ -48,6 +49,23 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDel
         print("OpenClicky: Starting...")
         print("OpenClicky: Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown")")
 
+        // Terminate any duplicate running instances of OpenClicky to prevent port (error 48) and permission conflicts
+        let currentApp = NSRunningApplication.current
+        let runningApps = NSWorkspace.shared.runningApplications
+        if let bundleID = currentApp.bundleIdentifier {
+            let duplicateApps = runningApps.filter { app in
+                app.bundleIdentifier == bundleID && app.processIdentifier != currentApp.processIdentifier
+            }
+            for app in duplicateApps {
+                print("OpenClicky: Terminating duplicate running instance (PID: \(app.processIdentifier)) to free resources/ports.")
+                app.terminate()
+            }
+            if !duplicateApps.isEmpty {
+                // Give the system a brief moment to release TCP sockets and file handles
+                Thread.sleep(forTimeInterval: 0.3)
+            }
+        }
+
         UserDefaults.standard.register(defaults: ["NSInitialToolTipDelay": 0])
 
         ClickyAnalytics.configure()
@@ -66,7 +84,7 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDel
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        urls.forEach { companionManager.handleWidgetDeepLink($0) }
+        urls.forEach { companionManager.handleApplicationOpenURL($0) }
     }
 
     func showSettingsWindowFromApplicationMenu() {

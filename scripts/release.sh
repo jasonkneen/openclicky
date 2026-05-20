@@ -56,12 +56,17 @@ EXPORT_PATH="${BUILD_DIR}/Export"
 
 # --- Args ------------------------------------------------------------------
 SKIP_NOTARIZE=0
+LOCAL_BUILD=0
 VERSION=""
 BUILD_NUMBER=""
 
 for arg in "$@"; do
     case "$arg" in
         --skip-notarize) SKIP_NOTARIZE=1 ;;
+        --local)
+            LOCAL_BUILD=1
+            SKIP_NOTARIZE=1
+            ;;
         --help|-h)
             sed -n '2,30p' "$0"
             exit 0
@@ -88,24 +93,27 @@ fi
 echo "==> Building ${APP_NAME} ${VERSION} (${BUILD_NUMBER})"
 
 # --- Sanity checks ---------------------------------------------------------
-if ! security find-identity -v -p codesigning | grep -q "${SIGNING_IDENTITY}"; then
-    echo "ERROR: Signing identity not found in keychain: ${SIGNING_IDENTITY}" >&2
-    echo "       Install your Developer ID Application cert and try again." >&2
-    exit 1
-fi
+# --- Sanity checks ---------------------------------------------------------
+if [[ "${LOCAL_BUILD}" -ne 1 ]]; then
+    if ! security find-identity -v -p codesigning | grep -q "${SIGNING_IDENTITY}"; then
+        echo "ERROR: Signing identity not found in keychain: ${SIGNING_IDENTITY}" >&2
+        echo "       Install your Developer ID Application cert and try again." >&2
+        exit 1
+    fi
 
-if [[ ! -f "${EXPORT_OPTIONS}" ]]; then
-    echo "ERROR: ${EXPORT_OPTIONS} missing." >&2
-    exit 1
-fi
+    if [[ ! -f "${EXPORT_OPTIONS}" ]]; then
+        echo "ERROR: ${EXPORT_OPTIONS} missing." >&2
+        exit 1
+    fi
 
-# OpenClicky is distributed direct (not through the App Store). Refuse to
-# build if the export options have been switched away from developer-id.
-export_method=$(/usr/libexec/PlistBuddy -c "Print :method" "${EXPORT_OPTIONS}" 2>/dev/null || echo "")
-if [[ "${export_method}" != "developer-id" ]]; then
-    echo "ERROR: ${EXPORT_OPTIONS} has method=\"${export_method}\"; expected \"developer-id\"." >&2
-    echo "       OpenClicky ships outside the App Store. Edit the plist before retrying." >&2
-    exit 1
+    # OpenClicky is distributed direct (not through the App Store). Refuse to
+    # build if the export options have been switched away from developer-id.
+    export_method=$(/usr/libexec/PlistBuddy -c "Print :method" "${EXPORT_OPTIONS}" 2>/dev/null || echo "")
+    if [[ "${export_method}" != "developer-id" ]]; then
+        echo "ERROR: ${EXPORT_OPTIONS} has method=\"${export_method}\"; expected \"developer-id\"." >&2
+        echo "       OpenClicky ships outside the App Store. Edit the plist before retrying." >&2
+        exit 1
+    fi
 fi
 
 # --- Clean previous artifacts ----------------------------------------------
@@ -134,23 +142,32 @@ xcodebuild \
     archive
 
 # --- Export ----------------------------------------------------------------
-echo "==> Exporting Developer ID build..."
-xcodebuild \
-    -exportArchive \
-    -archivePath "${ARCHIVE_PATH}" \
-    -exportPath "${EXPORT_PATH}" \
-    -exportOptionsPlist "${EXPORT_OPTIONS}"
+if [[ "${LOCAL_BUILD}" -eq 1 ]]; then
+    echo "==> Extracting app bundle directly from archive (local build)..."
+    EXPORTED_APP="${ARCHIVE_PATH}/Products/Applications/${APP_NAME}.app"
+    if [[ ! -d "${EXPORTED_APP}" ]]; then
+        EXPORTED_APP=$(find "${ARCHIVE_PATH}/Products/Applications" -maxdepth 2 -name "*.app" -print -quit)
+    fi
+    [[ -d "${EXPORTED_APP}" ]] || { echo "ERROR: .app not found in archive Products/Applications" >&2; exit 1; }
+else
+    echo "==> Exporting Developer ID build..."
+    xcodebuild \
+        -exportArchive \
+        -archivePath "${ARCHIVE_PATH}" \
+        -exportPath "${EXPORT_PATH}" \
+        -exportOptionsPlist "${EXPORT_OPTIONS}"
 
-EXPORTED_APP="${EXPORT_PATH}/${APP_NAME}.app"
-if [[ ! -d "${EXPORTED_APP}" ]]; then
-    # Some Xcode versions export under the scheme/target name instead of PRODUCT_NAME.
-    EXPORTED_APP=$(find "${EXPORT_PATH}" -maxdepth 2 -name "*.app" -print -quit)
+    EXPORTED_APP="${EXPORT_PATH}/${APP_NAME}.app"
+    if [[ ! -d "${EXPORTED_APP}" ]]; then
+        # Some Xcode versions export under the scheme/target name instead of PRODUCT_NAME.
+        EXPORTED_APP=$(find "${EXPORT_PATH}" -maxdepth 2 -name "*.app" -print -quit)
+    fi
+    [[ -d "${EXPORTED_APP}" ]] || { echo "ERROR: exported .app not found in ${EXPORT_PATH}" >&2; exit 1; }
+
+    echo "==> Verifying signature..."
+    codesign --verify --deep --strict --verbose=2 "${EXPORTED_APP}"
+    spctl --assess --type execute --verbose=2 "${EXPORTED_APP}" || true
 fi
-[[ -d "${EXPORTED_APP}" ]] || { echo "ERROR: exported .app not found in ${EXPORT_PATH}" >&2; exit 1; }
-
-echo "==> Verifying signature..."
-codesign --verify --deep --strict --verbose=2 "${EXPORTED_APP}"
-spctl --assess --type execute --verbose=2 "${EXPORTED_APP}" || true
 
 # --- DMG -------------------------------------------------------------------
 DMG_NAME="${APP_NAME}-${VERSION}-${BUILD_NUMBER}.dmg"
@@ -171,7 +188,11 @@ hdiutil create \
     "${DMG_PATH}" >/dev/null
 
 echo "==> Signing DMG..."
-codesign --sign "${SIGNING_IDENTITY}" --timestamp "${DMG_PATH}"
+if [[ "${LOCAL_BUILD}" -eq 1 ]]; then
+    codesign --sign - --force "${DMG_PATH}" || true
+else
+    codesign --sign "${SIGNING_IDENTITY}" --timestamp "${DMG_PATH}"
+fi
 
 # --- Notarize --------------------------------------------------------------
 if [[ "${SKIP_NOTARIZE}" -eq 1 ]]; then

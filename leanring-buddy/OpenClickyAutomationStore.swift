@@ -26,6 +26,14 @@ final class OpenClickyAutomationStore: ObservableObject {
       .appendingPathComponent("skill-discovery-suggestions.json", isDirectory: false)
   }
 
+  static var skillSuggestionRulesURL: URL {
+    let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+      ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
+    return appSupport
+      .appendingPathComponent("OpenClicky", isDirectory: true)
+      .appendingPathComponent("skill-suggestion-rules.json", isDirectory: false)
+  }
+
   static var skillDiscoveryAutomationPrompt: String {
     """
     OpenClicky scheduled skill discovery pass.
@@ -222,6 +230,8 @@ struct OpenClickySkillDiscoverySuggestion: Codable, Identifiable, Equatable {
   var detail: String
   var source: String
   var installPrompt: String
+  var chipTitle: String? = nil
+  var systemImage: String? = nil
 
   var sourceLabel: String {
     switch source.lowercased() {
@@ -242,6 +252,97 @@ struct OpenClickySkillDiscoverySuggestion: Codable, Identifiable, Equatable {
   }
 }
 
+private struct OpenClickySkillSuggestionRule: Codable, Equatable {
+  var id: String
+  var appMatches: [String]
+  var suggestions: [OpenClickySkillDiscoverySuggestion]
+}
+
+private struct OpenClickySkillSuggestionRegistry: Codable, Equatable {
+  var defaultSuggestions: [OpenClickySkillDiscoverySuggestion]
+  var appRules: [OpenClickySkillSuggestionRule]
+
+  static func load(from url: URL) -> OpenClickySkillSuggestionRegistry {
+    ensureUserConfigExists(at: url)
+
+    if let data = try? Data(contentsOf: url),
+       let decoded = try? JSONDecoder().decode(OpenClickySkillSuggestionRegistry.self, from: data) {
+      return decoded
+    }
+
+    if let bundledURL = bundledConfigURL,
+       let data = try? Data(contentsOf: bundledURL),
+       let decoded = try? JSONDecoder().decode(OpenClickySkillSuggestionRegistry.self, from: data) {
+      return decoded
+    }
+
+    return fallback
+  }
+
+  func suggestions(for context: OpenClickySkillDiscoveryStore.ApplicationContext?, slug: (String) -> String) -> [OpenClickySkillDiscoverySuggestion] {
+    guard let context else { return [] }
+    let haystack = "\(context.name) \(context.bundleIdentifier ?? "")".lowercased()
+    for rule in appRules where rule.appMatches.contains(where: { haystack.contains($0.lowercased()) }) {
+      return rule.suggestions.map { suggestion in
+        var resolved = suggestion
+        resolved.id = resolved.id.replacingOccurrences(of: "{appSlug}", with: slug(context.name))
+        resolved.title = resolved.title.replacingOccurrences(of: "{appName}", with: context.name)
+        resolved.detail = resolved.detail.replacingOccurrences(of: "{appName}", with: context.name)
+        resolved.installPrompt = resolved.installPrompt.replacingOccurrences(of: "{appName}", with: context.name)
+        resolved.chipTitle = resolved.chipTitle?.replacingOccurrences(of: "{appName}", with: context.name)
+        return resolved
+      }
+    }
+
+    return [
+      OpenClickySkillDiscoverySuggestion(
+        id: "active-\(slug(context.name))-screen-context",
+        title: "\(context.name) screen context",
+        detail: "OpenClicky can use the active \(context.name) window as visual context and suggest the safest available automation route.",
+        source: "app",
+        installPrompt: "Use OpenClicky's screen context for the active \(context.name) window and suggest the best available skill, MCP, or agent workflow.",
+        chipTitle: "\(context.name) context",
+        systemImage: "app.fill"
+      )
+    ]
+  }
+
+  private static func ensureUserConfigExists(at url: URL) {
+    guard !FileManager.default.fileExists(atPath: url.path) else { return }
+    do {
+      try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+      if let bundledURL = bundledConfigURL,
+         let data = try? Data(contentsOf: bundledURL) {
+        try data.write(to: url, options: [.atomic])
+      } else {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(fallback).write(to: url, options: [.atomic])
+      }
+    } catch {
+      print("skill suggestion registry seed failed: \(error)")
+    }
+  }
+
+  private static var bundledConfigURL: URL? {
+    if let direct = Bundle.main.url(forResource: "skill-suggestion-rules", withExtension: "json") {
+      return direct
+    }
+    if let resourceURL = Bundle.main.resourceURL {
+      let nested = resourceURL
+        .appendingPathComponent("OpenClicky", isDirectory: true)
+        .appendingPathComponent("skill-suggestion-rules.json", isDirectory: false)
+      if FileManager.default.fileExists(atPath: nested.path) {
+        return nested
+      }
+    }
+    return nil
+  }
+
+  private static let fallback = OpenClickySkillSuggestionRegistry(defaultSuggestions: [], appRules: [])
+
+}
+
 @MainActor
 final class OpenClickySkillDiscoveryStore: ObservableObject {
   static let shared = OpenClickySkillDiscoveryStore()
@@ -258,11 +359,12 @@ final class OpenClickySkillDiscoveryStore: ObservableObject {
   func reload() {
     let savedSuggestions = loadSavedSuggestions()
     let appContext = currentApplicationContext()
+    let registry = OpenClickySkillSuggestionRegistry.load(from: OpenClickyAutomationStore.skillSuggestionRulesURL)
     activeApplicationName = appContext?.name
 
     suggestions = mergeSuggestions(
-      appSuggestions(for: appContext),
-      savedSuggestions.isEmpty ? Self.defaultSuggestions : savedSuggestions
+      registry.suggestions(for: appContext, slug: slug),
+      savedSuggestions.isEmpty ? registry.defaultSuggestions : savedSuggestions
     )
   }
 
@@ -290,7 +392,7 @@ final class OpenClickySkillDiscoveryStore: ObservableObject {
     return merged
   }
 
-  private struct ApplicationContext {
+  struct ApplicationContext {
     var name: String
     var bundleIdentifier: String?
   }
@@ -340,182 +442,6 @@ final class OpenClickySkillDiscoveryStore: ObservableObject {
     return nil
   }
 
-  private func appSuggestions(for context: ApplicationContext?) -> [OpenClickySkillDiscoverySuggestion] {
-    guard let context else { return [] }
-
-    let appName = context.name
-    let haystack = "\(context.name) \(context.bundleIdentifier ?? "")".lowercased()
-
-    if context.name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare("X") == .orderedSame ||
-        haystack.contains("twitter") ||
-        haystack.contains(".x") {
-      return [
-        appSuggestion(
-          id: "active-x-screen-summary",
-          title: "Summarize X from screen",
-          detail: "OpenClicky can use the focused X window as screen context to summarize a post, thread, profile, or visible feed without needing an X API key.",
-          prompt: "Use OpenClicky's screen context to summarize the active X window, capture the useful links or claims, and suggest the next action."
-        ),
-        appSuggestion(
-          id: "active-x-draft-reply",
-          title: "Draft X replies",
-          detail: "Useful for X: OpenClicky can read the visible context, draft a reply or post, and leave final posting to you.",
-          prompt: "Draft a concise X reply or post based on the active X window. Do not post it; show the draft for approval."
-        )
-      ]
-    }
-
-    if matchesAny(haystack, ["chrome", "safari", "firefox", "arc", "edge", "browser"]) {
-      return [
-        appSuggestion(
-          id: "active-browser-page-brief",
-          title: "Summarize current page",
-          detail: "OpenClicky can use browser automation or screen context to summarize the active page, extract links, and turn it into an Agent task.",
-          prompt: "Summarize the current browser page with OpenClicky's browser/screen context, then list the important links and recommended next action."
-        ),
-        appSuggestion(
-          id: "active-browser-web-research",
-          title: "Research from this page",
-          detail: "Starts from the active page and uses live web search when the answer needs current sources.",
-          prompt: "Use the active browser page as context, then do current web research and cite the sources OpenClicky relies on."
-        )
-      ]
-    }
-
-    if matchesAny(haystack, ["gmail", "mail"]) {
-      return [
-        mcpSuggestion(
-          id: "active-mail-unread-triage",
-          title: "Unread email triage",
-          detail: "OpenClicky can use the local gog Gmail route for short unread summaries, stopping cleanly if auth or keyring access is blocked.",
-          prompt: "Use OpenClicky's gog Gmail workflow to summarize unread inbox items briefly, with sender, subject, date, and likely action."
-        ),
-        mcpSuggestion(
-          id: "active-mail-draft-reply",
-          title: "Draft safe replies",
-          detail: "For Mail or Gmail, OpenClicky drafts first and requires explicit approval before sending.",
-          prompt: "Draft a reply to the active email using OpenClicky's Gmail/Mail-safe send guard. Do not send until I approve recipient, subject, body, and attachments."
-        )
-      ]
-    }
-
-    if matchesAny(haystack, ["calendar"]) {
-      return [
-        mcpSuggestion(
-          id: "active-calendar-day-plan",
-          title: "Plan around calendar",
-          detail: "OpenClicky can use gog Calendar to inspect events and produce a compact day plan.",
-          prompt: "Use OpenClicky's gog Calendar workflow to summarize today's schedule and suggest a practical day plan."
-        )
-      ]
-    }
-
-    if matchesAny(haystack, ["slack", "teams"]) {
-      return [
-        mcpSuggestion(
-          id: "active-chat-thread-summary",
-          title: "Summarize chat thread",
-          detail: "OpenClicky can connect through available chat integrations or use screen context to summarize the active conversation.",
-          prompt: "Summarize the active chat conversation using the available OpenClicky integration route or screen context, then identify decisions and follow-ups."
-        )
-      ]
-    }
-
-    if matchesAny(haystack, ["xcode", "cursor", "code", "terminal", "iterm"]) {
-      return [
-        appSuggestion(
-          id: "active-dev-focused-patch",
-          title: "Focused code patch",
-          detail: "OpenClicky can turn the active developer app into a narrow Agent Mode implementation task with dirty-worktree safety and lightweight checks.",
-          prompt: "Use the active developer app context to make a narrow code patch. Check git status first and verify with lightweight checks."
-        ),
-        appSuggestion(
-          id: "active-dev-debug-loop",
-          title: "Debug current failure",
-          detail: "Good for Terminal, Xcode, Cursor, or VS Code: inspect the visible error, trace the repo, patch, and verify.",
-          prompt: "Debug the failure visible in the active developer app, patch the smallest safe fix, and report the exact verification result."
-        )
-      ]
-    }
-
-    if matchesAny(haystack, ["finder", "desktop"]) {
-      return [
-        appSuggestion(
-          id: "active-finder-file-organization",
-          title: "Organize visible files",
-          detail: "OpenClicky can file screenshots, images, and Desktop items using the known archive workflows and exact output paths.",
-          prompt: "Organize the visible Finder/Desktop files with OpenClicky's existing filing workflow, preserving exact output paths in the summary."
-        )
-      ]
-    }
-
-    if matchesAny(haystack, ["notes"]) {
-      return [
-        appSuggestion(
-          id: "active-notes-lookup",
-          title: "Find and summarize notes",
-          detail: "OpenClicky has a local Apple Notes lookup workflow for finding a note and summarizing the relevant content.",
-          prompt: "Use OpenClicky's Apple Notes workflow to find and summarize the active or relevant note."
-        )
-      ]
-    }
-
-    if matchesAny(haystack, ["github"]) {
-      return [
-        mcpSuggestion(
-          id: "active-github-pr-workflow",
-          title: "GitHub PR workflow",
-          detail: "OpenClicky can use GitHub-connected tooling or local git context to inspect issues, PRs, branches, and push-readiness.",
-          prompt: "Use OpenClicky's GitHub workflow to inspect the active repository or PR context and summarize what needs action."
-        )
-      ]
-    }
-
-    if matchesAny(haystack, ["figma", "canva", "notion", "linear"]) {
-      return [
-        mcpSuggestion(
-          id: "active-\(slug(for: appName))-connector",
-          title: "\(appName) connector",
-          detail: "OpenClicky can route \(appName) work through connector/MCP-style integrations when available, instead of relying on manual browser steps.",
-          prompt: "Connect OpenClicky to \(appName) for the active workflow, using the available connector or MCP route if installed."
-        )
-      ]
-    }
-
-    return [
-      appSuggestion(
-        id: "active-\(slug(for: appName))-screen-context",
-        title: "\(appName) screen context",
-        detail: "OpenClicky can use the active \(appName) window as visual context and suggest the safest available automation route.",
-        prompt: "Use OpenClicky's screen context for the active \(appName) window and suggest the best available skill, MCP, or agent workflow."
-      )
-    ]
-  }
-
-  private func appSuggestion(id: String, title: String, detail: String, prompt: String) -> OpenClickySkillDiscoverySuggestion {
-    OpenClickySkillDiscoverySuggestion(
-      id: id,
-      title: title,
-      detail: detail,
-      source: "app",
-      installPrompt: prompt
-    )
-  }
-
-  private func mcpSuggestion(id: String, title: String, detail: String, prompt: String) -> OpenClickySkillDiscoverySuggestion {
-    OpenClickySkillDiscoverySuggestion(
-      id: id,
-      title: title,
-      detail: detail,
-      source: "mcp",
-      installPrompt: prompt
-    )
-  }
-
-  private func matchesAny(_ haystack: String, _ needles: [String]) -> Bool {
-    needles.contains { haystack.contains($0) }
-  }
-
   private func slug(for value: String) -> String {
     let allowed = CharacterSet.alphanumerics
     let parts = value
@@ -527,41 +453,5 @@ final class OpenClickySkillDiscoveryStore: ObservableObject {
       .joined(separator: "-")
   }
 
-  private static let defaultSuggestions: [OpenClickySkillDiscoverySuggestion] = [
-    OpenClickySkillDiscoverySuggestion(
-      id: "openclicky-source-change",
-      title: "OpenClicky source-change workflow",
-      detail: "Default installed workflow for focused OpenClicky repo edits, dirty-worktree safety, narrow patches, and lightweight verification.",
-      source: "installed",
-      installPrompt: "Use the installed openclicky-source-change skill for the next OpenClicky repo patch."
-    ),
-    OpenClickySkillDiscoverySuggestion(
-      id: "openclicky-overlay-ui",
-      title: "OpenClicky overlay UI workflow",
-      detail: "Default installed workflow for HUD, panel, notch, caption, parked-agent, resizing, and Connect-tab UI issues.",
-      source: "installed",
-      installPrompt: "Use the installed openclicky-overlay-ui skill to audit and fix the next OpenClicky panel or HUD layout issue."
-    ),
-    OpenClickySkillDiscoverySuggestion(
-      id: "openclicky-voice-routing",
-      title: "OpenClicky voice routing workflow",
-      detail: "Default installed workflow for Realtime, transcription, task-title speech, completion summaries, and spoken-status behavior.",
-      source: "installed",
-      installPrompt: "Use the installed openclicky-voice-routing skill to debug the next voice or Realtime routing issue."
-    ),
-    OpenClickySkillDiscoverySuggestion(
-      id: "openclicky-log-learning",
-      title: "OpenClicky log-learning workflow",
-      detail: "Default maintenance workflow for bounded log review, durable learnings, review notes, and archive-first updates.",
-      source: "installed",
-      installPrompt: "Run OpenClicky's bounded conversation-log learning pass and make only evidence-backed durable updates."
-    ),
-    OpenClickySkillDiscoverySuggestion(
-      id: "github-pr-workflow",
-      title: "GitHub PR workflow",
-      detail: "Default connector-style workflow for repository, issue, PR, and branch checks when OpenClicky has GitHub access.",
-      source: "mcp",
-      installPrompt: "Use OpenClicky's GitHub workflow to inspect the active repository or PR and summarize what needs action."
-    )
-  ]
+
 }

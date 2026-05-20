@@ -361,7 +361,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -euo pipefail\nROOT=\"${PROJECT_DIR}/AppResources/OpenClicky\"\nDST=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\nmkdir -p \"$DST\"\nfor rel in SOUL.md OpenClickyModelInstructions.md AGENTS.md OpenClickyBundledSkills OpenClickyBundledWikiSeed CodexRuntime ClaudeAgentSDKBridge agent-done.mp3; do\n  if [ -e \"$ROOT/$rel\" ]; then\n    rm -rf \"$DST/$rel\"\n    /usr/bin/ditto \"$ROOT/$rel\" \"$DST/$rel\"\n  fi\ndone\n";
+			shellScript = "set -euo pipefail\nROOT=\"${PROJECT_DIR}/AppResources/OpenClicky\"\nDST=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\nmkdir -p \"$DST\"\nfor rel in SOUL.md OpenClickyModelInstructions.md AGENTS.md skill-suggestion-rules.json OpenClickyBundledSkills OpenClickyBundledWikiSeed CodexRuntime ClaudeAgentSDKBridge agent-done.mp3; do\n  if [ -e \"$ROOT/$rel\" ]; then\n    rm -rf \"$DST/$rel\"\n    /usr/bin/ditto \"$ROOT/$rel\" \"$DST/$rel\"\n  fi\ndone\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

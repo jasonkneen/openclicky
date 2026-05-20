@@ -35,6 +35,8 @@ struct ChatWorkspaceView: View {
   }
 
   @ObservedObject var companionManager: CompanionManager
+  @ObservedObject private var agentStore = OpenClickyAgentStore.shared
+  @ObservedObject private var skillDiscoveryStore = OpenClickySkillDiscoveryStore.shared
   var openMemory: () -> Void
   var prepareVoiceFollowUp: () -> Void
   var dismiss: () -> Void
@@ -63,6 +65,14 @@ struct ChatWorkspaceView: View {
   private var bodyFontSize: CGFloat { CGFloat(appBodyFontSize) }
   private var subtextFontSize: CGFloat { CGFloat(appSubtextFontSize) }
   private var appTextLineSpacing: CGFloat { CGFloat(appLineSpacing) }
+
+  private var draftAutocompleteOptions: [OpenClickyPromptAutocompleteOption] {
+    OpenClickyPromptAutocomplete.options(
+      for: draft,
+      agents: agentStore.agents,
+      skillSuggestions: skillDiscoveryStore.suggestions
+    )
+  }
 
   private func appUIFont(size: CGFloat, weight: Font.Weight = .medium) -> Font {
     appFont.swiftUIFont(size: size, weight: appResolvedWeight(weight))
@@ -148,6 +158,10 @@ struct ChatWorkspaceView: View {
         attachmentChipRow
       }
 
+      OpenClickyPromptAutocompletePanel(options: draftAutocompleteOptions) { option in
+        OpenClickyPromptAutocomplete.apply(option, to: &draft)
+      }
+
       HStack(spacing: 10) {
         Image(systemName: droppedAttachments.isEmpty ? "plus" : "paperclip")
           .font(appUIFont(size: max(13, subtextFontSize + 1), weight: .semibold))
@@ -166,6 +180,13 @@ struct ChatWorkspaceView: View {
           .fixedSize(horizontal: false, vertical: true)
           .frame(maxWidth: .infinity, alignment: .leading)
           .onSubmit(send)
+          .onKeyPress(.tab, phases: .down) { _ in
+            OpenClickyPromptAutocomplete.acceptFirstOption(
+              in: &draft,
+              agents: agentStore.agents,
+              skillSuggestions: skillDiscoveryStore.suggestions
+            ) ? .handled : .ignored
+          }
 
         Button(action: prepareVoiceFollowUp) {
           Image(systemName: "waveform")
