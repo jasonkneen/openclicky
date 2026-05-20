@@ -177,6 +177,7 @@ struct OpenClickySettingsView: View {
     @AppStorage(AppBundleConfiguration.userWidgetsIncludeAgentTaskNamesDefaultsKey) private var widgetsIncludeAgentTaskNames = false
     @AppStorage(AppBundleConfiguration.userWidgetsIncludeMemorySnippetsDefaultsKey) private var widgetsIncludeMemorySnippets = false
     @AppStorage(AppBundleConfiguration.userWidgetsIncludeFocusedAppContextDefaultsKey) private var widgetsIncludeFocusedAppContext = false
+    @AppStorage(AppBundleConfiguration.userForceLiquidGlassDefaultsKey) private var forceLiquidGlass = false
     @State private var selectedSection: OpenClickySettingsSection = .general
     @State private var gogCLIStatus = OpenClickyGogCLIStatus.unknown
     @State private var isRefreshingGogCLIStatus = false
@@ -361,6 +362,13 @@ struct OpenClickySettingsView: View {
                         get: { companionManager.isClickyCursorEnabled },
                         set: { companionManager.setClickyCursorEnabled($0) }
                     )
+                )
+
+                toggleRow(
+                    title: "Force macOS 26 Liquid Glass",
+                    subtitle: "Simulates macOS 26 Tahoe's dynamic glass-like translucency and refracting borders.",
+                    systemImageName: "sparkles",
+                    isOn: $forceLiquidGlass
                 )
             }
 
