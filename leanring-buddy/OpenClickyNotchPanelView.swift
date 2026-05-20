@@ -454,7 +454,7 @@ struct OpenClickyNotchPanelView: View {
         .padding(14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
+            OpenClickyBottomRoundedRectangle(cornerRadius: 28)
                 .fill(
                     OpenClickyLiquidGlassBackdropView.isLiquidGlassAvailable ?
                         AnyShapeStyle(Color.clear) :
@@ -465,8 +465,8 @@ struct OpenClickyNotchPanelView: View {
                         ))
                 )
         )
-        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .contentShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .clipShape(OpenClickyBottomRoundedRectangle(cornerRadius: 28))
+        .contentShape(OpenClickyBottomRoundedRectangle(cornerRadius: 28))
         .overlay {
             if isPanelDropTargeted && !isQuickPromptDropTargeted && !isExpandedAgentDropTargeted {
                 dropTargetOverlay
@@ -584,6 +584,11 @@ struct OpenClickyNotchPanelView: View {
 
     private var tabStrip: some View {
         HStack(spacing: 6) {
+            OpenClickyPanelDragHandle()
+                .frame(width: 30, height: 30)
+                .accessibilityLabel("Drag OpenClicky panel")
+                .help("Drag OpenClicky panel")
+
             ForEach(OpenClickyNotchTab.primaryTabs) { tab in
                 Button {
                     selectPrimaryTab(tab)
@@ -618,11 +623,6 @@ struct OpenClickyNotchPanelView: View {
                 .accessibilityLabel("Show \(tab.title)")
                 .help("Show \(tab.title)")
             }
-
-            OpenClickyPanelDragHandle()
-                .frame(width: 34, height: 30)
-                .accessibilityLabel("Drag OpenClicky panel")
-                .help("Drag OpenClicky panel")
 
             panelChromeButton(
                 systemImageName: selectedTab == .settings ? "gearshape.fill" : "gearshape",
@@ -1968,6 +1968,7 @@ struct OpenClickyNotchPanelView: View {
         .animation(.spring(response: 0.24, dampingFraction: 0.86), value: isExpanded)
     }
 
+    @MainActor
     private func agentArchiveButton(
         systemImageName: String,
         accessibilityLabel: String,
@@ -3093,16 +3094,44 @@ private final class OpenClickyPanelDragHandleView: NSView {
         path.lineWidth = 1
         path.stroke()
 
-        let lineColor = NSColor.white.withAlphaComponent(0.34)
-        lineColor.setStroke()
-        for yOffset in [-4.0, 0.0, 4.0] {
-            let line = NSBezierPath()
-            line.move(to: NSPoint(x: rect.midX - 6, y: rect.midY + yOffset))
-            line.line(to: NSPoint(x: rect.midX + 6, y: rect.midY + yOffset))
-            line.lineWidth = 1.5
-            line.lineCapStyle = .round
-            line.stroke()
+        let dotColor = NSColor.white.withAlphaComponent(0.38)
+        dotColor.setFill()
+        for xOffset in [-3.6, 3.6] {
+            for yOffset in [-5.0, 0.0, 5.0] {
+                let dotRect = NSRect(
+                    x: rect.midX + xOffset - 1.5,
+                    y: rect.midY + yOffset - 1.5,
+                    width: 3,
+                    height: 3
+                )
+                NSBezierPath(ovalIn: dotRect).fill()
+            }
         }
+    }
+}
+
+private struct OpenClickyBottomRoundedRectangle: Shape {
+    let cornerRadius: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let radius = min(cornerRadius, rect.width / 2, rect.height / 2)
+        var path = Path()
+
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - radius))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX - radius, y: rect.maxY),
+            control: CGPoint(x: rect.maxX, y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.minX + radius, y: rect.maxY))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX, y: rect.maxY - radius),
+            control: CGPoint(x: rect.minX, y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.closeSubpath()
+        return path
     }
 }
 
@@ -3171,7 +3200,5 @@ private struct OpenClickyNotchEmptyState: View {
         }
         .frame(maxWidth: .infinity)
         .padding(16)
-        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.white.opacity(0.045)))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Color.white.opacity(0.06), lineWidth: 1))
     }
 }

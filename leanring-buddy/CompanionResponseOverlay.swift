@@ -117,8 +117,9 @@ final class CompanionResponseOverlayManager {
         // avoid queueing extra MainActor tasks every frame. The timer already
         // fires on the main run loop; `.common` prevents event-tracking hitches.
         let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
             Task { @MainActor in
-                self?.repositionPanelNearCursor()
+                self.repositionPanelNearCursor()
             }
         }
         cursorTrackingTimer = timer

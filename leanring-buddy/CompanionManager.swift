@@ -2196,8 +2196,8 @@ final class CompanionManager: ObservableObject {
             do {
                 try FileManager.default.createDirectory(at: memoriesDirectory, withIntermediateDirectories: true)
                 try FileManager.default.createDirectory(at: learnedSkillsDirectory, withIntermediateDirectories: true)
-                let memoryIndex await = try await WikiManager.Index.load(articleRoots: [memoriesDirectory], skillRoots: [learnedSkillsDirectory])
-                resoawait lvedIndex = await bundledIndex.combined(with: memoryIndex)
+                let memoryIndex = try await WikiManager.Index.load(articleRoots: [memoriesDirectory], skillRoots: [learnedSkillsDirectory])
+                resolvedIndex = await bundledIndex.combined(with: memoryIndex)
             } catch {
                 print("⚠️ OpenClicky memory index load failed: \(error)")
                 resolvedIndex = bundledIndex

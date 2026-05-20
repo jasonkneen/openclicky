@@ -164,7 +164,7 @@ final class OpenClickyNotchCaptureWindowManager {
     private static let topGap: CGFloat = 0
     private static let noNotchScreenTopOverlap: CGFloat = 2
     private static let notchClearanceGap: CGFloat = 4
-    private static let mainPanelGapBelowCapture: CGFloat = 10
+    private static let mainPanelGapBelowCapture: CGFloat = 8
     private static let screenEdgePadding: CGFloat = 12
     private static let escapeKeyCode: UInt16 = 53
 
@@ -490,8 +490,8 @@ final class OpenClickyNotchCaptureWindowManager {
         hostingView.wantsLayer = true
         hostingView.layerContentsRedrawPolicy = .duringViewResize
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor
-        hostingView.layer?.cornerRadius = 28
-        hostingView.layer?.masksToBounds = true
+        hostingView.layer?.cornerRadius = 0
+        hostingView.layer?.masksToBounds = false
         if #available(macOS 10.15, *) {
             hostingView.layer?.cornerCurve = .continuous
         }
@@ -527,7 +527,7 @@ final class OpenClickyNotchCaptureWindowManager {
         glassBackdrop.autoresizingMask = [.width, .height]
         glassBackdrop.configure(
             cornerRadius: 28,
-            roundsTopCorners: true,
+            roundsTopCorners: false,
             accentColor: Self.nsAccentColor(for: nil),
             strength: .expanded
         )
