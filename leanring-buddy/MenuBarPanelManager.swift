@@ -339,7 +339,7 @@ final class MenuBarPanelManager: NSObject {
         )
 
         menuBarPanel.isFloatingPanel = true
-        menuBarPanel.level = .floating
+        OpenClickyWindowLevels.applyPanelDialogLevel(to: menuBarPanel)
         menuBarPanel.isOpaque = false
         menuBarPanel.backgroundColor = .clear
         menuBarPanel.hasShadow = false
@@ -596,13 +596,15 @@ final class MenuBarPanelManager: NSObject {
 
         // Keep the panel visually consistent (floating + no title bar) in both
         // pinned and transient modes. Pinning now only controls auto-dismiss.
+        // It still needs the shared dialog level so menu-bar overlays stay
+        // above the main panel instead of tucking underneath it.
         panel.styleMask = [.borderless, .nonactivatingPanel, .resizable]
         panel.title = ""
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
         panel.isMovableByWindowBackground = true
         panel.isFloatingPanel = true
-        panel.level = .floating
+        OpenClickyWindowLevels.applyPanelDialogLevel(to: panel)
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false

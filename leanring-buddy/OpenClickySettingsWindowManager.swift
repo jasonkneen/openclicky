@@ -8,7 +8,6 @@ final class OpenClickySettingsWindowManager {
     private var glassBackdrop: OpenClickyLiquidGlassBackdropView?
     private let windowSize = NSSize(width: 1120, height: 760)
     private let minimumWindowSize = NSSize(width: 1040, height: 660)
-    private let settingsWindowLevel = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
 
     func show(companionManager: CompanionManager) {
         if window == nil {
@@ -31,7 +30,7 @@ final class OpenClickySettingsWindowManager {
     private func bringSettingsWindowToFront(_ settingsWindow: NSWindow, shouldCenter: Bool) {
         // The main OpenClicky panel uses `.statusBar`, so Settings must sit one
         // level above it instead of the default floating level.
-        settingsWindow.level = settingsWindowLevel
+        OpenClickyWindowLevels.applyPanelDialogLevel(to: settingsWindow)
         settingsWindow.collectionBehavior.insert(.moveToActiveSpace)
         settingsWindow.collectionBehavior.insert(.fullScreenAuxiliary)
         ensureSettingsWindowFitsContent(settingsWindow, shouldCenter: shouldCenter)
@@ -83,7 +82,7 @@ final class OpenClickySettingsWindowManager {
         settingsWindow.isOpaque = false
         settingsWindow.backgroundColor = .clear
         settingsWindow.hasShadow = true
-        settingsWindow.level = settingsWindowLevel
+        OpenClickyWindowLevels.applyPanelDialogLevel(to: settingsWindow)
         settingsWindow.collectionBehavior.insert(.moveToActiveSpace)
         settingsWindow.collectionBehavior.insert(.fullScreenAuxiliary)
         settingsWindow.center()
@@ -192,6 +191,7 @@ struct OpenClickySettingsView: View {
     @AppStorage(AppBundleConfiguration.userMCPDeveloperDocsEnabledDefaultsKey) private var mcpDeveloperDocsEnabled = false
     @AppStorage(AppBundleConfiguration.userMCPComputerUseEnabledDefaultsKey) private var mcpComputerUseEnabled = false
     @AppStorage(AppBundleConfiguration.userMCPCuaDriverCommandDefaultsKey) private var mcpCuaDriverCommand = CuaDriverMCPConfiguration.resolvedCommandPath() ?? ""
+    @AppStorage(AppBundleConfiguration.userDesktopNotificationsEnabledDefaultsKey) private var desktopNotificationsEnabled = true
     @AppStorage(AppBundleConfiguration.userWidgetsEnabledDefaultsKey) private var widgetsEnabled = false
     @AppStorage(AppBundleConfiguration.userWidgetsIncludeAgentTaskNamesDefaultsKey) private var widgetsIncludeAgentTaskNames = false
     @AppStorage(AppBundleConfiguration.userWidgetsIncludeMemorySnippetsDefaultsKey) private var widgetsIncludeMemorySnippets = false
@@ -535,7 +535,7 @@ struct OpenClickySettingsView: View {
             }
 
             settingsGroup("Cursor appearance") {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 14) {
                     Text("Pick OpenClicky’s cursor buddy and accent color. Pets ignore the color tint, but the accent still drives glows, buttons, and task badges.")
                         .font(appUIFont(size: subtextFontSize, weight: .regular))
                         .foregroundColor(.secondary)
@@ -566,6 +566,7 @@ struct OpenClickySettingsView: View {
 
                     openPetsCatalogSection
                 }
+                .padding(14)
             }
         }
     }
@@ -1060,6 +1061,27 @@ struct OpenClickySettingsView: View {
                     isGranted: companionManager.hasFullDiskAccessPermission,
                     settingsURL: OpenClickyMacPrivacyPermissionProbe.fullDiskAccessSettingsURL
                 )
+            }
+
+            settingsGroup("Desktop notifications") {
+                toggleRow(
+                    title: "Task-complete notifications",
+                    subtitle: "Shows native macOS banners when OpenClicky background agents finish, stop, or are cancelled.",
+                    systemImageName: "bell.badge",
+                    isOn: Binding(
+                        get: { desktopNotificationsEnabled },
+                        set: { newValue in
+                            desktopNotificationsEnabled = newValue
+                            if newValue {
+                                OpenClickyDesktopNotificationCenter.shared.requestAuthorizationForUserAction()
+                            }
+                        }
+                    )
+                )
+                actionRow(title: "Send test notification", systemImageName: "bell") {
+                    desktopNotificationsEnabled = true
+                    OpenClickyDesktopNotificationCenter.shared.postTestNotification()
+                }
             }
 
             settingsGroup("Actions") {
@@ -2053,6 +2075,15 @@ struct OpenClickySettingsView: View {
                 }
             }
         }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.62))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        )
         .onAppear {
             openPetsCatalog.loadInitialCatalogIfNeeded()
         }

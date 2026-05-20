@@ -487,6 +487,7 @@ final class WikiViewerPanelManager {
             updatePanel(index: index, sourceRootURL: sourceRootURL, onCreateMemory: onCreateMemory)
         }
 
+        OpenClickyWindowLevels.applyPanelDialogLevel(to: panel)
         panel?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -528,6 +529,9 @@ final class WikiViewerPanelManager {
         window.titlebarAppearsTransparent = true
         window.backgroundColor = NSColor.clear
         window.isReleasedWhenClosed = false
+        OpenClickyWindowLevels.applyPanelDialogLevel(to: window)
+        window.collectionBehavior.insert(.moveToActiveSpace)
+        window.collectionBehavior.insert(.fullScreenAuxiliary)
         window.center()
         window.setContentSize(NSSize(width: 1180, height: 860))
         window.minSize = NSSize(width: 760, height: 520)

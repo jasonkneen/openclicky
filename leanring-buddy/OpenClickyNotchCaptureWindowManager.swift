@@ -16,6 +16,17 @@ private final class OpenClickyNotchCapturePanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
+enum OpenClickyWindowLevels {
+    /// The main OpenClicky panel sits at `.statusBar`; first-party dialogs and
+    /// document windows need to float one step above it so they never tuck
+    /// underneath when launched from the panel.
+    static let panelDialog = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
+
+    static func applyPanelDialogLevel(to window: NSWindow?) {
+        window?.level = panelDialog
+    }
+}
+
 enum OpenClickyNotchVoicePhase {
     case idle
     case listening
@@ -107,6 +118,7 @@ final class OpenClickyNotchCaptureWindowManager {
     private var mainPanelEscapeKeyMonitor: Any?
     private var mainPanelContentSizeObserver: NSObjectProtocol?
     private var accentThemeObserver: NSObjectProtocol?
+    private var mainPanelContentResizeWorkItem: DispatchWorkItem?
     private var isMainPanelUserResizing = false
     private var mainPanelUserPreferredSize: NSSize?
     private var mainPanelPreferredContentHeight: CGFloat?
@@ -217,11 +229,7 @@ final class OpenClickyNotchCaptureWindowManager {
         ) { [weak self] notification in
             let preferredHeight = Self.mainPanelPreferredHeight(from: notification)
             Task { @MainActor [weak self] in
-                if let preferredHeight {
-                    self?.mainPanelPreferredContentHeight = preferredHeight
-                }
-                self?.refreshMainPanelMinimumSize(preferredHeight: preferredHeight)
-                self?.resizeVisibleMainPanelToCurrentContent(animated: true)
+                self?.scheduleVisibleMainPanelResize(preferredHeight: preferredHeight)
             }
         }
         let foregroundApp = Self.detectForegroundApp()
@@ -938,6 +946,26 @@ final class OpenClickyNotchCaptureWindowManager {
             animate: false
         )
         mainHostingView?.frame = NSRect(origin: .zero, size: size)
+    }
+
+    private func scheduleVisibleMainPanelResize(preferredHeight: CGFloat?) {
+        if let preferredHeight {
+            mainPanelPreferredContentHeight = preferredHeight
+        }
+        refreshMainPanelMinimumSize(preferredHeight: preferredHeight)
+
+        mainPanelContentResizeWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            // Content-size notifications can arrive in clusters while SwiftUI
+            // swaps tab bodies, attaches files, or streams chat rows. Animating
+            // each intermediate window frame is what makes the panel visibly
+            // shudder up and down, so coalesce them and apply the final size
+            // without AppKit's window-frame animation.
+            self.resizeVisibleMainPanelToCurrentContent(animated: false)
+        }
+        mainPanelContentResizeWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.04, execute: workItem)
     }
 
     private func resizeVisibleMainPanelToCurrentContent(animated: Bool) {

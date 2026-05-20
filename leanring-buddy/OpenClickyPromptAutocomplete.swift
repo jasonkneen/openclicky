@@ -41,7 +41,7 @@ enum OpenClickyPromptAutocomplete {
         || option.subtitle.lowercased().contains(query)
         || option.completion.lowercased().contains(query)
     }
-    return Array(filtered.prefix(7))
+    return filtered
   }
 
   @discardableResult
@@ -140,51 +140,66 @@ enum OpenClickyPromptAutocomplete {
 }
 
 struct OpenClickyPromptAutocompletePanel: View {
+  private static let visibleOptionLimit = 5
+  private static let estimatedOptionHeight: CGFloat = 42
+  private static let optionSpacing: CGFloat = 4
+  private static let chromePadding: CGFloat = 10
+
   let options: [OpenClickyPromptAutocompleteOption]
   let select: (OpenClickyPromptAutocompleteOption) -> Void
 
   var body: some View {
     if !options.isEmpty {
-      VStack(alignment: .leading, spacing: 4) {
-        ForEach(options) { option in
-          Button {
-            select(option)
-          } label: {
-            HStack(spacing: 8) {
-              Image(systemName: option.systemImage)
-                .font(.system(size: 11, weight: .bold))
-                .foregroundColor(DS.Colors.accentText)
-                .frame(width: 18)
-              VStack(alignment: .leading, spacing: 1) {
-                Text(option.title)
-                  .font(.system(size: 11, weight: .heavy))
-                  .foregroundColor(DS.Colors.textPrimary)
-                  .lineLimit(1)
-                Text(option.subtitle)
-                  .font(.system(size: 9, weight: .semibold))
-                  .foregroundColor(DS.Colors.textSecondary)
-                  .lineLimit(1)
+      ScrollView {
+        VStack(alignment: .leading, spacing: Self.optionSpacing) {
+          ForEach(options) { option in
+            Button {
+              select(option)
+            } label: {
+              HStack(spacing: 8) {
+                Image(systemName: option.systemImage)
+                  .font(.system(size: 11, weight: .bold))
+                  .foregroundColor(DS.Colors.accentText)
+                  .frame(width: 18)
+                VStack(alignment: .leading, spacing: 1) {
+                  Text(option.title)
+                    .font(.system(size: 11, weight: .heavy))
+                    .foregroundColor(DS.Colors.textPrimary)
+                    .lineLimit(1)
+                  Text(option.subtitle)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(DS.Colors.textSecondary)
+                    .lineLimit(1)
+                }
+                Spacer(minLength: 6)
+                Text("Tab")
+                  .font(.system(size: 8, weight: .black, design: .rounded))
+                  .foregroundColor(DS.Colors.textTertiary)
+                  .padding(.horizontal, 5)
+                  .padding(.vertical, 3)
+                  .background(Capsule(style: .continuous).fill(Color.white.opacity(0.08)))
               }
-              Spacer(minLength: 6)
-              Text("Tab")
-                .font(.system(size: 8, weight: .black, design: .rounded))
-                .foregroundColor(DS.Colors.textTertiary)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 3)
-                .background(Capsule(style: .continuous).fill(Color.white.opacity(0.08)))
+              .padding(.horizontal, 9)
+              .padding(.vertical, 7)
+              .contentShape(Rectangle())
             }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 7)
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .pointerCursor()
           }
-          .buttonStyle(.plain)
-          .pointerCursor()
         }
       }
+      .frame(maxHeight: maxPanelHeight)
       .padding(5)
       .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(DS.Colors.surface1.opacity(0.98)))
       .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(DS.Colors.borderSubtle, lineWidth: 0.8))
       .shadow(color: Color.black.opacity(0.22), radius: 16, x: 0, y: 8)
     }
+  }
+
+  private var maxPanelHeight: CGFloat {
+    let visibleCount = min(options.count, Self.visibleOptionLimit)
+    let rows = CGFloat(visibleCount) * Self.estimatedOptionHeight
+    let spacing = CGFloat(max(visibleCount - 1, 0)) * Self.optionSpacing
+    return rows + spacing + Self.chromePadding
   }
 }

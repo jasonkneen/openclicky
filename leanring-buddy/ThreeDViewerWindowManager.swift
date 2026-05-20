@@ -46,6 +46,7 @@ final class ThreeDViewerWindowManager: ObservableObject {
         if window == nil {
             window = makeWindow()
         }
+        OpenClickyWindowLevels.applyPanelDialogLevel(to: window)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -72,7 +73,9 @@ final class ThreeDViewerWindowManager: ObservableObject {
         window.isOpaque = false
         window.backgroundColor = .clear
         window.isReleasedWhenClosed = false
-        window.level = .floating
+        OpenClickyWindowLevels.applyPanelDialogLevel(to: window)
+        window.collectionBehavior.insert(.moveToActiveSpace)
+        window.collectionBehavior.insert(.fullScreenAuxiliary)
         window.center()
         window.setFrameAutosaveName("OpenClicky.ThreeDViewerWindow")
         OpenClickyLiquidGlassWindowSurface.install(

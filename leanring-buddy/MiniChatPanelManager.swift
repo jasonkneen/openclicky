@@ -109,6 +109,7 @@ final class MiniChatPanelManager: NSObject {
 
   func show(session: CodexAgentSession, companion: CompanionManager) {
     if let existing = panels[session.id] {
+      OpenClickyWindowLevels.applyPanelDialogLevel(to: existing)
       existing.orderFrontRegardless()
       NSApp.activate(ignoringOtherApps: true)
       return
@@ -135,6 +136,7 @@ final class MiniChatPanelManager: NSObject {
     panel.isOpaque = false
     panel.backgroundColor = .clear
     panel.isMovableByWindowBackground = false
+    OpenClickyWindowLevels.applyPanelDialogLevel(to: panel)
     panel.collectionBehavior = [.fullScreenAuxiliary]
     panel.hasShadow = true
     panel.minSize = NSSize(width: 320, height: 400)

@@ -25,6 +25,7 @@ final class OpenClickyMarkdownViewerWindowManager {
         }
 
         window?.title = standardizedURL.lastPathComponent
+        OpenClickyWindowLevels.applyPanelDialogLevel(to: window)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -51,6 +52,9 @@ final class OpenClickyMarkdownViewerWindowManager {
         window.titlebarAppearsTransparent = true
         window.backgroundColor = NSColor.clear
         window.isReleasedWhenClosed = false
+        OpenClickyWindowLevels.applyPanelDialogLevel(to: window)
+        window.collectionBehavior.insert(.moveToActiveSpace)
+        window.collectionBehavior.insert(.fullScreenAuxiliary)
         window.center()
         window.minSize = NSSize(width: 720, height: 460)
         window.contentMinSize = NSSize(width: 720, height: 460)
@@ -72,6 +76,14 @@ private struct OpenClickyMarkdownViewerView: View {
         case split = "Split"
 
         var id: String { rawValue }
+
+        var systemImage: String {
+            switch self {
+            case .preview: "doc.richtext"
+            case .raw: "chevron.left.forwardslash.chevron.right"
+            case .split: "rectangle.split.2x1"
+            }
+        }
     }
 
     let fileURL: URL
@@ -144,27 +156,37 @@ private struct OpenClickyMarkdownViewerView: View {
 
             Picker("Markdown view", selection: $mode) {
                 ForEach(Mode.allCases) { mode in
-                    Text(mode.rawValue).tag(mode)
+                    Image(systemName: mode.systemImage)
+                        .help(mode.rawValue)
+                        .tag(mode)
                 }
             }
+            .labelsHidden()
             .pickerStyle(.segmented)
-            .frame(width: 230)
+            .frame(width: 132)
+            .help("Markdown view")
 
             Button(action: revealInFinder) {
                 Label("Reveal", systemImage: "folder")
+                    .labelStyle(.iconOnly)
             }
             .buttonStyle(.borderless)
+            .help("Reveal in Finder")
 
             Button(action: reloadDocument) {
                 Label("Reload", systemImage: "arrow.clockwise")
+                    .labelStyle(.iconOnly)
             }
             .buttonStyle(.borderless)
+            .help("Reload")
 
             Button(action: saveDocument) {
                 Label("Save", systemImage: "square.and.arrow.down")
+                    .labelStyle(.iconOnly)
             }
             .buttonStyle(.borderedProminent)
             .disabled(!hasUnsavedChanges)
+            .help("Save")
         }
         .padding(.horizontal, 20)
         .padding(.top, 20)

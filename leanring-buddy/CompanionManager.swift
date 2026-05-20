@@ -8425,6 +8425,17 @@ final class CompanionManager: ObservableObject {
         return cleanedAgentTaskInstruction(candidate)
     }
 
+    static func shouldEscalateVoiceResponseToAgent(responseText: String, transcript: String) -> Bool {
+        let normalizedTranscript = normalizedSpokenCommandText(transcript)
+        let isAgentSuitableTask = isLocalFilesystemInspectionRequest(normalizedTranscript)
+            || implicitAgentTaskInstruction(from: transcript) != nil
+        guard isAgentSuitableTask else { return false }
+
+        let normalizedResponse = normalizedSpokenCommandText(responseText)
+        let refusalPattern = #"\b(?:i\s+(?:do\s+not|don't|dont)\s+have\s+access|i\s+(?:can't|cannot)|unable\s+to|not\s+able\s+to)\b.{0,96}\b(?:file\s*system|files?|folders?|desktop|downloads?|documents?|browse|inspect|read)\b"#
+        return normalizedResponse.range(of: refusalPattern, options: .regularExpression) != nil
+    }
+
     static func implicitFilesystemTaskInstruction(from transcript: String) -> String? {
         let candidate = normalizedCommandCandidate(from: transcript)
         let normalized = normalizedSpokenCommandText(candidate)
@@ -13386,7 +13397,7 @@ final class ClickyTextModeWindowManager {
         )
 
         textModePanel.isFloatingPanel = true
-        textModePanel.level = .floating
+        OpenClickyWindowLevels.applyPanelDialogLevel(to: textModePanel)
         textModePanel.isOpaque = false
         textModePanel.backgroundColor = .clear
         textModePanel.hasShadow = false

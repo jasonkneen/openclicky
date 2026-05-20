@@ -570,14 +570,7 @@ struct OpenClickyNotchPanelView: View {
     }
 
     private var topStatusRail: some View {
-        HStack(spacing: 0) {
-            statusRailItem {
-                statusPill(
-                    title: activeVoiceLabel,
-                    systemImageName: activeVoiceIcon,
-                    color: activeVoiceAccent
-                )
-            }
+        HStack(spacing: 7) {
             Button {
                 selectedTab = .agents
             } label: {
@@ -590,21 +583,21 @@ struct OpenClickyNotchPanelView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Show OpenClicky agents")
             .help("Show OpenClicky agents")
-            .frame(maxWidth: .infinity, alignment: .center)
-            statusRailItem {
-                statusPill(
-                    title: companionManager.allPermissionsGranted ? "Permission" : "Needs perms",
-                    systemImageName: companionManager.allPermissionsGranted ? "checkmark.shield.fill" : "exclamationmark.shield.fill",
-                    color: companionManager.allPermissionsGranted ? .green : .orange
-                )
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .center)
-    }
 
-    private func statusRailItem<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        content()
-            .frame(maxWidth: .infinity, alignment: .center)
+            statusPill(
+                title: companionManager.allPermissionsGranted ? "Permissions" : "Needs permissions",
+                systemImageName: companionManager.allPermissionsGranted ? "checkmark.shield.fill" : "exclamationmark.shield.fill",
+                color: companionManager.allPermissionsGranted ? .green : .orange
+            )
+
+            statusPill(
+                title: activeVoiceLabel,
+                systemImageName: activeVoiceIcon,
+                color: activeVoiceAccent
+            )
+        }
+        .padding(.leading, 2)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
     }
 
     private var tabStrip: some View {
@@ -1145,7 +1138,7 @@ struct OpenClickyNotchPanelView: View {
             }
 
             HStack(spacing: 8) {
-                secondaryActionButton(title: "New prompt", systemImageName: "plus.message.fill") {
+                secondaryActionButton(title: "New Request", systemImageName: "plus.message.fill") {
                     selectedTab = .home
                 }
 
@@ -1477,15 +1470,10 @@ struct OpenClickyNotchPanelView: View {
                         ) ? .handled : .ignored
                     }
                 Button(action: submitQuickPrompt) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "paperplane.fill")
-                            .font(panelUIFont(size: 12, weight: .black))
-                        Text("Send")
-                            .font(panelUIFont(size: 11, weight: .heavy))
-                    }
-                    .foregroundColor(DS.Colors.textOnAccent)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
+                    Image(systemName: "paperplane.fill")
+                        .font(panelUIFont(size: 13, weight: .black))
+                        .foregroundColor(DS.Colors.textOnAccent)
+                        .frame(width: 34, height: 30)
                     .background(
                         Capsule(style: .continuous)
                             .fill(LinearGradient(colors: [DS.Colors.accent, DS.Colors.accentHover], startPoint: .topLeading, endPoint: .bottomTrailing))
@@ -2197,15 +2185,10 @@ struct OpenClickyNotchPanelView: View {
                 Button {
                     submitExpandedAgentPrompt(to: session)
                 } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "paperplane.fill")
-                            .font(panelUIFont(size: 12, weight: .black))
-                        Text("Send")
-                            .font(panelUIFont(size: 11, weight: .heavy))
-                    }
-                    .foregroundColor(DS.Colors.textOnAccent)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
+                    Image(systemName: "paperplane.fill")
+                        .font(panelUIFont(size: 13, weight: .black))
+                        .foregroundColor(DS.Colors.textOnAccent)
+                        .frame(width: 34, height: 30)
                     .background(
                         Capsule(style: .continuous)
                             .fill(LinearGradient(colors: [DS.Colors.accent, DS.Colors.accentHover], startPoint: .topLeading, endPoint: .bottomTrailing))
@@ -2363,20 +2346,15 @@ struct OpenClickyNotchPanelView: View {
     }
 
     private func statusPill(title: String, systemImageName: String, color: Color) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: systemImageName)
-                .font(appUIFont(size: max(13, subtextFontSize + 2), weight: .heavy))
-            Text(title)
-                .font(appUIFont(size: max(11, subtextFontSize), weight: .heavy))
-        }
-        .foregroundColor(color)
-        .lineLimit(1)
-        .fixedSize(horizontal: true, vertical: false)
-        .padding(.horizontal, max(9, subtextFontSize * 0.72))
-        .padding(.vertical, max(6, subtextFontSize * 0.50))
-        .background(Capsule(style: .continuous).fill(color.opacity(0.105)))
-        .overlay(Capsule(style: .continuous).stroke(color.opacity(0.18), lineWidth: 1))
-        .help(title)
+        Image(systemName: systemImageName)
+            .font(appUIFont(size: max(14, subtextFontSize + 3), weight: .heavy))
+            .foregroundColor(color)
+            .lineLimit(1)
+            .frame(width: max(30, subtextFontSize * 2.45), height: max(30, subtextFontSize * 2.45))
+            .background(Circle().fill(color.opacity(0.105)))
+            .overlay(Circle().stroke(color.opacity(0.18), lineWidth: 1))
+            .accessibilityLabel(title)
+            .help(title)
     }
 
     private func primaryActionButton(title: String, systemImageName: String, action: @escaping () -> Void) -> some View {

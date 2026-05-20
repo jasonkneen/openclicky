@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import Combine
 
 nonisolated struct OpenPetsCatalogPet: Identifiable, Decodable, Equatable {
     let id: String
@@ -68,6 +69,8 @@ nonisolated enum OpenPetsCatalogInstallerError: LocalizedError {
 
 @MainActor
 final class OpenPetsCatalogStore: ObservableObject {
+    let objectWillChange = ObservableObjectPublisher()
+
     @Published private(set) var pets: [OpenPetsCatalogPet] = []
     @Published private(set) var totalCount: Int = 0
     @Published private(set) var loadedPageCount: Int = 0
@@ -105,7 +108,11 @@ final class OpenPetsCatalogStore: ObservableObject {
         Task { await loadNextPage() }
     }
 
-    func install(_ pet: OpenPetsCatalogPet, into library: ClickyBuddyPetLibrary = .shared) {
+    func install(_ pet: OpenPetsCatalogPet) {
+        install(pet, into: .shared)
+    }
+
+    func install(_ pet: OpenPetsCatalogPet, into library: ClickyBuddyPetLibrary) {
         guard !installingPetIDs.contains(pet.id) else { return }
         installingPetIDs.insert(pet.id)
         errorMessage = nil

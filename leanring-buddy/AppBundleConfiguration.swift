@@ -44,6 +44,7 @@ nonisolated enum AppBundleConfiguration {
     static let userMCPDeveloperDocsEnabledDefaultsKey = "openClickyMCPDeveloperDocsEnabled"
     static let userMCPComputerUseEnabledDefaultsKey = "openClickyMCPComputerUseEnabled"
     static let userMCPCuaDriverCommandDefaultsKey = "openClickyMCPCuaDriverCommand"
+    static let userDesktopNotificationsEnabledDefaultsKey = "openClickyDesktopNotificationsEnabled"
     static let userWidgetsEnabledDefaultsKey = "openClickyWidgetsEnabled"
     static let userWidgetsIncludeAgentTaskNamesDefaultsKey = "openClickyWidgetsIncludeAgentTaskNames"
     static let userWidgetsIncludeMemorySnippetsDefaultsKey = "openClickyWidgetsIncludeMemorySnippets"

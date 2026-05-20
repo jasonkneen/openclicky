@@ -24,11 +24,23 @@ final class OpenClickyDesktopNotificationCenter: NSObject, UNUserNotificationCen
         center.delegate = self
         center.getNotificationSettings { [weak self] settings in
             guard let self else { return }
-            if settings.authorizationStatus == .notDetermined {
-                self.requestAuthorization(reason: "startup")
-            } else {
-                self.logAuthorizationStatus(settings.authorizationStatus, reason: "startup")
-            }
+            self.logAuthorizationStatus(settings.authorizationStatus, reason: "startup")
+        }
+    }
+
+    func requestAuthorizationForUserAction() {
+        requestAuthorization(reason: "settings")
+    }
+
+    func postTestNotification() {
+        requestAuthorization(reason: "settings_test") { [weak self] granted in
+            guard granted else { return }
+            _ = self?.post(
+                title: "OpenClicky notifications are on",
+                body: "Task-complete alerts will appear here without stealing focus.",
+                threadID: "openclicky.settings",
+                userInfo: ["source": "settings_test"]
+            )
         }
     }
 
@@ -44,6 +56,18 @@ final class OpenClickyDesktopNotificationCenter: NSObject, UNUserNotificationCen
     ) -> String {
         let trimmedTitle = Self.cleaned(title, fallback: "OpenClicky")
         let trimmedBody = Self.cleaned(body, fallback: "OpenClicky has an update.")
+        guard Self.notificationsEnabled else {
+            logDeliveryResult(
+                event: "openclicky.desktop_notification.disabled",
+                fields: [
+                    "identifier": identifier,
+                    "title": trimmedTitle,
+                    "bodyLength": trimmedBody.count
+                ]
+            )
+            return identifier
+        }
+
         let content = UNMutableNotificationContent()
         content.title = trimmedTitle
         content.body = trimmedBody
@@ -171,6 +195,14 @@ final class OpenClickyDesktopNotificationCenter: NSObject, UNUserNotificationCen
         case .ephemeral: return "ephemeral"
         @unknown default: return "unknown"
         }
+    }
+
+    private static var notificationsEnabled: Bool {
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: AppBundleConfiguration.userDesktopNotificationsEnabledDefaultsKey) == nil {
+            return true
+        }
+        return defaults.bool(forKey: AppBundleConfiguration.userDesktopNotificationsEnabledDefaultsKey)
     }
 
     nonisolated func userNotificationCenter(

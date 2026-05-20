@@ -16,6 +16,7 @@ final class OpenClickyLogViewerWindowManager {
 
         guard let logWindow = window else { return }
         NSApp.activate(ignoringOtherApps: true)
+        OpenClickyWindowLevels.applyPanelDialogLevel(to: logWindow)
         logWindow.center()
         logWindow.orderFrontRegardless()
         logWindow.makeKeyAndOrderFront(nil)
@@ -34,6 +35,7 @@ final class OpenClickyLogViewerWindowManager {
         logWindow.isReleasedWhenClosed = false
         logWindow.titlebarAppearsTransparent = true
         logWindow.toolbarStyle = .unified
+        OpenClickyWindowLevels.applyPanelDialogLevel(to: logWindow)
         logWindow.collectionBehavior.insert(.moveToActiveSpace)
         logWindow.center()
 

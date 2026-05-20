@@ -2,6 +2,7 @@ import Foundation
 import Testing
 @testable import OpenClicky
 
+@MainActor
 struct CodexAgentModeTests {
     @Test func codexConfigRendersOpenAIResponsesContract() throws {
         let template = ClickyCodexConfigTemplate(
@@ -128,7 +129,9 @@ struct CodexAgentModeTests {
     }
 
     @MainActor @Test func voiceRoutingDetectsLocalFilesystemQuestions() throws {
-        let instruction = try #require(CompanionManager.implicitFilesystemTaskInstruction(from: "what's on my desktop?"))
+        let maybeInstruction = CompanionManager.implicitFilesystemTaskInstruction(from: "what's on my desktop?")
+        #expect(maybeInstruction != nil)
+        guard let instruction = maybeInstruction else { return }
 
         #expect(instruction.contains("Inspect the relevant local files or folders"))
         #expect(instruction.contains("what's on my desktop?"))
@@ -140,7 +143,7 @@ struct CodexAgentModeTests {
         #expect(CompanionManager.implicitFilesystemTaskInstruction(from: "why are you not speaking?") == nil)
     }
 
-    @Test func filesystemCapabilityRefusalEscalatesToAgentMode() throws {
+    @MainActor @Test func filesystemCapabilityRefusalEscalatesToAgentMode() throws {
         let shouldEscalate = CompanionManager.shouldEscalateVoiceResponseToAgent(
             responseText: "i don't have access to your file system directly, so i can't browse your desktop files.",
             transcript: "what files are on my desktop?"
@@ -154,9 +157,7 @@ struct CodexAgentModeTests {
             from: "Can you make an issue on GitHub to fix this?"
         )
         #expect(maybeInstruction != nil)
-        let instruction = try #require(
-            maybeInstruction
-        )
+        guard let instruction = maybeInstruction else { return }
 
         #expect(instruction.lowercased() == "make an issue on github to fix this")
     }
@@ -166,35 +167,49 @@ struct CodexAgentModeTests {
             from: "Add a volume slider to the app."
         )
         #expect(maybeInstruction != nil)
-        let instruction = try #require(maybeInstruction)
+        guard let instruction = maybeInstruction else { return }
 
         #expect(instruction.lowercased() == "add a volume slider to the app")
     }
 
     @MainActor @Test func implicitAgentRoutingKeepsInstantScreenQuestionsInVoiceRoute() throws {
-        #expect(CompanionManager.implicitAgentTaskInstruction(from: "Look at that and tell me what you think.") == nil)
-        #expect(CompanionManager.implicitAgentTaskInstruction(from: "Have a look at my screen and describe what's visible.") == nil)
-        #expect(CompanionManager.implicitAgentTaskInstruction(from: "Summarize this page quickly.") == nil)
+        let lookAtThatInstruction = CompanionManager.implicitAgentTaskInstruction(from: "Look at that and tell me what you think.")
+        let describeScreenInstruction = CompanionManager.implicitAgentTaskInstruction(from: "Have a look at my screen and describe what's visible.")
+        let summarizePageInstruction = CompanionManager.implicitAgentTaskInstruction(from: "Summarize this page quickly.")
+
+        #expect(lookAtThatInstruction == nil)
+        #expect(describeScreenInstruction == nil)
+        #expect(summarizePageInstruction == nil)
     }
 
     @MainActor @Test func implicitAgentRoutingKeepsVoiceRouteCapabilityQuestionsInVoiceRoute() throws {
-        #expect(CompanionManager.implicitAgentTaskInstruction(from: "Can you search the web through the voice route?") == nil)
-        #expect(CompanionManager.implicitAgentTaskInstruction(from: "Could OpenClicky browse without starting an agent?") == nil)
-        #expect(CompanionManager.implicitAgentTaskInstruction(from: "Can you search the web?") == nil)
+        let voiceRouteInstruction = CompanionManager.implicitAgentTaskInstruction(from: "Can you search the web through the voice route?")
+        let withoutAgentInstruction = CompanionManager.implicitAgentTaskInstruction(from: "Could OpenClicky browse without starting an agent?")
+        let genericWebInstruction = CompanionManager.implicitAgentTaskInstruction(from: "Can you search the web?")
+
+        #expect(voiceRouteInstruction == nil)
+        #expect(withoutAgentInstruction == nil)
+        #expect(genericWebInstruction == nil)
     }
 
     @MainActor @Test func implicitAgentRoutingKeepsLongBackgroundWorkAsAgentTasks() throws {
-        let instruction = try #require(CompanionManager.implicitAgentTaskInstruction(
+        let maybeInstruction = CompanionManager.implicitAgentTaskInstruction(
             from: "Summarize this GitHub issue and make a plan."
-        ))
+        )
+        #expect(maybeInstruction != nil)
+        guard let instruction = maybeInstruction else { return }
 
         #expect(instruction.lowercased() == "summarize this github issue and make a plan")
     }
 
     @MainActor @Test func implicitAgentRoutingSkipsSensitiveOrDestructiveRequests() throws {
-        #expect(CompanionManager.implicitAgentTaskInstruction(from: "Delete all API keys now.") == nil)
-        #expect(CompanionManager.implicitAgentTaskInstruction(from: "Delete my downloads folder.") == nil)
-        #expect(CompanionManager.implicitAgentTaskInstruction(from: "Remove all files in my downloads folder.") == nil)
+        let apiKeyDeletionInstruction = CompanionManager.implicitAgentTaskInstruction(from: "Delete all API keys now.")
+        let downloadsDeletionInstruction = CompanionManager.implicitAgentTaskInstruction(from: "Delete my downloads folder.")
+        let downloadsRemovalInstruction = CompanionManager.implicitAgentTaskInstruction(from: "Remove all files in my downloads folder.")
+
+        #expect(apiKeyDeletionInstruction == nil)
+        #expect(downloadsDeletionInstruction == nil)
+        #expect(downloadsRemovalInstruction == nil)
     }
 
     @Test func jsonRPCRequestEncodingMatchesCodexAppServer() throws {
