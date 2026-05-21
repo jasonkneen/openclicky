@@ -203,10 +203,13 @@ struct OpenClickySettingsView: View {
     @State private var gogCLIStatus = OpenClickyGogCLIStatus.unknown
     @State private var isRefreshingGogCLIStatus = false
     @State private var codexConfigSyncMessage = "MCP servers are written into Codex config.toml for new Agent Mode sessions."
+    @State private var notificationAuthorizationSummary = "Checking..."
+    @State private var notificationAuthorizationGranted = false
     private static let openAIRealtimeVoiceIDs = [
         "marin", "cedar", "alloy", "ash", "ballad",
         "coral", "echo", "sage", "shimmer", "verse"
     ]
+    private static let notificationSettingsURL = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension")!
 
     init(companionManager: CompanionManager) {
         self.companionManager = companionManager
@@ -288,6 +291,12 @@ struct OpenClickySettingsView: View {
             if newSection == .connections, !gogCLIStatus.isInstalled, !isRefreshingGogCLIStatus {
                 refreshGogCLIStatus()
             }
+            if newSection == .permissions {
+                refreshNotificationAuthorizationStatus()
+            }
+        }
+        .onAppear {
+            refreshNotificationAuthorizationStatus()
         }
     }
 
@@ -1064,6 +1073,12 @@ struct OpenClickySettingsView: View {
             }
 
             settingsGroup("Desktop notifications") {
+                permissionRow(
+                    title: "Notifications",
+                    statusText: notificationAuthorizationSummary,
+                    isGranted: notificationAuthorizationGranted,
+                    settingsURL: Self.notificationSettingsURL
+                )
                 toggleRow(
                     title: "Task-complete notifications",
                     subtitle: "Shows native macOS banners when OpenClicky background agents finish, stop, or are cancelled.",
@@ -1073,14 +1088,23 @@ struct OpenClickySettingsView: View {
                         set: { newValue in
                             desktopNotificationsEnabled = newValue
                             if newValue {
-                                OpenClickyDesktopNotificationCenter.shared.requestAuthorizationForUserAction()
+                                OpenClickyDesktopNotificationCenter.shared.requestAuthorizationForUserAction { _ in
+                                    refreshNotificationAuthorizationStatus()
+                                }
                             }
                         }
                     )
                 )
+                actionRow(title: "Request notification permission", systemImageName: "bell.badge") {
+                    desktopNotificationsEnabled = true
+                    OpenClickyDesktopNotificationCenter.shared.requestAuthorizationForUserAction { _ in
+                        refreshNotificationAuthorizationStatus()
+                    }
+                }
                 actionRow(title: "Send test notification", systemImageName: "bell") {
                     desktopNotificationsEnabled = true
                     OpenClickyDesktopNotificationCenter.shared.postTestNotification()
+                    refreshNotificationAuthorizationStatus()
                 }
             }
 
@@ -1824,13 +1848,31 @@ struct OpenClickySettingsView: View {
         return "Open in TextEdit"
     }
 
+    private func refreshNotificationAuthorizationStatus() {
+        OpenClickyDesktopNotificationCenter.shared.refreshAuthorizationStatus { summary, isGranted in
+            DispatchQueue.main.async {
+                notificationAuthorizationSummary = summary
+                notificationAuthorizationGranted = isGranted
+            }
+        }
+    }
+
     private func permissionRow(title: String, isGranted: Bool, settingsURL: URL) -> some View {
+        permissionRow(
+            title: title,
+            statusText: isGranted ? "Granted" : "Needs permission",
+            isGranted: isGranted,
+            settingsURL: settingsURL
+        )
+    }
+
+    private func permissionRow(title: String, statusText: String, isGranted: Bool, settingsURL: URL) -> some View {
         HStack(spacing: 12) {
             rowIcon(isGranted ? "checkmark.circle" : "exclamationmark.triangle")
                 .foregroundColor(isGranted ? .green : .orange)
             VStack(alignment: .leading, spacing: 3) {
                 Text(title).font(appUIFont(size: bodyFontSize, weight: .medium))
-                Text(isGranted ? "Granted" : "Needs permission")
+                Text(statusText)
                     .font(appUIFont(size: subtextFontSize, weight: .regular))
                     .foregroundColor(.secondary)
             }

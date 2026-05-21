@@ -43,6 +43,9 @@ final class OpenClickyBrowserWorkspaceWindowManager {
         let containerView = NSView(frame: NSRect(x: 0, y: 0, width: 1320, height: 840))
         containerView.wantsLayer = true
         containerView.layer?.backgroundColor = NSColor.clear.cgColor
+        containerView.layer?.cornerRadius = 28
+        containerView.layer?.cornerCurve = .continuous
+        containerView.layer?.masksToBounds = true
 
         let glassBackdrop = OpenClickyLiquidGlassBackdropView(cornerRadius: 28)
         glassBackdrop.frame = containerView.bounds
@@ -68,6 +71,12 @@ final class OpenClickyBrowserWorkspaceWindowManager {
         window.title = "OpenClicky Browser Workspace"
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
+        window.toolbar = nil
+        window.toolbarStyle = .unifiedCompact
+        window.isMovableByWindowBackground = true
+        window.standardWindowButton(.closeButton)?.isHidden = true
+        window.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        window.standardWindowButton(.zoomButton)?.isHidden = true
         window.isOpaque = false
         window.backgroundColor = .clear
         window.isReleasedWhenClosed = false
@@ -101,6 +110,7 @@ private struct OpenClickyBrowserWorkspaceView: View {
     @State private var chatPanelWidthAtDragStart: CGFloat?
     @State private var isChatCollapsed = false
     @State private var isSplitDropTargeted = false
+    @State private var isChatDropTargeted = false
     @AppStorage(AppBundleConfiguration.userThemeDefaultsKey) private var selectedThemeRawValue = ClickyTheme.system.rawValue
     @AppStorage(ClickyAccentTheme.userDefaultsKey) private var selectedAccentRawValue = ClickyAccentTheme.blue.rawValue
     @AppStorage(AppBundleConfiguration.userGlassOpacityDefaultsKey) private var glassOpacity = 0.75
@@ -110,53 +120,70 @@ private struct OpenClickyBrowserWorkspaceView: View {
         _model = StateObject(wrappedValue: OpenClickyBrowserWorkspaceModel(initialURL: initialURL, companionManager: companionManager))
     }
 
+    private var selectedAccentTheme: ClickyAccentTheme {
+        ClickyAccentTheme(rawValue: selectedAccentRawValue) ?? .blue
+    }
+
+    private var accentColor: Color {
+        selectedAccentTheme.accent
+    }
+
+    private var isBrowserDarkMode: Bool {
+        switch ClickyTheme(rawValue: selectedThemeRawValue) ?? .system {
+        case .dark:
+            return true
+        case .light:
+            return false
+        case .system:
+            return DS.Colors.isDarkMode
+        }
+    }
+
     var body: some View {
-        HStack(spacing: 0) {
-            VStack(spacing: 0) {
+        HStack(alignment: .top, spacing: 6) {
+            VStack(spacing: 6) {
                 toolbar
-                Divider().overlay(Color.white.opacity(0.08))
-                workspaceCanvas
+                browserWorkspacePanel
+            }
+            .overlay(alignment: .topTrailing) {
+                titleBarControls
+                    .padding(.top, 2)
+                    .padding(.trailing, 8)
             }
             .frame(minWidth: 520)
 
             if !isChatCollapsed {
-                Divider().overlay(Color.white.opacity(0.08))
                 chatResizeHandle
                 chatPanel
                     .frame(width: chatPanelWidth)
             }
         }
-        .overlay(alignment: .topTrailing) {
-            if isChatCollapsed {
-                collapsedChatExpandButton
-            }
-        }
+        .padding(6)
         .background(
             LinearGradient(
                 colors: [
                     DS.Colors.background.opacity(backgroundOpacity),
                     DS.Colors.surface1.opacity(0.68 + glassFrosting * 0.10),
-                    DS.Colors.accent.opacity(0.10 + glassOpacity * 0.03)
+                    accentColor.opacity(0.10 + glassOpacity * 0.03)
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
         )
         .background(.ultraThinMaterial)
-        .id("\(selectedThemeRawValue)-\(selectedAccentRawValue)-\(glassOpacity)-\(glassFrosting)")
     }
 
     private var backgroundOpacity: Double {
-        DS.Colors.isDarkMode ? 0.60 + glassOpacity * 0.10 : 0.42 + glassOpacity * 0.12
+        isBrowserDarkMode ? 0.60 + glassOpacity * 0.10 : 0.42 + glassOpacity * 0.12
     }
 
     private var glassSurfaceFill: Color {
-        (DS.Colors.isDarkMode ? DS.Colors.surface1 : Color.white)
+        (isBrowserDarkMode ? DS.Colors.surface1 : Color.white)
             .opacity(0.42 + glassOpacity * 0.18 + glassFrosting * 0.06)
     }
 
     private var glassInsetFill: Color {
-        (DS.Colors.isDarkMode ? DS.Colors.surface2 : DS.Colors.surface1)
+        (isBrowserDarkMode ? DS.Colors.surface2 : DS.Colors.surface1)
             .opacity(0.34 + glassOpacity * 0.16)
     }
 
@@ -165,17 +192,28 @@ private struct OpenClickyBrowserWorkspaceView: View {
     }
 
     private var accentBorder: Color {
-        DS.Colors.accent.opacity(0.34 + glassFrosting * 0.20)
+        accentColor.opacity(0.34 + glassFrosting * 0.20)
+    }
+
+    private var browserWorkspacePanel: some View {
+        workspaceCanvas
+            .background(RoundedRectangle(cornerRadius: 24, style: .continuous).fill(glassSurfaceFill.opacity(0.72)))
+            .glassEffect(
+                .regular.tint(accentColor.opacity(0.035 + glassFrosting * 0.06)),
+                in: RoundedRectangle(cornerRadius: 24, style: .continuous)
+            )
+            .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(glassBorder))
+            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
 
     private var workspaceCanvas: some View {
         Group {
             if let splitTabID = model.splitTabID, model.hasTab(splitTabID), splitTabID != model.activeTabID {
-                HStack(spacing: 0) {
+                HStack(spacing: 6) {
                     browserPane(tabID: model.activeTabID, placement: .primary)
-                    Divider().overlay(glassBorder)
                     browserPane(tabID: splitTabID, placement: .secondary)
                 }
+                .padding(6)
             } else {
                 browserPane(tabID: model.activeTabID, placement: .single)
             }
@@ -189,12 +227,12 @@ private struct OpenClickyBrowserWorkspaceView: View {
     }
 
     private func browserPane(tabID: UUID, placement: OpenClickyBrowserPanePlacement) -> some View {
-        VStack(spacing: 0) {
-            paneHeader(tabID: tabID, placement: placement)
+        ZStack(alignment: .topTrailing) {
             OpenClickyWorkspaceWebView(
                 loadRequest: model.loadRequest(for: tabID),
                 onWebViewReady: { webView in model.attach(webView: webView, for: tabID) },
-                onMetadataChange: { metadata in model.apply(metadata: metadata, for: tabID) }
+                onMetadataChange: { metadata in model.apply(metadata: metadata, for: tabID) },
+                onInspectorSelection: { payload in model.recordInspectorSelection(payload) }
             )
             .overlay(alignment: .topLeading) {
                 if let errorText = model.errorText(for: tabID) {
@@ -207,25 +245,22 @@ private struct OpenClickyBrowserWorkspaceView: View {
                         .padding(14)
                 }
             }
+            if placement != .single {
+                splitPaneControls(tabID: tabID, placement: placement)
+                    .padding(10)
+            }
         }
         .frame(minWidth: 280)
-        .background(glassInsetFill.opacity(0.55))
+        .background(glassInsetFill.opacity(0.32))
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
-    private func paneHeader(tabID: UUID, placement: OpenClickyBrowserPanePlacement) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: placement.systemImage)
+    private func splitPaneControls(tabID: UUID, placement: OpenClickyBrowserPanePlacement) -> some View {
+        HStack(spacing: 6) {
+            Button("Focus") { model.activateTab(tabID) }
+                .font(.caption2.weight(.bold))
+                .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
-            Text(model.title(for: tabID))
-                .font(.caption.weight(.bold))
-                .lineLimit(1)
-            Spacer()
-            if placement != .single {
-                Button("Focus") { model.activateTab(tabID) }
-                    .font(.caption2.weight(.bold))
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-            }
             if placement == .secondary {
                 Button(action: model.closeSplit) {
                     Image(systemName: "xmark")
@@ -235,9 +270,9 @@ private struct OpenClickyBrowserWorkspaceView: View {
                 .help("Close split view")
             }
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 10)
         .padding(.vertical, 7)
-        .background(glassSurfaceFill)
+        .background(Capsule().fill(glassSurfaceFill.opacity(0.88)))
     }
 
     private var splitDropHint: some View {
@@ -261,6 +296,7 @@ private struct OpenClickyBrowserWorkspaceView: View {
             titleBarControlButton("doc.text", help: "Local page") { model.prefillLocalExample() }
             titleBarControlButton("text.bubble", help: isChatCollapsed ? "Expand chat" : "Collapse chat") { isChatCollapsed.toggle() }
             titleBarControlButton("rectangle.split.2x1", help: "Split active tab") { model.splitActiveTab() }
+            titleBarControlButton("cursorarrow.rays", help: model.isInspectorModeEnabled ? "Exit Inspector mode" : "Inspect elements") { model.toggleInspectorMode() }
 
             Circle()
                 .fill(Color.green)
@@ -269,8 +305,8 @@ private struct OpenClickyBrowserWorkspaceView: View {
                 .padding(.leading, 3)
                 .help("Browser session ready")
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
+        .padding(.horizontal, 11)
+        .padding(.vertical, 8)
         .background(Capsule().fill(glassInsetFill.opacity(0.82)))
         .overlay(Capsule().stroke(glassBorder))
     }
@@ -278,9 +314,9 @@ private struct OpenClickyBrowserWorkspaceView: View {
     private func titleBarControlButton(_ systemImage: String, help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(DS.Colors.textPrimary.opacity(0.88))
-                .frame(width: 25, height: 25)
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(DS.Colors.textPrimary.opacity(0.92))
+                .frame(width: 34, height: 34)
                 .background(Circle().fill(glassSurfaceFill.opacity(0.72)))
                 .overlay(Circle().stroke(glassBorder))
         }
@@ -305,14 +341,11 @@ private struct OpenClickyBrowserWorkspaceView: View {
                         .help("New tab")
                     }
                 }
-
-                Spacer(minLength: 8)
-                titleBarControls
             }
-            .padding(.leading, 72)
-            .padding(.trailing, 14)
-            .padding(.top, 10)
-            .padding(.bottom, 6)
+            .padding(.leading, 58)
+            .padding(.trailing, 230)
+            .padding(.top, 1)
+            .padding(.bottom, 4)
 
             HStack(spacing: 10) {
                 Button(action: model.goBack) { Image(systemName: "chevron.left") }
@@ -337,11 +370,10 @@ private struct OpenClickyBrowserWorkspaceView: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(DS.Colors.textPrimary.opacity(0.86))
-            .padding(.horizontal, 14)
-            .padding(.bottom, 10)
+            .padding(.horizontal, 10)
+            .padding(.bottom, 4)
         }
-        .background(glassSurfaceFill)
-        .glassEffect(.regular.tint(DS.Colors.accent.opacity(0.03 + glassFrosting * 0.07)), in: Rectangle())
+        .padding(.top, 1)
     }
 
     private func tabButton(_ tab: OpenClickyBrowserTab) -> some View {
@@ -372,11 +404,7 @@ private struct OpenClickyBrowserWorkspaceView: View {
         Rectangle()
             .fill(Color.white.opacity(0.001))
             .frame(width: 8)
-            .overlay(
-                Capsule()
-                    .fill(Color.white.opacity(0.16))
-                    .frame(width: 3, height: 42)
-            )
+            .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
@@ -391,50 +419,66 @@ private struct OpenClickyBrowserWorkspaceView: View {
             .help("Drag to resize OpenClicky chat")
     }
 
-    private var collapsedChatExpandButton: some View {
-        Button(action: { isChatCollapsed = false }) {
-            Image(systemName: "sidebar.right")
-                .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: 34, height: 34)
-                .background(Circle().fill(DS.Colors.accent.opacity(0.82)))
-                .overlay(Circle().stroke(accentBorder))
-                .shadow(color: DS.Colors.accent.opacity(0.22), radius: 12, x: 0, y: 5)
-        }
-        .buttonStyle(.plain)
-        .help("Expand OpenClicky chat")
-        .padding(.top, 14)
-        .padding(.trailing, 14)
-    }
-
     private var chatPanel: some View {
         VStack(alignment: .leading, spacing: 10) {
             chatHeader
             contextStrip
 
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 10) {
-                    if model.messages.isEmpty {
-                        emptyChatState
-                    } else {
-                        ForEach(model.messages) { message in
-                            chatBubble(role: message.role, text: message.text, isUser: message.isUser)
+            GeometryReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 10) {
+                        if model.messages.isEmpty {
+                            emptyChatState
+                        } else {
+                            ForEach(model.messages) { message in
+                                chatBubble(role: message.role, text: message.text, isUser: message.isUser)
+                            }
                         }
                     }
+                    .padding(.vertical, 4)
+                    .frame(
+                        maxWidth: .infinity,
+                        minHeight: proxy.size.height,
+                        alignment: model.messages.isEmpty ? .center : .topLeading
+                    )
                 }
-                .padding(.vertical, 4)
             }
             .frame(maxWidth: .infinity)
             .background(RoundedRectangle(cornerRadius: 18).fill(glassInsetFill.opacity(0.82)))
             .overlay(RoundedRectangle(cornerRadius: 18).stroke(glassBorder))
 
-            suggestionChips
+            if !model.inspectorSelections.isEmpty {
+                selectionChips
+            }
+            if !model.attachments.isEmpty {
+                attachmentChips
+            }
+            if !model.messages.isEmpty {
+                suggestionChips
+            }
             composer
         }
         .padding(14)
-        .background(glassSurfaceFill)
-        .glassEffect(.regular.tint(DS.Colors.accent.opacity(0.04 + glassFrosting * 0.08)), in: Rectangle())
-        .overlay(Rectangle().stroke(glassBorder))
+        .background(RoundedRectangle(cornerRadius: 24, style: .continuous).fill(glassSurfaceFill))
+        .glassEffect(
+            .regular.tint(DS.Colors.accent.opacity(0.04 + glassFrosting * 0.08)),
+            in: RoundedRectangle(cornerRadius: 24, style: .continuous)
+        )
+        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(isChatDropTargeted ? accentBorder : glassBorder, lineWidth: isChatDropTargeted ? 2 : 1))
+        .overlay(alignment: .top) {
+            if isChatDropTargeted {
+                Label("Drop to attach", systemImage: "paperclip")
+                    .font(.caption.weight(.bold))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(Capsule().fill(DS.Colors.accent.opacity(0.28)))
+                    .padding(.top, 8)
+            }
+        }
+        .onDrop(of: [UTType.fileURL.identifier, UTType.image.identifier, UTType.pdf.identifier, UTType.text.identifier], isTargeted: $isChatDropTargeted) { providers in
+            model.handleAttachmentDrop(providers)
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
     }
 
     private var chatHeader: some View {
@@ -458,8 +502,6 @@ private struct OpenClickyBrowserWorkspaceView: View {
                 .foregroundStyle(model.messages.isEmpty ? Color.secondary.opacity(0.6) : DS.Colors.accentText)
                 .disabled(model.messages.isEmpty)
                 .help("Clear Browser Workspace chat")
-            Button(action: { isChatCollapsed = true }) { Image(systemName: "sidebar.right") }
-                .help("Collapse chat")
         }
         .buttonStyle(.plain)
     }
@@ -499,28 +541,27 @@ private struct OpenClickyBrowserWorkspaceView: View {
     }
 
     private var emptyChatState: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Blank chat")
-                .font(.caption.weight(.bold))
-                .foregroundStyle(.secondary)
-            Text("OpenClicky can read the current tab and act in this browser instance. Nothing is sent to a background agent unless the request clearly needs longer-running work.")
-                .font(.system(size: 13))
-                .foregroundStyle(DS.Colors.textPrimary.opacity(0.72))
-                .lineSpacing(2)
+        VStack {
+            suggestionChipRow
+                .frame(maxWidth: .infinity, alignment: .center)
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .frame(maxWidth: .infinity, alignment: .center)
     }
 
     private var suggestionChips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                suggestionChip("Summarize", icon: "text.alignleft")
-                suggestionChip("Key points", icon: "checklist")
-                suggestionChip("Search", icon: "magnifyingglass")
-                suggestionChip("Click", icon: "cursorarrow.click")
-                suggestionChip("Fill", icon: "square.and.pencil")
-            }
+            suggestionChipRow
+        }
+    }
+
+    private var suggestionChipRow: some View {
+        HStack(spacing: 8) {
+            suggestionChip("Summarize", icon: "text.alignleft")
+            suggestionChip("Key points", icon: "checklist")
+            suggestionChip("Search", icon: "magnifyingglass")
+            suggestionChip("Click", icon: "cursorarrow.click")
+            suggestionChip("Fill", icon: "square.and.pencil")
         }
     }
 
@@ -560,38 +601,24 @@ private struct OpenClickyBrowserWorkspaceView: View {
     }
 
     private func chatBubble(role: String, text: String, isUser: Bool) -> some View {
-        HStack(alignment: .top, spacing: 0) {
-            if isUser {
-                Spacer(minLength: 42)
-            }
-
-            VStack(alignment: .leading, spacing: 7) {
-                HStack {
-                    Text(role)
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(isUser ? DS.Colors.accentText : DS.Colors.accentText.opacity(0.9))
-                    Spacer()
-                    Text(isUser ? "Prompt" : "Workspace")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                }
-                Text(text)
-                    .font(.system(size: 13))
-                    .foregroundStyle(DS.Colors.textPrimary.opacity(0.88))
-                    .lineSpacing(2)
-                    .multilineTextAlignment(.leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(12)
-            .frame(maxWidth: 360, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 14).fill(isUser ? DS.Colors.accent.opacity(0.16 + glassFrosting * 0.04) : glassInsetFill))
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(isUser ? accentBorder : glassBorder))
-
-            if !isUser {
-                Spacer(minLength: 42)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+        OpenClickyChatMessageBubble(
+            role: role,
+            text: text,
+            isUser: isUser,
+            metaLabel: isUser ? "Prompt" : "Workspace",
+            maxBubbleWidth: 360,
+            sideInset: 42,
+            cornerRadius: 16,
+            roleColor: isUser ? DS.Colors.accentText : DS.Colors.success,
+            textColor: DS.Colors.textPrimary,
+            userFill: DS.Colors.accent.opacity(0.16 + glassFrosting * 0.04),
+            assistantFill: glassInsetFill,
+            userBorder: accentBorder,
+            assistantBorder: glassBorder,
+            roleFont: .caption.weight(.bold),
+            metaFont: .caption2.weight(.semibold),
+            bodyFont: .system(size: 13, weight: .medium)
+        )
     }
 
     private var browserSessionDisclosure: some View {
@@ -726,12 +753,92 @@ private struct OpenClickyBrowserWorkspaceView: View {
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(glassBorder))
     }
 
+
+    private var selectionChips: some View {
+        let count = model.inspectorSelections.count
+        let latest = model.inspectorSelections.last
+        return Button(action: { composerText += " @selections" }) {
+            HStack(spacing: 7) {
+                Image(systemName: "cursorarrow.rays")
+                Text(count == 1 ? "1 selection" : "\(count) selections")
+                if let latest {
+                    Text("Latest #\(latest.order)")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .font(.caption.weight(.bold))
+            .lineLimit(1)
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(RoundedRectangle(cornerRadius: 10).fill(DS.Colors.accent.opacity(0.18)))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(accentBorder))
+        .help(model.inspectorSelectionSummary)
+    }
+
+    private var attachmentChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(model.attachments) { attachment in
+                    Label(attachment.displayName, systemImage: attachment.systemImage)
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(glassInsetFill))
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(glassBorder))
+                        .help(attachment.detail)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var composerAssistChips: some View {
+        let trimmed = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasSuffix("@") || trimmed.hasSuffix("/") {
+            HStack(spacing: 7) {
+                if trimmed.hasSuffix("@") {
+                    assistChip("@page")
+                    assistChip("@selections")
+                    assistChip("@attachments")
+                    assistChip("@local-code")
+                } else {
+                    assistChip("/summarize")
+                    assistChip("/inspect")
+                    assistChip("/map-code")
+                    assistChip("/clear")
+                }
+            }
+        }
+    }
+
+    private func assistChip(_ value: String) -> some View {
+        Button(value) {
+            if value == "/clear" {
+                model.clearChat()
+                composerText = ""
+            } else {
+                composerText = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if composerText.hasSuffix("@") || composerText.hasSuffix("/") {
+                    composerText.removeLast()
+                }
+                composerText += value + " "
+            }
+        }
+        .font(.caption2.weight(.bold))
+        .buttonStyle(.plain)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(Capsule().fill(glassInsetFill))
+        .overlay(Capsule().stroke(glassBorder))
+    }
+
     private var composer: some View {
         HStack(alignment: .bottom, spacing: 8) {
             VStack(alignment: .leading, spacing: 7) {
-                TextEditor(text: $composerText)
-                    .font(.system(size: 13))
-                    .scrollContentBackground(.hidden)
+                OpenClickyBrowserComposerEditor(text: $composerText, onSubmit: sendPrototypeMessage)
                     .frame(minHeight: 34, maxHeight: 82)
                     .overlay(alignment: .topLeading) {
                         if composerText.isEmpty {
@@ -743,15 +850,14 @@ private struct OpenClickyBrowserWorkspaceView: View {
                                 .allowsHitTesting(false)
                         }
                     }
-                HStack(spacing: 10) {
-                    Image(systemName: "paperclip")
-                    Image(systemName: "at")
-                    Image(systemName: "curlybraces")
-                    Image(systemName: "camera.viewfinder")
-                    Image(systemName: "sparkles")
+                composerAssistChips
+                HStack(spacing: 9) {
+                    composerIconButton("paperclip", help: "Attach files") { model.pickAttachments() }
+                    composerIconButton("at", help: "Mention page, selection, attachments, or local code") { composerText += "@" }
+                    composerIconButton("slash.forward", help: "Open slash commands") { composerText += "/" }
+                    composerIconButton("cursorarrow.rays", help: model.isInspectorModeEnabled ? "Exit Inspector mode" : "Inspect page element") { model.toggleInspectorMode() }
+                    composerIconButton("camera.viewfinder", help: "Attach page screenshot") { model.attachActiveTabScreenshot() }
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
             }
             Button(action: sendPrototypeMessage) {
                 Image(systemName: "arrow.up")
@@ -766,6 +872,19 @@ private struct OpenClickyBrowserWorkspaceView: View {
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 15).fill(glassInsetFill.opacity(0.92)))
         .overlay(RoundedRectangle(cornerRadius: 15).stroke(accentBorder))
+    }
+
+    private func composerIconButton(_ systemImage: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(DS.Colors.textPrimary.opacity(0.82))
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(glassSurfaceFill.opacity(0.78)))
+                .overlay(Circle().stroke(glassBorder))
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 
     private func handleTabDrop(_ providers: [NSItemProvider]) -> Bool {
@@ -816,6 +935,79 @@ private struct OpenClickyBrowserWorkspaceView: View {
     }
 }
 
+private struct OpenClickyBrowserComposerEditor: NSViewRepresentable {
+    @Binding var text: String
+    let onSubmit: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+
+        let textView = OpenClickyBrowserComposerTextView()
+        textView.delegate = context.coordinator
+        textView.onSubmit = onSubmit
+        textView.string = text
+        textView.font = NSFont.systemFont(ofSize: 13)
+        textView.drawsBackground = false
+        textView.isRichText = false
+        textView.importsGraphics = false
+        textView.allowsUndo = true
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.textContainerInset = NSSize(width: 1, height: 5)
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(width: scrollView.contentSize.width, height: .greatestFiniteMagnitude)
+        textView.autoresizingMask = [.width]
+
+        scrollView.documentView = textView
+        context.coordinator.textView = textView
+        return scrollView
+    }
+
+    func updateNSView(_ nsView: NSScrollView, context: Context) {
+        guard let textView = nsView.documentView as? OpenClickyBrowserComposerTextView else { return }
+        textView.onSubmit = onSubmit
+        if textView.string != text {
+            textView.string = text
+        }
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        @Binding var text: String
+        weak var textView: NSTextView?
+
+        init(text: Binding<String>) {
+            _text = text
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            text = textView.string
+        }
+    }
+}
+
+private final class OpenClickyBrowserComposerTextView: NSTextView {
+    var onSubmit: (() -> Void)?
+
+    override func keyDown(with event: NSEvent) {
+        let isReturn = event.keyCode == 36 || event.keyCode == 76
+        let hasShift = event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.shift)
+        if isReturn && !hasShift {
+            onSubmit?()
+            return
+        }
+        super.keyDown(with: event)
+    }
+}
+
 @MainActor
 protocol OpenClickyBrowserWorkspaceModelProtocol: AnyObject {
     func getActiveWebView() -> WKWebView?
@@ -848,6 +1040,9 @@ private final class OpenClickyBrowserWorkspaceModel: ObservableObject, OpenClick
     @Published private(set) var isRunningBrowserPlan = false
     @Published private(set) var linkedAgentSessionID: UUID?
     @Published private(set) var linkedAgentSummary = "OpenClicky handles Browser Workspace chat inline and only starts Agent Mode when the prompt clearly needs longer-running work."
+    @Published private(set) var attachments: [OpenClickyBrowserAttachment] = []
+    @Published private(set) var inspectorSelections: [OpenClickyBrowserInspectorSelection] = []
+    @Published private(set) var isInspectorModeEnabled = false
 
     private var webViews: [UUID: WKWebView] = [:]
 
@@ -971,6 +1166,7 @@ private final class OpenClickyBrowserWorkspaceModel: ObservableObject, OpenClick
             tab.canGoForward = webView.canGoForward
         }
         refreshPageContext(for: tabID, trigger: "WebView attached")
+        if tabID == activeTabID { applyInspectorMode() }
     }
 
     func apply(metadata: OpenClickyBrowserPageMetadata, for tabID: UUID) {
@@ -1095,6 +1291,249 @@ private final class OpenClickyBrowserWorkspaceModel: ObservableObject, OpenClick
                 }
             }
         }
+    }
+
+
+
+    func toggleInspectorMode() {
+        isInspectorModeEnabled.toggle()
+        applyInspectorMode()
+    }
+
+    private func applyInspectorMode() {
+        guard let webView = webViews[activeTabID] else { return }
+        let script = Self.inspectorModeScript(enabled: isInspectorModeEnabled, nextOrder: inspectorSelections.count + 1)
+        webView.evaluateJavaScript(script, completionHandler: nil)
+    }
+
+    func recordInspectorSelection(_ payload: [String: Any]) {
+        let order = payload["order"] as? Int ?? inspectorSelections.count + 1
+        let selection = OpenClickyBrowserInspectorSelection(
+            order: order,
+            selector: payload["selector"] as? String ?? "unknown",
+            tagName: payload["tagName"] as? String ?? "element",
+            text: payload["text"] as? String ?? "",
+            comment: payload["comment"] as? String ?? "",
+            sourceURL: payload["sourceURL"] as? String ?? activeTab.currentURL?.absoluteString ?? "open-clicky://welcome"
+        )
+        inspectorSelections.append(selection)
+    }
+
+    var inspectorSelectionSummary: String {
+        guard !inspectorSelections.isEmpty else { return "No Inspector selections yet." }
+        return inspectorSelections.map { selection in
+            let comment = selection.comment.isEmpty ? "No comment" : selection.comment
+            return "#\(selection.order): \(selection.detail) • \(comment)"
+        }.joined(separator: "\n")
+    }
+
+    func handleAttachmentDrop(_ providers: [NSItemProvider]) -> Bool {
+        var accepted = false
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                accepted = true
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { [weak self] item, _ in
+                    let url: URL?
+                    if let data = item as? Data {
+                        url = URL(dataRepresentation: data, relativeTo: nil)
+                    } else {
+                        url = item as? URL
+                    }
+                    guard let url else { return }
+                    Task { @MainActor in self?.addAttachment(url: url) }
+                }
+            } else if provider.canLoadObject(ofClass: NSString.self) {
+                accepted = true
+                provider.loadObject(ofClass: NSString.self) { [weak self] object, _ in
+                    guard let text = object as? String else { return }
+                    Task { @MainActor in self?.addAttachment(text: text) }
+                }
+            }
+        }
+        return accepted
+    }
+
+    func pickAttachments() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.begin { [weak self] response in
+            guard response == .OK else { return }
+            Task { @MainActor in
+                panel.urls.forEach { self?.addAttachment(url: $0) }
+            }
+        }
+    }
+
+    func attachActiveTabScreenshot() {
+        Task {
+            guard let data = await captureActiveTabScreenshot() else {
+                await MainActor.run { self.messages.append(OpenClickyBrowserChatMessage(role: "OpenClicky", text: "OpenClicky could not capture the current browser viewport yet.", isUser: false)) }
+                return
+            }
+            await MainActor.run {
+                self.attachments.append(OpenClickyBrowserAttachment(displayName: "Viewport screenshot", detail: "\(data.count / 1024) KB captured from the active tab", systemImage: "camera.viewfinder"))
+                self.messages.append(OpenClickyBrowserChatMessage(role: "OpenClicky", text: "Attached the current browser viewport screenshot to this workspace chat.", isUser: false))
+            }
+        }
+    }
+
+    private func addAttachment(url: URL) {
+        attachments.append(OpenClickyBrowserAttachment(displayName: url.lastPathComponent, detail: url.path, systemImage: url.isFileURL ? "doc" : "link"))
+        messages.append(OpenClickyBrowserChatMessage(role: "OpenClicky", text: "Attached \(url.lastPathComponent).", isUser: false))
+    }
+
+    private func addAttachment(text: String) {
+        let clipped = Self.truncatedContext(text, limit: 80)
+        attachments.append(OpenClickyBrowserAttachment(displayName: "Dropped text", detail: clipped, systemImage: "text.quote"))
+        messages.append(OpenClickyBrowserChatMessage(role: "OpenClicky", text: "Attached dropped text to this workspace chat.", isUser: false))
+    }
+
+    private static func inspectorModeScript(enabled: Bool, nextOrder: Int) -> String {
+        let enabledLiteral = enabled ? "true" : "false"
+        return """
+        (() => {
+          window.__openClickyInspectorOrder = \(nextOrder);
+          const existing = window.__openClickyInspector;
+          if (existing && existing.cleanup) existing.cleanup();
+          const clearTransientUI = () => {
+            document.getElementById('open-clicky-inspector-hover')?.remove();
+            document.getElementById('open-clicky-inspector-comment')?.remove();
+          };
+          if (!\(enabledLiteral)) {
+            clearTransientUI();
+            document.body && document.body.classList.remove('open-clicky-inspecting');
+            return true;
+          }
+          const css = document.getElementById('open-clicky-inspector-style') || document.createElement('style');
+          css.id = 'open-clicky-inspector-style';
+          css.textContent = `
+            .open-clicky-inspecting * { cursor: crosshair !important; }
+            .open-clicky-inspector-overlay { position: absolute; z-index: 2147483645; border: 2px solid #23d5ff; border-radius: 8px; background: rgba(35,213,255,.12); box-shadow: 0 0 0 1px rgba(255,255,255,.22), 0 10px 30px rgba(0,0,0,.28); pointer-events: none; box-sizing: border-box; transition: left .045s linear, top .045s linear, width .045s linear, height .045s linear; }
+            .open-clicky-inspector-overlay.locked { border-color: #2f7dff; background: rgba(47,125,255,.14); }
+            .open-clicky-inspector-badge { position: absolute; z-index: 2147483647; background: #2f7dff; color: white; border-radius: 999px; padding: 2px 7px; font: 700 12px -apple-system, BlinkMacSystemFont, sans-serif; box-shadow: 0 4px 14px rgba(0,0,0,.28); pointer-events: none; }
+            .open-clicky-inspector-comment { position: absolute; z-index: 2147483647; width: 260px; padding: 10px; border-radius: 14px; background: rgba(12,16,22,.96); border: 1px solid rgba(35,213,255,.45); color: white; font: 13px -apple-system, BlinkMacSystemFont, sans-serif; box-shadow: 0 18px 50px rgba(0,0,0,.34); cursor: default !important; }
+            .open-clicky-inspector-comment textarea { width: 100%; min-height: 66px; box-sizing: border-box; resize: vertical; border-radius: 10px; border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.08); color: white; padding: 8px; font: 13px -apple-system, BlinkMacSystemFont, sans-serif; outline: none; cursor: text !important; }
+            .open-clicky-inspector-comment .title { font-weight: 800; margin-bottom: 7px; color: #23d5ff; }
+            .open-clicky-inspector-comment .actions { display: flex; justify-content: flex-end; gap: 7px; margin-top: 8px; }
+            .open-clicky-inspector-comment button { border: 0; border-radius: 999px; padding: 5px 10px; color: white; background: rgba(255,255,255,.14); font-weight: 800; cursor: pointer !important; }
+            .open-clicky-inspector-comment button.primary { background: #2f7dff; }
+          `;
+          document.head.appendChild(css);
+          document.body && document.body.classList.add('open-clicky-inspecting');
+          const isInspectorUI = (el) => !!(el && el.closest && el.closest('.open-clicky-inspector-comment, .open-clicky-inspector-badge, .open-clicky-inspector-overlay'));
+          const selectorFor = (el) => {
+            if (!el || !el.tagName) return 'unknown';
+            if (el.id) return '#' + CSS.escape(el.id);
+            const parts = [];
+            let node = el;
+            while (node && node.nodeType === 1 && parts.length < 5) {
+              let part = node.tagName.toLowerCase();
+              const cls = Array.from(node.classList || []).slice(0, 2).map(c => '.' + CSS.escape(c)).join('');
+              part += cls;
+              const parent = node.parentElement;
+              if (parent) {
+                const siblings = Array.from(parent.children).filter(child => child.tagName === node.tagName);
+                if (siblings.length > 1) part += `:nth-of-type(${siblings.indexOf(node) + 1})`;
+              }
+              parts.unshift(part);
+              node = parent;
+            }
+            return parts.join(' > ');
+          };
+          const hoverBox = document.createElement('div');
+          hoverBox.id = 'open-clicky-inspector-hover';
+          hoverBox.className = 'open-clicky-inspector-overlay';
+          hoverBox.style.display = 'none';
+          document.body.appendChild(hoverBox);
+          const positionBox = (box, rect) => {
+            box.style.left = `${rect.left + window.scrollX}px`;
+            box.style.top = `${rect.top + window.scrollY}px`;
+            box.style.width = `${Math.max(2, rect.width)}px`;
+            box.style.height = `${Math.max(2, rect.height)}px`;
+          };
+          const moveHover = (event) => {
+            const el = event.target;
+            if (!el || isInspectorUI(el) || el === document.documentElement || el === document.body) return;
+            const rect = el.getBoundingClientRect();
+            positionBox(hoverBox, rect);
+            hoverBox.style.display = 'block';
+            window.__openClickyInspectorHoveredElement = el;
+          };
+          const showCommentBox = (el, lockedBox, order) => {
+            document.getElementById('open-clicky-inspector-comment')?.remove();
+            const rect = el.getBoundingClientRect();
+            const selector = selectorFor(el);
+            const panel = document.createElement('div');
+            panel.id = 'open-clicky-inspector-comment';
+            panel.className = 'open-clicky-inspector-comment';
+            const left = Math.min(window.scrollX + window.innerWidth - 280, rect.right + window.scrollX + 10);
+            panel.style.left = `${Math.max(window.scrollX + 10, left)}px`;
+            panel.style.top = `${Math.max(window.scrollY + 10, rect.top + window.scrollY)}px`;
+            panel.innerHTML = `<div class="title">Selection #${order}</div><textarea placeholder="Add a comment for this element"></textarea><div class="actions"><button type="button" data-action="cancel">Cancel</button><button class="primary" type="button" data-action="save">Save</button></div>`;
+            document.body.appendChild(panel);
+            const textarea = panel.querySelector('textarea');
+            textarea?.focus();
+            ['pointerdown', 'mousedown', 'mouseup', 'click'].forEach(type => {
+              panel.addEventListener(type, (event) => event.stopPropagation(), false);
+            });
+            panel.querySelector('[data-action="cancel"]')?.addEventListener('click', () => {
+              panel.remove();
+              lockedBox.remove();
+            });
+            const saveSelection = () => {
+              const comment = textarea?.value || '';
+              const badge = document.createElement('div');
+              badge.className = 'open-clicky-inspector-badge';
+              badge.textContent = '#' + order;
+              badge.style.left = `${rect.left + window.scrollX}px`;
+              badge.style.top = `${Math.max(0, rect.top + window.scrollY - 22)}px`;
+              document.body.appendChild(badge);
+              lockedBox.dataset.openClickyOrder = String(order);
+              const payload = { order, selector, tagName: el.tagName.toLowerCase(), text: String(el.innerText || el.value || el.alt || '').replace(/\\s+/g, ' ').trim().slice(0, 240), comment, sourceURL: location.href };
+              window.webkit?.messageHandlers?.openClickyInspector?.postMessage(payload);
+              panel.remove();
+            };
+            panel.querySelector('[data-action="save"]')?.addEventListener('click', saveSelection);
+            textarea?.addEventListener('keydown', (event) => {
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                event.stopPropagation();
+                saveSelection();
+              }
+            });
+          };
+          const clickHandler = (event) => {
+            if (isInspectorUI(event.target)) return;
+            event.preventDefault(); event.stopPropagation();
+            const el = event.target;
+            const rect = el.getBoundingClientRect();
+            const order = window.__openClickyInspectorOrder++;
+            const lockedBox = document.createElement('div');
+            lockedBox.className = 'open-clicky-inspector-overlay locked';
+            positionBox(lockedBox, rect);
+            document.body.appendChild(lockedBox);
+            showCommentBox(el, lockedBox, order);
+          };
+          const keyHandler = (event) => {
+            if (event.key === 'Escape') document.getElementById('open-clicky-inspector-comment')?.remove();
+          };
+          document.addEventListener('mouseover', moveHover, true);
+          document.addEventListener('mousemove', moveHover, true);
+          document.addEventListener('click', clickHandler, true);
+          document.addEventListener('keydown', keyHandler, true);
+          window.__openClickyInspector = { cleanup: () => {
+            document.removeEventListener('mouseover', moveHover, true);
+            document.removeEventListener('mousemove', moveHover, true);
+            document.removeEventListener('click', clickHandler, true);
+            document.removeEventListener('keydown', keyHandler, true);
+            clearTransientUI();
+            document.body && document.body.classList.remove('open-clicky-inspecting');
+          } };
+          return true;
+        })();
+        """
     }
 
     func discoverChromeProfiles() {
@@ -1361,6 +1800,8 @@ private final class OpenClickyBrowserWorkspaceModel: ObservableObject, OpenClick
         let selectionLine = currentTab.selectedText.isEmpty ? "No selected text." : Self.truncatedContext(currentTab.selectedText, limit: 2_000)
         let readableTextLine = currentTab.readableText.isEmpty ? "No readable text extracted." : Self.truncatedContext(currentTab.readableText, limit: 6_000)
         let splitLine = splitTabID.flatMap { splitID in tab(for: splitID)?.title }.map { "Split view is also open with: \($0)." } ?? "No split view is active."
+        let selectionContext = inspectorSelections.isEmpty ? "No Inspector selections." : inspectorSelections.map { "#\($0.order): \($0.detail) Comment: \($0.comment)" }.joined(separator: "\n")
+        let attachmentContext = attachments.isEmpty ? "No chat attachments." : attachments.map { "- \($0.displayName): \($0.detail)" }.joined(separator: "\n")
         return """
         OpenClicky Browser Workspace chat request.
 
@@ -1375,6 +1816,8 @@ private final class OpenClickyBrowserWorkspaceModel: ObservableObject, OpenClick
         - Selection: \(selectionLine)
         - Readable text excerpt: \(readableTextLine)
         - Split: \(splitLine)
+        - Inspector selections: \(selectionContext)
+        - Attachments: \(attachmentContext)
 
         Answer as OpenClicky and stay scoped to this browser workspace/page unless the user asks for broader work.
         """.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2324,6 +2767,32 @@ private struct OpenClickyBrowserChatMessage: Identifiable, Equatable {
     let isUser: Bool
 }
 
+private struct OpenClickyBrowserAttachment: Identifiable, Equatable {
+    let id = UUID()
+    let displayName: String
+    let detail: String
+    let systemImage: String
+}
+
+private struct OpenClickyBrowserInspectorSelection: Identifiable, Equatable {
+    let id = UUID()
+    let order: Int
+    let selector: String
+    let tagName: String
+    let text: String
+    let comment: String
+    let sourceURL: String
+
+    var label: String {
+        let readable = text.isEmpty ? tagName : text
+        return String(readable.prefix(34))
+    }
+
+    var detail: String {
+        "\(tagName) • \(selector) • \(sourceURL)"
+    }
+}
+
 private struct OpenClickyBrowserLoadRequest: Equatable {
     let id = UUID()
     let url: URL?
@@ -2351,14 +2820,16 @@ private struct OpenClickyWorkspaceWebView: NSViewRepresentable {
     let loadRequest: OpenClickyBrowserLoadRequest
     let onWebViewReady: (WKWebView) -> Void
     let onMetadataChange: (OpenClickyBrowserPageMetadata) -> Void
+    let onInspectorSelection: ([String: Any]) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onMetadataChange: onMetadataChange)
+        Coordinator(onMetadataChange: onMetadataChange, onInspectorSelection: onInspectorSelection)
     }
 
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        configuration.userContentController.add(context.coordinator, name: "openClickyInspector")
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
@@ -2369,6 +2840,7 @@ private struct OpenClickyWorkspaceWebView: NSViewRepresentable {
 
     func updateNSView(_ webView: WKWebView, context: Context) {
         context.coordinator.onMetadataChange = onMetadataChange
+        context.coordinator.onInspectorSelection = onInspectorSelection
         guard context.coordinator.loadedRequestID != loadRequest.id else { return }
         context.coordinator.loadedRequestID = loadRequest.id
 
@@ -2379,12 +2851,19 @@ private struct OpenClickyWorkspaceWebView: NSViewRepresentable {
         }
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         var loadedRequestID: UUID?
         var onMetadataChange: (OpenClickyBrowserPageMetadata) -> Void
+        var onInspectorSelection: ([String: Any]) -> Void
 
-        init(onMetadataChange: @escaping (OpenClickyBrowserPageMetadata) -> Void) {
+        init(onMetadataChange: @escaping (OpenClickyBrowserPageMetadata) -> Void, onInspectorSelection: @escaping ([String: Any]) -> Void) {
             self.onMetadataChange = onMetadataChange
+            self.onInspectorSelection = onInspectorSelection
+        }
+
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard message.name == "openClickyInspector", let payload = message.body as? [String: Any] else { return }
+            DispatchQueue.main.async { [onInspectorSelection] in onInspectorSelection(payload) }
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

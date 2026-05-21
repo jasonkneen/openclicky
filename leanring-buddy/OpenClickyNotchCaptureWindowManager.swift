@@ -347,7 +347,6 @@ final class OpenClickyNotchCaptureWindowManager {
             }
         case .listening, .processing, .responding:
             guard activeMode != .text else { return }
-            stopCollapsedHoverProbe()
             activeMode = .voice
             let primaryScreen = preferredAnchorScreen()
             let hidesStatusText = Self.hidesVoiceStatusText(on: primaryScreen)
@@ -358,10 +357,15 @@ final class OpenClickyNotchCaptureWindowManager {
                 accentColor: Self.nsAccentColor(for: nil),
                 foregroundAppIcon: foregroundAppIcon,
                 foregroundAppName: foregroundAppName,
-                hidesStatusText: hidesStatusText
+                hidesStatusText: hidesStatusText,
+                expand: { [weak self] in
+                    self?.pinAnchorScreenToPointerIfNeeded()
+                    self?.persistentShowMainPanel?()
+                }
             )
             let voiceWidth = Self.voicePanelWidth(for: primaryScreen, appName: foregroundAppName)
             showPanel(activating: false, width: voiceWidth, height: Self.voicePanelHeight)
+            startCollapsedHoverProbe()
             syncMirroredStatusPanels(
                 width: voiceWidth,
                 height: Self.voicePanelHeight,
@@ -375,7 +379,11 @@ final class OpenClickyNotchCaptureWindowManager {
                     accentColor: Self.nsAccentColor(for: nil),
                     foregroundAppIcon: self?.foregroundAppIcon,
                     foregroundAppName: self?.foregroundAppName ?? "Current app",
-                    hidesStatusText: Self.hidesVoiceStatusText(on: screen)
+                    hidesStatusText: Self.hidesVoiceStatusText(on: screen),
+                    expand: { [weak self, weak screen] in
+                        if let screen { self?.anchorScreenOverride = screen }
+                        self?.persistentShowMainPanel?()
+                    }
                 )
             }
         }
@@ -777,7 +785,9 @@ final class OpenClickyNotchCaptureWindowManager {
         interfacePanel.hidesOnDeactivate = false
         interfacePanel.isReleasedWhenClosed = false
         interfacePanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        interfacePanel.isMovableByWindowBackground = true
+        // Do not let arbitrary SwiftUI content drag the panel. The resize
+        // container and visible grab handle provide the deliberate move zones.
+        interfacePanel.isMovableByWindowBackground = false
         interfacePanel.titleVisibility = .hidden
         interfacePanel.titlebarAppearsTransparent = true
         interfacePanel.minSize = mainPanelCurrentMinimumSize
@@ -1234,7 +1244,7 @@ final class OpenClickyNotchCaptureWindowManager {
     }
 
     private func probeCollapsedNotchHover() {
-        guard activeMode == .collapsedText, mainPanel?.isVisible != true else {
+        guard (activeMode == .collapsedText || activeMode == .voice), mainPanel?.isVisible != true else {
             stopCollapsedHoverProbe()
             return
         }
@@ -1243,7 +1253,11 @@ final class OpenClickyNotchCaptureWindowManager {
 
         if anchorScreenOverride?.displayID != hoveredScreen.displayID {
             anchorScreenOverride = hoveredScreen
-            resizeAndReposition(width: Self.collapsedPanelWidth(for: hoveredScreen, appName: foregroundAppName), height: Self.collapsedPanelHeight)
+            let width = activeMode == .voice
+                ? Self.voicePanelWidth(for: hoveredScreen, appName: foregroundAppName)
+                : Self.collapsedPanelWidth(for: hoveredScreen, appName: foregroundAppName)
+            let height = activeMode == .voice ? Self.voicePanelHeight : Self.collapsedPanelHeight
+            resizeAndReposition(width: width, height: height)
         }
         persistentShowMainPanel?()
     }
@@ -1722,10 +1736,18 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
         window?.makeFirstResponder(textField)
     }
 
-    func configureVoice(phase: OpenClickyNotchVoicePhase, audioPowerLevel: CGFloat, accentColor: NSColor, foregroundAppIcon: NSImage?, foregroundAppName: String, hidesStatusText: Bool = false) {
+    func configureVoice(
+        phase: OpenClickyNotchVoicePhase,
+        audioPowerLevel: CGFloat,
+        accentColor: NSColor,
+        foregroundAppIcon: NSImage?,
+        foregroundAppName: String,
+        hidesStatusText: Bool = false,
+        expand: (() -> Void)? = nil
+    ) {
         mode = .voice
         self.accentColor = accentColor
-        expand = nil
+        self.expand = expand
         notchHandle.isHidden = true
         shellView.isHidden = false
         shellGlassView.isHidden = false
@@ -1819,7 +1841,7 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
     }
 
     override func mouseEntered(with event: NSEvent) {
-        guard mode == .collapsed else { return }
+        guard mode == .collapsed || mode == .voice else { return }
         expand?()
     }
 
@@ -3062,7 +3084,10 @@ private final class OpenClickyClosureButton: NSButton {
 }
 
 private final class OpenClickyMainPanelHostingView<Content: View>: NSHostingView<Content> {
-    override var mouseDownCanMoveWindow: Bool { true }
+    // Keep SwiftUI controls in charge of their own drag gestures. Window
+    // movement is handled by the explicit drag affordance/top drag band below,
+    // so sliders and other draggable controls should not start moving the panel.
+    override var mouseDownCanMoveWindow: Bool { false }
 }
 
 private final class OpenClickyMainPanelResizeContainerView: NSView {

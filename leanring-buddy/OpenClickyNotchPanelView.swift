@@ -2069,7 +2069,10 @@ struct OpenClickyNotchPanelView: View {
                         }
 
                         ForEach(Array(activityLines.enumerated()), id: \.offset) { index, line in
-                            agentLiveActivityRow(line)
+                            let isCurrentLiveLine = session.isTurnActiveForChatQueue
+                                && index == activityLines.count - 1
+                                && !isCompletedAgentActivityLine(line)
+                            agentLiveActivityRow(line, isRunning: isCurrentLiveLine)
                                 .id("\(session.id.uuidString)-agent-live-activity-\(index)")
                         }
 
@@ -2235,11 +2238,18 @@ struct OpenClickyNotchPanelView: View {
         return Array(lines.prefix(3)).reversed()
     }
 
-    private func agentLiveActivityRow(_ line: String) -> some View {
+    private func agentLiveActivityRow(_ line: String, isRunning: Bool) -> some View {
         HStack(alignment: .center, spacing: 7) {
-            ProgressView()
-                .controlSize(.small)
-                .scaleEffect(0.62)
+            if isRunning {
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(0.62)
+            } else {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(appUIFont(size: max(10, subtextFontSize), weight: .semibold))
+                    .foregroundColor(DS.Colors.success.opacity(0.86))
+                    .frame(width: 14, height: 14)
+            }
             Text(line)
                 .font(appUIFont(size: max(10, subtextFontSize), weight: .semibold))
                 .foregroundColor(DS.Colors.textSecondary)
@@ -2251,6 +2261,18 @@ struct OpenClickyNotchPanelView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(Color.white.opacity(0.045)))
         .overlay(RoundedRectangle(cornerRadius: 13, style: .continuous).stroke(Color.white.opacity(0.055), lineWidth: 0.5))
+    }
+
+    private func isCompletedAgentActivityLine(_ line: String) -> Bool {
+        let lowered = line.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return lowered.hasPrefix("command finished")
+            || lowered.hasPrefix("command failed")
+            || lowered.hasPrefix("finished")
+            || lowered.hasPrefix("planned")
+            || lowered.hasPrefix("changed")
+            || lowered.hasPrefix("updated")
+            || lowered.hasPrefix("created")
+            || lowered.hasPrefix("deleted")
     }
 
     private func agentConversationEntries(for session: CodexAgentSession) -> [CodexTranscriptEntry] {

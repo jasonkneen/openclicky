@@ -32,6 +32,8 @@
 	</dict>
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>OpenClicky needs screen recording access to see your screen and help you.</string>
+	<key>NSUserNotificationAlertStyle</key>
+	<string>alert</string>
 	<key>SUAllowsAutomaticUpdates</key>
 	<true/>
 	<key>SUAutomaticallyUpdate</key>

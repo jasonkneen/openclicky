@@ -28,8 +28,16 @@ final class OpenClickyDesktopNotificationCenter: NSObject, UNUserNotificationCen
         }
     }
 
-    func requestAuthorizationForUserAction() {
-        requestAuthorization(reason: "settings")
+    func requestAuthorizationForUserAction(completion: ((Bool) -> Void)? = nil) {
+        requestAuthorization(reason: "settings", completion: completion)
+    }
+
+    func refreshAuthorizationStatus(completion: @escaping (String, Bool) -> Void) {
+        center.getNotificationSettings { [weak self] settings in
+            guard let self else { return }
+            self.logAuthorizationStatus(settings.authorizationStatus, reason: "settings_refresh")
+            completion(Self.authorizationStatusDisplayName(settings.authorizationStatus), Self.isAuthorized(settings.authorizationStatus))
+        }
     }
 
     func postTestNotification() {
@@ -194,6 +202,28 @@ final class OpenClickyDesktopNotificationCenter: NSObject, UNUserNotificationCen
         case .provisional: return "provisional"
         case .ephemeral: return "ephemeral"
         @unknown default: return "unknown"
+        }
+    }
+
+    private static func authorizationStatusDisplayName(_ status: UNAuthorizationStatus) -> String {
+        switch status {
+        case .notDetermined: return "Not requested yet"
+        case .denied: return "Denied in macOS Settings"
+        case .authorized: return "Granted"
+        case .provisional: return "Provisional"
+        case .ephemeral: return "Ephemeral"
+        @unknown default: return "Unknown"
+        }
+    }
+
+    private static func isAuthorized(_ status: UNAuthorizationStatus) -> Bool {
+        switch status {
+        case .authorized, .provisional, .ephemeral:
+            return true
+        case .notDetermined, .denied:
+            return false
+        @unknown default:
+            return false
         }
     }
 

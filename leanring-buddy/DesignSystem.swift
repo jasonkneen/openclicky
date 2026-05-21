@@ -1009,6 +1009,84 @@ struct IBeamCursorView: NSViewRepresentable {
     }
 }
 
+
+
+// MARK: - Shared Chat Message Bubble
+
+struct OpenClickyChatMessageBubble: View {
+    let role: String
+    let text: String
+    let isUser: Bool
+    var metaLabel: String? = nil
+    var maxBubbleWidth: CGFloat = 360
+    var sideInset: CGFloat = 42
+    var cornerRadius: CGFloat = 16
+    var roleColor: Color? = nil
+    var textColor: Color = DS.Colors.textPrimary
+    var userFill: Color = DS.Colors.accent.opacity(0.18)
+    var assistantFill: Color = DS.Colors.surface2.opacity(0.42)
+    var userBorder: Color = DS.Colors.accent.opacity(0.32)
+    var assistantBorder: Color = Color.white.opacity(0.08)
+    var roleFont: Font = .caption.weight(.bold)
+    var metaFont: Font = .caption2.weight(.semibold)
+    var bodyFont: Font = .system(size: 13, weight: .medium)
+
+    private var resolvedRoleColor: Color {
+        if let roleColor { return roleColor }
+        return isUser ? DS.Colors.accentText : DS.Colors.success
+    }
+
+    private var resolvedFill: Color {
+        isUser ? userFill : assistantFill
+    }
+
+    private var resolvedBorder: Color {
+        isUser ? userBorder : assistantBorder
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 0) {
+            if isUser { Spacer(minLength: sideInset) }
+
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 8) {
+                    Text(role)
+                        .font(roleFont)
+                        .foregroundStyle(resolvedRoleColor)
+                    if let metaLabel, !metaLabel.isEmpty {
+                        Spacer(minLength: 8)
+                        Text(metaLabel)
+                            .font(metaFont)
+                            .foregroundStyle(DS.Colors.textSecondary)
+                    }
+                }
+
+                Text(text)
+                    .font(bodyFont)
+                    .foregroundStyle(textColor.opacity(0.90))
+                    .lineSpacing(2)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 12)
+            .frame(maxWidth: maxBubbleWidth, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(resolvedFill)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(resolvedBorder, lineWidth: 1)
+            )
+
+            if !isUser { Spacer(minLength: sideInset) }
+        }
+        .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+    }
+}
+
 // MARK: - Native Tooltip
 
 /// Uses AppKit's `NSView.toolTip` to show a tooltip on hover.
