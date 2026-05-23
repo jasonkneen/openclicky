@@ -621,6 +621,16 @@ final class OpenClickyNotchCaptureWindowManager {
         guard isMainPanelPinned != isPinned else { return }
         isMainPanelPinned = isPinned
 
+        if isPinned {
+            mainPanelContentResizeWorkItem?.cancel()
+            mainPanelContentResizeWorkItem = nil
+            mainPanelPreferredContentHeight = nil
+            if let mainPanel {
+                mainPanelUserPreferredSize = constrainedMainPanelSize(mainPanel.frame.size)
+            }
+            refreshMainPanelMinimumSize(preferredHeight: nil)
+        }
+
         applyMainPanelResizeBehavior()
 
         if isPinned {
@@ -816,6 +826,13 @@ final class OpenClickyNotchCaptureWindowManager {
     }
 
     private func scheduleVisibleMainPanelResize(preferredHeight: CGFloat?) {
+        guard !isMainPanelPinned else {
+            mainPanelContentResizeWorkItem?.cancel()
+            mainPanelContentResizeWorkItem = nil
+            mainPanelPreferredContentHeight = nil
+            return
+        }
+
         if let preferredHeight {
             mainPanelPreferredContentHeight = preferredHeight
         }
@@ -840,12 +857,11 @@ final class OpenClickyNotchCaptureWindowManager {
         if isMainPanelUserResizing || (mainPanel.contentView as? OpenClickyMainPanelResizeContainerView)?.isUserResizing == true { return }
         if isMainPanelPinned {
             let size = constrainedMainPanelSize(mainPanel.frame.size)
-            mainPanel.setFrame(
-                constrainedMainPanelFrame(NSRect(origin: mainPanel.frame.origin, size: size)),
-                display: true,
-                animate: false
-            )
-            mainHostingView?.frame = NSRect(origin: .zero, size: size)
+            let targetFrame = constrainedMainPanelFrame(NSRect(origin: mainPanel.frame.origin, size: size))
+            let hostingFrame = NSRect(origin: .zero, size: size)
+            guard targetFrame.integral != mainPanel.frame.integral || mainHostingView?.frame.integral != hostingFrame.integral else { return }
+            mainPanel.setFrame(targetFrame, display: true, animate: false)
+            mainHostingView?.frame = hostingFrame
             mainHostingView?.needsLayout = true
             return
         }
@@ -2049,8 +2065,12 @@ private final class OpenClickyNotchCaptureRootView: NSView {
                 self.collapsedStackLeadingConstraint?.constant = 10
                 self.collapsedPlayIconTrailingConstraint?.constant = -16
                 self.collapsedAgentDotsTrailingConstraint?.constant = -16
-                
-                self.voiceNotchSpacer.isHidden = true
+
+                // The voice pill can be wider than its intrinsic contents on
+                // external/fallback surfaces. Keep the middle spacer alive in
+                // voice mode so the title stays left and the live indicator
+                // hugs the right edge instead of clustering after the label.
+                self.voiceNotchSpacer.isHidden = self.mode != .voice
                 self.voiceCopyStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
             }
             
@@ -2238,6 +2258,7 @@ private final class OpenClickyNotchCaptureRootView: NSView {
         voiceStack.orientation = .horizontal
         voiceStack.alignment = .centerY
         voiceStack.spacing = 5
+        voiceStack.distribution = .fill
         voiceStack.translatesAutoresizingMaskIntoConstraints = false
         shellView.addSubview(voiceStack)
 
