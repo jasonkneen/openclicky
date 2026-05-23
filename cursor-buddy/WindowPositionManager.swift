@@ -463,6 +463,43 @@ extension NSScreen {
         } ?? main ?? screens.first
     }
 
+    /// Best-effort screen for newly opened OpenClicky-owned UI.
+    ///
+    /// `NSScreen.main` can point at the primary display rather than the display
+    /// the user is actually working on. Prefer the frontmost non-OpenClicky
+    /// window, then the live pointer, then existing OpenClicky windows.
+    static func openClickyActiveInteractionScreen() -> NSScreen? {
+        if let focusedWindow = OpenClickyComputerUseWindowEnumerator.frontmostTargetWindow(),
+           let focusedScreen = screen(containingQuartzWindowBounds: focusedWindow.bounds) {
+            return focusedScreen
+        }
+
+        let mouseLocation = NSEvent.mouseLocation
+        if let pointerScreen = screens.first(where: { $0.frame.contains(mouseLocation) }) {
+            return pointerScreen
+        }
+
+        if let keyWindowScreen = NSApp.keyWindow?.screen {
+            return keyWindowScreen
+        }
+        if let mainWindowScreen = NSApp.mainWindow?.screen {
+            return mainWindowScreen
+        }
+        return main ?? screens.first
+    }
+
+    static func centerFrame(size: NSSize, on screen: NSScreen, padding: CGFloat = 16) -> NSRect {
+        let visibleFrame = screen.visibleFrame.isEmpty ? screen.frame : screen.visibleFrame
+        let width = min(size.width, max(120, visibleFrame.width - (padding * 2)))
+        let height = min(size.height, max(120, visibleFrame.height - (padding * 2)))
+        return NSRect(
+            x: visibleFrame.midX - (width / 2),
+            y: visibleFrame.midY - (height / 2),
+            width: width,
+            height: height
+        )
+    }
+
     static var desktopUnionFrame: CGRect? {
         let unionFrame = screens.reduce(CGRect.null) { partial, screen in
             partial.union(screen.frame)
@@ -476,6 +513,29 @@ extension NSScreen {
             x: min(max(point.x, unionFrame.minX), unionFrame.maxX - 1),
             y: min(max(point.y, unionFrame.minY), unionFrame.maxY - 1)
         )
+    }
+
+    private static func screen(containingQuartzWindowBounds bounds: OpenClickyComputerUseWindowBounds) -> NSScreen? {
+        let quartzCenter = CGPoint(
+            x: CGFloat(bounds.x + (bounds.width / 2)),
+            y: CGFloat(bounds.y + (bounds.height / 2))
+        )
+
+        for screen in screens {
+            let quartzFrame = CGDisplayBounds(screen.displayID)
+            guard quartzFrame.contains(quartzCenter) else { continue }
+            let localX = quartzCenter.x - quartzFrame.minX
+            let localYFromTop = quartzCenter.y - quartzFrame.minY
+            let appKitPoint = CGPoint(
+                x: screen.frame.minX + localX,
+                y: screen.frame.maxY - localYFromTop
+            )
+            return self.screen(containingOrNearestTo: appKitPoint) ?? screen
+        }
+
+        let appKitLikeCenter = CGPoint(x: quartzCenter.x, y: quartzCenter.y)
+        return screens.first(where: { $0.frame.contains(appKitLikeCenter) })
+            ?? screen(containingOrNearestTo: appKitLikeCenter)
     }
 
     private static func distanceSquared(from point: CGPoint, to rect: CGRect) -> CGFloat {

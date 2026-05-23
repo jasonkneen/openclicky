@@ -180,6 +180,13 @@ struct ChatWorkspaceView: View {
           .fixedSize(horizontal: false, vertical: true)
           .frame(maxWidth: .infinity, alignment: .leading)
           .onSubmit(send)
+          .onKeyPress(.return, phases: .down) { keyPress in
+            if keyPress.modifiers.contains(.shift) {
+              return .ignored
+            }
+            send()
+            return .handled
+          }
           .onKeyPress(.tab, phases: .down) { _ in
             OpenClickyPromptAutocomplete.acceptFirstOption(
               in: &draft,

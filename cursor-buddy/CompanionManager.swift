@@ -1011,6 +1011,9 @@ final class CompanionManager: ObservableObject {
     private var agentTitleCancellables: [UUID: AnyCancellable] = [:]
     private var pendingAgentActivityRefreshTasks: [UUID: Task<Void, Never>] = [:]
     private var pendingRelaunchableSnapshotPersistTask: Task<Void, Never>?
+    private var pendingRelaunchableAgentResumeTask: Task<Void, Never>?
+    private var relaunchableAgentResumeTimer: Timer?
+    private var autoResumedRelaunchSessionIDs: Set<UUID> = []
     private var tutorIdleCancellable: AnyCancellable?
     private var accessibilityCheckTimer: Timer?
     private var pendingKeyboardShortcutStartTask: Task<Void, Never>?
@@ -1094,6 +1097,29 @@ final class CompanionManager: ObservableObject {
         }
     }
 
+    private static func restoredInterruptedDockItems(from sessions: [CodexAgentSession]) -> [ClickyAgentDockItem] {
+        sessions.map { session in
+            let prompt = session.lastSubmittedPromptText?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let resumeCaption = session.canResumeAfterRelaunch
+                ? "Open to resume this task after relaunch."
+                : "Restored after relaunch."
+            return ClickyAgentDockItem(
+                id: session.id,
+                sessionID: session.id,
+                title: session.title,
+                userInstruction: prompt?.isEmpty == false ? (prompt ?? session.title) : session.title,
+                accentTheme: session.accentTheme,
+                status: .failed,
+                progressStageLabel: session.canResumeAfterRelaunch ? "Interrupted" : session.progressStage.label,
+                progressStepText: session.latestActivityDisplaySummary ?? session.latestActivitySummary ?? resumeCaption,
+                activityStatusLines: session.activityStatusLines.isEmpty ? [resumeCaption] : session.activityStatusLines,
+                caption: session.latestActivityDisplaySummary ?? session.latestActivitySummary ?? resumeCaption,
+                suggestedNextActions: session.latestResponseCard?.suggestedNextActions ?? [],
+                createdAt: session.createdAt
+            )
+        }
+    }
+
     private let runtimeMode: OpenClickyCompanionRuntimeMode
 
     init(runtimeMode: OpenClickyCompanionRuntimeMode = .menuBar) {
@@ -1105,6 +1131,7 @@ final class CompanionManager: ObservableObject {
         let restoredArchivedSessions = Self.restoredArchivedSessions(from: restoredArchiveIDs)
         let restoredInterruptedSessions = Self.restoredInterruptedSessions(archivedSessionIDs: restoredArchiveIDs)
         codexAgentSessions = restoredInterruptedSessions + [initialAgentSession] + restoredArchivedSessions
+        agentDockItems = Self.restoredInterruptedDockItems(from: restoredInterruptedSessions)
         activeCodexAgentSessionID = restoredInterruptedSessions.first?.id ?? initialAgentSession.id
         OpenClickyMessageLogStore.shared.append(
             lane: "system",
@@ -1114,7 +1141,8 @@ final class CompanionManager: ObservableObject {
                 "nativeCUARouterVersion": "direct-cua-explicit-agent-v4",
                 "agentAssignment": "explicit-only",
                 "computerUseBackend": selectedComputerUseBackendID,
-                "restoredInterruptedAgentTasks": restoredInterruptedSessions.count
+                "restoredInterruptedAgentTasks": restoredInterruptedSessions.count,
+                "restoredInterruptedDockItems": agentDockItems.count
             ]
         )
         // Bind the automation scheduler so cron / interval prompts can fire
@@ -1628,6 +1656,10 @@ final class CompanionManager: ObservableObject {
         bindAudioPowerLevel()
         bindShortcutTransitions()
         bindAgentSessionObservation()
+        startRelaunchableAgentAutoResumeChecks()
+        if runtimeMode == .menuBar, !agentDockItems.isEmpty {
+            showAgentDockWindowNearCurrentScreen()
+        }
         startExternalControlBridgeIfNeeded()
         if runtimeMode == .menuBar && isTutorModeEnabled {
             startTutorIdleObservation()
@@ -2091,6 +2123,11 @@ final class CompanionManager: ObservableObject {
         pendingAgentActivityRefreshTasks.removeAll()
         pendingRelaunchableSnapshotPersistTask?.cancel()
         pendingRelaunchableSnapshotPersistTask = nil
+        pendingRelaunchableAgentResumeTask?.cancel()
+        pendingRelaunchableAgentResumeTask = nil
+        relaunchableAgentResumeTimer?.invalidate()
+        relaunchableAgentResumeTimer = nil
+        autoResumedRelaunchSessionIDs.removeAll()
         pendingAgentDockItemRemovalTasks.values.forEach { $0.cancel() }
         pendingAgentDockItemRemovalTasks.removeAll()
         agentStatusCancellables.removeAll()
@@ -2417,6 +2454,63 @@ final class CompanionManager: ObservableObject {
                 self.persistRelaunchableAgentSessions()
             }
         }
+    }
+
+    private func startRelaunchableAgentAutoResumeChecks() {
+        relaunchableAgentResumeTimer?.invalidate()
+        scheduleRelaunchableAgentAutoResumeCheck(trigger: "startup")
+
+        let timer = Timer.scheduledTimer(withTimeInterval: 120, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.scheduleRelaunchableAgentAutoResumeCheck(trigger: "periodic")
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        relaunchableAgentResumeTimer = timer
+    }
+
+    private func scheduleRelaunchableAgentAutoResumeCheck(trigger: String) {
+        pendingRelaunchableAgentResumeTask?.cancel()
+        pendingRelaunchableAgentResumeTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(trigger == "startup" ? 1500 : 250))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                self?.resumeRestoredAgentTasksIfNeeded(trigger: trigger)
+            }
+        }
+    }
+
+    private func resumeRestoredAgentTasksIfNeeded(trigger: String) {
+        pendingRelaunchableAgentResumeTask = nil
+        let sessionsToResume = codexAgentSessions.filter { session in
+            session.canResumeAfterRelaunch
+                && !archivedSessionIDs.contains(session.id)
+                && !autoResumedRelaunchSessionIDs.contains(session.id)
+        }
+        guard !sessionsToResume.isEmpty else { return }
+
+        let ids = sessionsToResume.map(\.id)
+        autoResumedRelaunchSessionIDs.formUnion(ids)
+        activeCodexAgentSessionID = ids.first ?? activeCodexAgentSessionID
+        OpenClickyMessageLogStore.shared.append(
+            lane: "agent",
+            direction: "outgoing",
+            event: "openclicky.agent_task.auto_resume",
+            fields: [
+                "trigger": trigger,
+                "count": sessionsToResume.count,
+                "sessionIDs": ids.map(\.uuidString),
+                "titles": sessionsToResume.map(\.title)
+            ]
+        )
+
+        sessionsToResume.forEach { session in
+            updateAgentDockItem(for: session.id, status: session.status)
+            session.resumeInterruptedTaskAfterRelaunch()
+        }
+        refreshNotchAgentLiveActivity()
+        scheduleWidgetSnapshotPublish()
+        scheduleRelaunchableAgentSessionsPersist()
     }
 
     private func updateAgentDockTitle(for sessionID: UUID, title: String) {
@@ -3266,6 +3360,16 @@ final class CompanionManager: ObservableObject {
                 await MainActor.run {
                     guard self.realtimeBidirectionalVoiceTurnGeneration == turnGeneration,
                           !Task.isCancelled else {
+                        let canRecoverStaleProcessingState = self.voiceState == .processing
+                            && !self.isRealtimeBidirectionalVoiceCaptureActive
+                            && !self.voiceTTSClient.isPlaying
+                            && !self.openAIRealtimeSpeechClient.isPlaying
+                            && !self.deepgramVoiceAgentClient.isPlaying
+                        if canRecoverStaleProcessingState {
+                            self.voiceState = .idle
+                            self.currentAudioPowerLevel = 0
+                            self.clearVoiceResponseCaption()
+                        }
                         OpenClickyMessageLogStore.shared.append(
                             lane: "voice",
                             direction: "internal",
@@ -3275,6 +3379,7 @@ final class CompanionManager: ObservableObject {
                                 "speechModel": self.selectedModel,
                                 "speechVoice": self.activeRealtimeSpeechVoiceID,
                                 "inputPath": self.activeRealtimeInputPath,
+                                "recoveredProcessingState": canRecoverStaleProcessingState,
                                 "captureDurationMs": Self.elapsedMilliseconds(since: captureStartedAt),
                                 "responseDurationMs": Self.elapsedMilliseconds(since: finishedAt)
                             ]
@@ -5383,7 +5488,11 @@ final class CompanionManager: ObservableObject {
     }
 
     private func showMainOpenClickyPanelFromShortcut() {
-        showNotchTextInput { [weak self] submittedText in
+        guard allPermissionsGranted else { return }
+        guard !buddyDictationManager.isKeyboardShortcutSessionActiveOrFinalizing else { return }
+
+        NotificationCenter.default.post(name: .clickyDismissPanel, object: nil)
+        notchCaptureWindowManager.showTextInput { [weak self] submittedText in
             self?.submitNewAgentTaskFromUI(submittedText, source: "notch_shortcut_task_prompt")
         }
     }
@@ -6820,7 +6929,12 @@ final class CompanionManager: ObservableObject {
             "done with that",
             "done with this"
         ]
-        return phrases.contains { normalizedTranscript == $0 || normalizedTranscript.contains($0) }
+        if phrases.contains(normalizedTranscript) {
+            return true
+        }
+
+        let explicitAgentStopPattern = #"\b(?:cancel|stop|kill|dismiss)\b.{0,28}\b(?:agent|task|codex|background\s+task)\b"#
+        return normalizedTranscript.range(of: explicitAgentStopPattern, options: .regularExpression) != nil
     }
 
     private static func explicitNewTaskInstruction(from transcript: String) -> String? {
@@ -9337,6 +9451,20 @@ final class CompanionManager: ObservableObject {
         // coder agent". Inline shortcuts (open-app / type / press /
         // open-folder) are still handled in `startExplicitAgentTaskIfRequested`
         // before we reach this function.
+        guard !Self.isRawTransportDiagnosticEvent(instruction) else {
+            OpenClickyMessageLogStore.shared.append(
+                lane: "agent",
+                direction: "incoming",
+                event: "openclicky.agent_task.raw_transport_event_ignored",
+                fields: [
+                    "source": "voice_agent_task",
+                    "instructionPreview": Self.voiceArchiveSnippet(instruction, limit: 240),
+                    "requestID": activeRequestTiming?.requestID ?? "none"
+                ]
+            )
+            speakShortSystemResponse("that looks like an internal OpenClicky runtime event, not a task.")
+            return
+        }
 
         let timing = activeRequestTiming
         let executionStartedAt = markRequestExecutionStarted(
@@ -9570,6 +9698,10 @@ final class CompanionManager: ObservableObject {
             .filter { !$0.isEmpty }
             .joined(separator: " ")
             .trimmingCharacters(in: CharacterSet(charactersIn: " `\"'.,:;!?-–—[](){}<>"))
+
+        if isRawTransportDiagnosticEvent(instruction) {
+            return "Runtime Event Filter"
+        }
 
         let directTitleRules: [(pattern: String, title: String)] = [
             (#"(?i)\b(?:see\s+(?:the\s+)?issue\s+here|look\s+at\s+this|fix\s+this)\b.*\b(?:OpenClickyLog|NSXPCDecoder|ViewBridge|unifiedReasons|NSXPCConnection|agent_sdk_query|_sdk_query|kDragIPC|Reentrant\s+message)\b"#, "Log Issue Review"),
@@ -10350,8 +10482,10 @@ final class CompanionManager: ObservableObject {
         }
         if let sessionID = agentDockItems.first(where: { $0.id == itemID })?.sessionID {
             armVoiceFollowUpTarget(sessionID, source: "agent_overlay_open")
+            notchCaptureWindowManager.showMainInterfacePanel(companionManager: self, focusedAgentSessionID: sessionID)
+            return
         }
-        showCodexHUD()
+        notchCaptureWindowManager.showMainInterfacePanel(companionManager: self)
     }
 
     func closeAgentDockPanel() {
@@ -10489,7 +10623,7 @@ final class CompanionManager: ObservableObject {
             ]
         )
         if isAdvancedModeEnabled {
-            showCodexHUD()
+            notchCaptureWindowManager.showMainInterfacePanel(companionManager: self, focusedAgentSessionID: session.id)
         }
     }
 
@@ -10583,6 +10717,20 @@ final class CompanionManager: ObservableObject {
     func submitNewAgentTaskFromUI(_ prompt: String, source: String = "agent_new_task_prompt") -> BrowserWorkspaceAgentSessionProtocol? {
         let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPrompt.isEmpty else { return nil }
+        guard !Self.isRawTransportDiagnosticEvent(trimmedPrompt) else {
+            OpenClickyMessageLogStore.shared.append(
+                lane: "agent",
+                direction: "incoming",
+                event: "openclicky.agent_task.raw_transport_event_ignored",
+                fields: [
+                    "source": source,
+                    "instructionPreview": Self.voiceArchiveSnippet(trimmedPrompt, limit: 240)
+                ]
+            )
+            speakShortSystemResponse("that looks like an internal OpenClicky runtime event, not a task.")
+            return nil
+        }
+
         let timing = beginRequestTiming(source: source, text: trimmedPrompt)
         activeRequestTiming = timing
         defer { activeRequestTiming = nil }

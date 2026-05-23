@@ -14,6 +14,7 @@ import Combine
 final class OpenClickyAgentStore: ObservableObject {
   static let shared = OpenClickyAgentStore()
   nonisolated static let skillDiscoveryAgentSlug = "skill-discovery"
+  nonisolated static let specialistBuilderAgentSlug = "specialist-builder"
 
   @Published private(set) var agents: [OpenClickyAgentDefinition] = []
 
@@ -37,6 +38,7 @@ final class OpenClickyAgentStore: ObservableObject {
     try? FileManager.default.createDirectory(at: builtinRoot, withIntermediateDirectories: true)
     try? FileManager.default.createDirectory(at: userRoot, withIntermediateDirectories: true)
     ensureSkillDiscoveryAgentInstalled()
+    ensureSpecialistBuilderAgentInstalled()
   }
 
   func reload() {
@@ -96,14 +98,19 @@ final class OpenClickyAgentStore: ObservableObject {
   /// Removes the user copy of an agent. If a built-in with the same slug
   /// exists, the agent reverts to the built-in version on next reload.
   func deleteUserCopy(slug: String) throws {
-    if slug == Self.skillDiscoveryAgentSlug {
-      throw NSError(domain: "OpenClickyAgentStore", code: 3, userInfo: [NSLocalizedDescriptionKey: "The Skill Discovery agent is required by OpenClicky and cannot be deleted."])
+    if Self.isProtectedSystemAgentSlug(slug) {
+      throw NSError(domain: "OpenClickyAgentStore", code: 3, userInfo: [NSLocalizedDescriptionKey: "This OpenClicky system agent is required and cannot be deleted."])
     }
     let dir = userRoot.appendingPathComponent(slug, isDirectory: true)
     if FileManager.default.fileExists(atPath: dir.path) {
       try FileManager.default.removeItem(at: dir)
     }
     reload()
+  }
+
+
+  nonisolated static func isProtectedSystemAgentSlug(_ slug: String) -> Bool {
+    slug == skillDiscoveryAgentSlug || slug == specialistBuilderAgentSlug
   }
 
   static func normalizedSlug(_ raw: String) -> String {
@@ -154,6 +161,48 @@ final class OpenClickyAgentStore: ObservableObject {
     }
   }
 
+  @discardableResult
+  func ensureSpecialistBuilderAgentInstalled() -> OpenClickyAgentDefinition? {
+    let slug = Self.specialistBuilderAgentSlug
+    let dir = builtinRoot.appendingPathComponent(slug, isDirectory: true)
+    let metadataURL = dir.appendingPathComponent("agent.json")
+    let instructionsURL = dir.appendingPathComponent("instructions.md")
+
+    if FileManager.default.fileExists(atPath: metadataURL.path),
+       FileManager.default.fileExists(atPath: instructionsURL.path) {
+      return OpenClickyAgentDefinition.load(slug: slug, userRoot: userRoot, builtinRoot: builtinRoot)
+    }
+
+    do {
+      try OpenClickyAgentDefinition.write(
+        slug: slug,
+        in: builtinRoot,
+        metadata: OpenClickyAgentMetadata(
+          displayName: "Specialist Builder",
+          description: "Creates and equips OpenClicky specialist agents with the right skills.",
+          accentColorHex: "22C55E"
+        ),
+        soul: Self.specialistBuilderAgentSoul,
+        instructions: Self.specialistBuilderAgentInstructions,
+        memory: "When asked for a new specialist, create the smallest useful agent definition and attach matching skills rather than only describing the idea. Preserve existing agents and archive before replacing user-authored skill files.\n",
+        heartbeat: Self.defaultHeartbeatTemplate(displayName: "Specialist Builder"),
+        skills: OpenClickyAgentSkillSelection(enabledSkillIDs: [
+          "openclicky-specialist-agents",
+          "skill-creator",
+          "skill-installer",
+          "find-skills",
+          "codex",
+          "openclicky-repo-operator",
+          "optimize-openclicky-skills"
+        ])
+      )
+      return OpenClickyAgentDefinition.load(slug: slug, userRoot: userRoot, builtinRoot: builtinRoot)
+    } catch {
+      print("OpenClicky specialist builder agent seed failed: \(error)")
+      return nil
+    }
+  }
+
   private static let skillDiscoveryAgentSoul = """
   You are OpenClicky's built-in Skill Discovery specialist.
 
@@ -171,6 +220,26 @@ final class OpenClickyAgentStore: ObservableObject {
   - Write at most 8 deduplicated suggestions to the JSON path requested by the automation prompt.
   - Each suggestion must include id, title, detail, source, and installPrompt.
   - Keep installPrompt actionable for OpenClicky Agent Mode.
+  """
+
+
+  private static let specialistBuilderAgentSoul = """
+  You are OpenClicky's built-in Specialist Builder.
+
+  You turn a user's plain-English request for a new expert, specialist, or recurring agent into a real OpenClicky specialist with a focused soul, instructions, memory, heartbeat, and an explicit skill set. Be practical and surgical: create the smallest useful agent and associated skills needed for the request.
+  """
+
+  private static let specialistBuilderAgentInstructions = """
+  Create or improve OpenClicky specialist agents.
+
+  Rules:
+  - Inspect existing agents and local skills before creating anything new.
+  - Prefer an existing bundled or learned skill when it fits; create a custom `skills/<id>/SKILL.md` only when the workflow is repeated and not already covered.
+  - Write or update `agent.json`, `soul.md`, `instructions.md`, `memory.md`, `HEARTBEAT.md`, and `skills.json` under the target specialist's root.
+  - Add explicit enabled skill IDs in `skills.json`; do not leave the specialist relying on vague expertise alone.
+  - Keep specialists bounded: clear scope, stop rules, archive-first behavior for OpenClicky artifacts, and concise spoken final reports.
+  - If replacing or superseding a user-authored agent or skill, archive the previous version first.
+  - Verify by listing the created files and confirming the enabled skills resolve locally or are intentionally requested for install.
   """
 
   /// Default HEARTBEAT.md scaffolding for a new agent. Mirrors the

@@ -70,6 +70,8 @@ struct CodexAgentModePanelSection: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
                 .foregroundColor(DS.Colors.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 7)
                 .background(
@@ -81,6 +83,13 @@ struct CodexAgentModePanelSection: View {
                         .stroke(DS.Colors.borderSubtle, lineWidth: 0.5)
                 )
                 .onSubmit(runPrompt)
+                .onKeyPress(.return, phases: .down) { keyPress in
+                    if keyPress.modifiers.contains(.shift) {
+                        return .ignored
+                    }
+                    runPrompt()
+                    return .handled
+                }
 
             if let error = visibleInlineErrorMessage {
                 Text(error)

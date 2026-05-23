@@ -809,8 +809,13 @@ final class AgentMenuBarStatusManager: NSObject {
         }
         if let sessionID = item.sessionID {
             companionManager.selectCodexAgentSession(sessionID)
+            companionManager.notchCaptureWindowManager.showMainInterfacePanel(
+                companionManager: companionManager,
+                focusedAgentSessionID: sessionID
+            )
+            return
         }
-        companionManager.showCodexHUD()
+        companionManager.notchCaptureWindowManager.showMainInterfacePanel(companionManager: companionManager)
     }
 
     private func openMenuBarAgentTextFollowUp(_ item: ClickyAgentDockItem, companionManager: CompanionManager?) {
@@ -956,7 +961,12 @@ final class AgentMenuBarStatusManager: NSObject {
     @objc private func openHistorySessionFromAgentMenu(_ sender: NSMenuItem) {
         guard let sessionID = sender.representedObject as? UUID else { return }
         companionManager?.selectCodexAgentSession(sessionID)
-        companionManager?.showCodexHUD()
+        if let companionManager {
+            companionManager.notchCaptureWindowManager.showMainInterfacePanel(
+                companionManager: companionManager,
+                focusedAgentSessionID: sessionID
+            )
+        }
     }
 
     private func tooltip(for item: ClickyAgentDockItem) -> String {

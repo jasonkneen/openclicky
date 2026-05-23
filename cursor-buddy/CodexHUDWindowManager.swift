@@ -481,7 +481,7 @@ struct CodexHUDView: View {
                 .lineLimit(1)
 
             HUDHeaderPill(
-                title: session.status.label,
+                title: sessionStatusLabel,
                 systemImageName: session.isTurnActiveForChatQueue ? "sparkles" : "terminal.fill",
                 color: session.isTurnActiveForChatQueue ? DS.Colors.accentText : sessionStatusColor
             )
@@ -519,10 +519,20 @@ struct CodexHUDView: View {
         if session.isTurnActiveForChatQueue {
             return session.latestActivityDisplaySummary ?? session.latestActivitySummary ?? "Working on the current task"
         }
+        if session.canResumeAfterRelaunch {
+            return "Needs resuming after relaunch"
+        }
         return "Agent HUD and task chat"
     }
 
+    private var sessionStatusLabel: String {
+        session.canResumeAfterRelaunch ? "Resume" : session.status.label
+    }
+
     private var sessionStatusColor: Color {
+        if session.canResumeAfterRelaunch {
+            return DS.Colors.warning
+        }
         switch session.status {
         case .starting, .running: return DS.Colors.accentText
         case .ready: return DS.Colors.success
@@ -550,6 +560,9 @@ struct CodexHUDView: View {
                             close: {
                                 if isAgentSessionRunning(agentSession) {
                                     pendingStopAgentSessionID = agentSession.id
+                                } else if agentSession.canResumeAfterRelaunch {
+                                    companionManager.selectCodexAgentSession(agentSession.id)
+                                    agentSession.resumeInterruptedTaskAfterRelaunch()
                                 } else {
                                     companionManager.archiveSession(agentSession.id)
                                 }
@@ -1004,6 +1017,13 @@ struct CodexHUDView: View {
                             .stroke(isDropTargeted ? DS.Colors.accentText.opacity(0.55) : DS.Colors.borderSubtle, lineWidth: isDropTargeted ? 1 : 0.8)
                     )
                     .onSubmit(send)
+                    .onKeyPress(.return, phases: .down) { keyPress in
+                        if keyPress.modifiers.contains(.shift) {
+                            return .ignored
+                        }
+                        send()
+                        return .handled
+                    }
                     .onKeyPress(.tab, phases: .down) { _ in
                         OpenClickyPromptAutocomplete.acceptFirstOption(
                             in: &prompt,
@@ -1456,9 +1476,29 @@ private struct HUDFloatingAgentButton: View {
         }
     }
 
-    private var closeTitle: String { isRunning ? "Stop running task" : "Archive agent session" }
-    private var closeIcon: String { isRunning ? "stop.circle.fill" : "archivebox" }
-    private var closeAccessibilityLabel: String { isRunning ? "Stop running task \(session.title)" : "Archive \(session.title)" }
+    private var closeTitle: String {
+        if isRunning { return "Stop running task" }
+        if session.canResumeAfterRelaunch { return "Resume task" }
+        return "Archive agent session"
+    }
+
+    private var closeIcon: String {
+        if isRunning { return "stop.circle.fill" }
+        if session.canResumeAfterRelaunch { return "play.circle.fill" }
+        return "archivebox"
+    }
+
+    private var closeAccessibilityLabel: String {
+        if isRunning { return "Stop running task \(session.title)" }
+        if session.canResumeAfterRelaunch { return "Resume task \(session.title)" }
+        return "Archive \(session.title)"
+    }
+
+    private var hoverControlIcon: String {
+        if isRunning { return "stop.fill" }
+        if session.canResumeAfterRelaunch { return "play.fill" }
+        return "archivebox.fill"
+    }
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -1495,7 +1535,7 @@ private struct HUDFloatingAgentButton: View {
                                     .fill(statusColor)
                                     .frame(width: 4.5, height: 4.5)
                             }
-                            Text(session.status.label)
+                            Text(statusLabel)
                                 .font(appUIFont(size: max(9, subtextFontSize - 2), weight: .semibold))
                                 .foregroundColor(DS.Colors.textTertiary)
                                 .textCase(.uppercase)
@@ -1531,7 +1571,7 @@ private struct HUDFloatingAgentButton: View {
 
             if isHovered {
                 Button(action: close) {
-                    Image(systemName: isRunning ? "stop.fill" : "xmark")
+                    Image(systemName: hoverControlIcon)
                         .font(appUIFont(size: max(8, subtextFontSize - 3), weight: .semibold))
                         .foregroundColor(DS.Colors.textPrimary)
                         .frame(width: 15, height: 15)
@@ -1571,6 +1611,9 @@ private struct HUDFloatingAgentButton: View {
     }
 
     private var statusColor: Color {
+        if session.canResumeAfterRelaunch {
+            return DS.Colors.warning
+        }
         switch session.status {
         case .starting, .running:
             return DS.Colors.warning
@@ -1581,6 +1624,10 @@ private struct HUDFloatingAgentButton: View {
         case .stopped:
             return DS.Colors.textTertiary
         }
+    }
+
+    private var statusLabel: String {
+        session.canResumeAfterRelaunch ? "Resume" : session.status.label
     }
 }
 

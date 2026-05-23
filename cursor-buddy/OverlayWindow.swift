@@ -2281,7 +2281,11 @@ final class ClickyAgentDockWindowManager {
     // gives glows, status rings, and top-parked icons room to overdraw instead
     // of being clipped by the NSPanel/content-view bounds.
     private let dockVerticalScreenInset: CGFloat = 16
-    private let dockVerticalPadding: CGFloat = 40
+    private let dockAvatarTopOverdrawPadding: CGFloat = 64
+    private let dockAvatarBottomOverdrawPadding: CGFloat = 8
+    private var dockVerticalPadding: CGFloat {
+        dockAvatarTopOverdrawPadding + dockAvatarBottomOverdrawPadding
+    }
     private let hoverCardHeight: CGFloat = 236
     private let hoverCardWidth: CGFloat = 560
     // Track the icon container size used by `ClickyAgentDockItemView`. Used
@@ -2393,13 +2397,12 @@ final class ClickyAgentDockWindowManager {
         // flights land on the real parked avatar instead of an approximate
         // parking edge. AppKit frames are bottom-left based; SwiftUI rows are
         // measured down from the panel's top edge.
-        let avatarTopOverdrawPadding: CGFloat = 64
         let rowSpacing: CGFloat = dockIconWidth + dockRowSpacing
         let iconCenterX = layoutState.opensPanelsToRight
             ? panel.frame.minX + dockTrailingInset + dockIconWidth / 2
             : panel.frame.maxX - dockTrailingInset - dockIconWidth / 2
         let iconCenterY = panel.frame.maxY
-            - avatarTopOverdrawPadding
+            - dockAvatarTopOverdrawPadding
             - CGFloat(itemIndex) * rowSpacing
             - dockIconWidth / 2
 

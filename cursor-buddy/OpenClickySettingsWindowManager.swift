@@ -10,8 +10,9 @@ final class OpenClickySettingsWindowManager {
     private let minimumWindowSize = NSSize(width: 1040, height: 660)
 
     func show(companionManager: CompanionManager) {
+        let targetScreen = NSScreen.openClickyActiveInteractionScreen()
         if window == nil {
-            createWindow(companionManager: companionManager)
+            createWindow(companionManager: companionManager, targetScreen: targetScreen)
         } else if let hostingView {
             hostingView.rootView = OpenClickySettingsView(companionManager: companionManager)
         }
@@ -19,23 +20,23 @@ final class OpenClickySettingsWindowManager {
         guard let settingsWindow = window else { return }
 
         NSApp.activate(ignoringOtherApps: true)
-        bringSettingsWindowToFront(settingsWindow, shouldCenter: true)
+        bringSettingsWindowToFront(settingsWindow, shouldCenter: true, targetScreen: targetScreen)
 
         DispatchQueue.main.async { [weak self, weak settingsWindow] in
             guard let self, let settingsWindow else { return }
-            self.bringSettingsWindowToFront(settingsWindow, shouldCenter: false)
+            self.bringSettingsWindowToFront(settingsWindow, shouldCenter: false, targetScreen: targetScreen)
         }
     }
 
-    private func bringSettingsWindowToFront(_ settingsWindow: NSWindow, shouldCenter: Bool) {
+    private func bringSettingsWindowToFront(_ settingsWindow: NSWindow, shouldCenter: Bool, targetScreen: NSScreen?) {
         // The main OpenClicky panel uses `.statusBar`, so Settings must sit one
         // level above it instead of the default floating level.
         OpenClickyWindowLevels.applyPanelDialogLevel(to: settingsWindow)
         settingsWindow.collectionBehavior.insert(.moveToActiveSpace)
         settingsWindow.collectionBehavior.insert(.fullScreenAuxiliary)
-        ensureSettingsWindowFitsContent(settingsWindow, shouldCenter: shouldCenter)
+        ensureSettingsWindowFitsContent(settingsWindow, shouldCenter: shouldCenter, targetScreen: targetScreen)
         if shouldCenter {
-            settingsWindow.center()
+            center(settingsWindow, on: targetScreen)
         }
         settingsWindow.deminiaturize(nil)
         settingsWindow.orderFrontRegardless()
@@ -43,8 +44,8 @@ final class OpenClickySettingsWindowManager {
         settingsWindow.makeMain()
     }
 
-    private func ensureSettingsWindowFitsContent(_ settingsWindow: NSWindow, shouldCenter: Bool) {
-        let visibleFrame = settingsWindow.screen?.visibleFrame ?? NSScreen.main?.visibleFrame
+    private func ensureSettingsWindowFitsContent(_ settingsWindow: NSWindow, shouldCenter: Bool, targetScreen: NSScreen?) {
+        let visibleFrame = (targetScreen ?? settingsWindow.screen ?? NSScreen.openClickyActiveInteractionScreen())?.visibleFrame
         let currentFrame = settingsWindow.frame
         let targetWidth = max(currentFrame.width, windowSize.width)
         let targetHeight = max(currentFrame.height, windowSize.height)
@@ -66,7 +67,19 @@ final class OpenClickySettingsWindowManager {
         }
     }
 
-    private func createWindow(companionManager: CompanionManager) {
+    private func center(_ settingsWindow: NSWindow, on targetScreen: NSScreen?) {
+        guard let targetScreen else {
+            settingsWindow.center()
+            return
+        }
+        settingsWindow.setFrame(
+            NSScreen.centerFrame(size: settingsWindow.frame.size, on: targetScreen),
+            display: true,
+            animate: false
+        )
+    }
+
+    private func createWindow(companionManager: CompanionManager, targetScreen: NSScreen?) {
         let settingsWindow = NSWindow(
             contentRect: NSRect(origin: .zero, size: windowSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -85,7 +98,7 @@ final class OpenClickySettingsWindowManager {
         OpenClickyWindowLevels.applyPanelDialogLevel(to: settingsWindow)
         settingsWindow.collectionBehavior.insert(.moveToActiveSpace)
         settingsWindow.collectionBehavior.insert(.fullScreenAuxiliary)
-        settingsWindow.center()
+        center(settingsWindow, on: targetScreen)
 
         let containerView = OpenClickyGlassContainerView(frame: NSRect(origin: .zero, size: windowSize))
         containerView.autoresizingMask = [.width, .height]

@@ -98,6 +98,12 @@ struct ClickyCodexConfigTemplate: Equatable {
 
         lines.append(contentsOf: [
             "",
+            "[mcp_servers.openClickyControl]",
+            "url = \"http://127.0.0.1:32123/mcp\""
+        ])
+
+        lines.append(contentsOf: [
+            "",
             "[[skills.config]]",
             "model_instructions_file = \"\(escape(modelInstructionsFileName))\"",
             "bundled_skills_dir = \"\(escape(bundledSkillsDirectoryName))\"",

@@ -82,6 +82,7 @@ struct OpenClickyNotchPanelView: View {
     @State private var quickPromptMode: OpenClickyQuickPromptMode = .ask
     @State private var quickPrompt: String = ""
     @State private var quickPromptAttachments: [PanelDraftAttachment] = []
+    @State private var quickPromptDroppedPathFragments: Set<String> = []
     @State private var isQuickPromptDropTargeted = false
     @State private var isPanelDropTargeted = false
     @State private var isPanelUserResizing = false
@@ -815,9 +816,9 @@ struct OpenClickyNotchPanelView: View {
         } label: {
             HStack(spacing: 6) {
                 Circle()
-                    .fill(agentStatusColor(session.status))
+                    .fill(agentStatusColor(for: session))
                     .frame(width: 7, height: 7)
-                    .shadow(color: agentStatusColor(session.status).opacity(0.7), radius: 4, x: 0, y: 0)
+                    .shadow(color: agentStatusColor(for: session).opacity(0.7), radius: 4, x: 0, y: 0)
                 Text(session.title)
                     .font(appUIFont(size: max(9, subtextFontSize - 1), weight: .heavy))
                     .foregroundColor(DS.Colors.textPrimary)
@@ -829,7 +830,7 @@ struct OpenClickyNotchPanelView: View {
             .padding(.horizontal, 9)
             .padding(.vertical, 7)
             .background(Capsule(style: .continuous).fill(Color.white.opacity(0.07)))
-            .overlay(Capsule(style: .continuous).stroke(agentStatusColor(session.status).opacity(0.22), lineWidth: 0.8))
+            .overlay(Capsule(style: .continuous).stroke(agentStatusColor(for: session).opacity(0.22), lineWidth: 0.8))
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Open agent chat for \(session.title)")
@@ -1305,6 +1306,15 @@ struct OpenClickyNotchPanelView: View {
         }
     }
 
+    private func resumeAgentSessionAfterRelaunch(_ session: CodexAgentSession) {
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+            companionManager.selectCodexAgentSession(session.id)
+            expandedAgentSessionID = session.id
+            session.resumeInterruptedTaskAfterRelaunch()
+            notifyPanelSizeChanged()
+        }
+    }
+
     private func agentUtilityIconButton(systemImageName: String, accessibilityLabel: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemImageName)
@@ -1535,6 +1545,10 @@ struct OpenClickyNotchPanelView: View {
                             agents: agentStore.agents,
                             skillSuggestions: skillDiscoveryStore.suggestions
                         ) ? .handled : .ignored
+                    }
+                    .onKeyPress("v", phases: .down) { keyPress in
+                        guard keyPress.modifiers.contains(.command) else { return .ignored }
+                        return pasteQuickPromptAttachmentsFromClipboard() ? .handled : .ignored
                     }
                 Button(action: submitQuickPrompt) {
                     Image(systemName: "paperplane.fill")
@@ -1979,9 +1993,10 @@ struct OpenClickyNotchPanelView: View {
         let isExpanded = expandedAgentSessionID == session.id
         let isArchived = companionManager.archivedSessionIDs.contains(session.id)
         let isRunning = isAgentSessionRunning(session)
+        let canResume = !isArchived && session.canResumeAfterRelaunch
         let canStop = !isArchived && isRunning
-        let canArchive = !isArchived && !isRunning
-        let showsTerminalControl = canStop || canArchive || isArchived
+        let canArchive = !isArchived && !isRunning && !canResume
+        let showsTerminalControl = canResume || canStop || canArchive || isArchived
         return VStack(spacing: 0) {
             HStack(spacing: 6) {
                 Button {
@@ -1992,13 +2007,13 @@ struct OpenClickyNotchPanelView: View {
                 } label: {
                     HStack(spacing: 10) {
                         if isRunning {
-                            OpenClickyRunningAgentIndicator(color: agentStatusColor(session.status))
+                            OpenClickyRunningAgentIndicator(color: agentStatusColor(for: session))
                                 .frame(width: 18, height: 10, alignment: .center)
                         } else {
                             Circle()
-                                .fill(agentStatusColor(session.status))
+                                .fill(agentStatusColor(for: session))
                                 .frame(width: 8, height: 8)
-                                .shadow(color: agentStatusColor(session.status).opacity(0.7), radius: 5, x: 0, y: 0)
+                                .shadow(color: agentStatusColor(for: session).opacity(0.7), radius: 5, x: 0, y: 0)
                                 .frame(width: 18, height: 10, alignment: .center)
                         }
 
@@ -2015,14 +2030,14 @@ struct OpenClickyNotchPanelView: View {
                         }
 
                         Spacer(minLength: 8)
-                        Text(session.status.label)
+                        Text(agentStatusLabel(for: session))
                             .font(appUIFont(size: max(9, subtextFontSize - 2), weight: .black))
-                            .foregroundColor(agentStatusColor(session.status))
+                            .foregroundColor(agentStatusColor(for: session))
                             .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)
                             .padding(.horizontal, max(6, subtextFontSize * 0.58))
                             .padding(.vertical, max(3, subtextFontSize * 0.28))
-                            .background(Capsule(style: .continuous).fill(agentStatusColor(session.status).opacity(0.14)))
+                            .background(Capsule(style: .continuous).fill(agentStatusColor(for: session).opacity(0.14)))
                         Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                             .font(panelUIFont(size: 13, weight: .black))
                             .foregroundColor(isExpanded ? DS.Colors.accentText : DS.Colors.textTertiary)
@@ -2045,6 +2060,15 @@ struct OpenClickyNotchPanelView: View {
                         foregroundColor: DS.Colors.destructiveText
                     ) {
                         pendingStopAgentSessionID = session.id
+                    }
+                } else if canResume {
+                    agentArchiveButton(
+                        systemImageName: "play.circle.fill",
+                        accessibilityLabel: "Resume task \(session.title)",
+                        helpText: "Resume this unfinished OpenClicky task",
+                        foregroundColor: DS.Colors.warning
+                    ) {
+                        resumeAgentSessionAfterRelaunch(session)
                     }
                 } else if isArchived {
                     agentArchiveButton(
@@ -2156,9 +2180,7 @@ struct OpenClickyNotchPanelView: View {
 
                         if session.canResumeAfterRelaunch {
                             Button {
-                                companionManager.selectCodexAgentSession(session.id)
-                                session.resumeInterruptedTaskAfterRelaunch()
-                                notifyPanelSizeChanged()
+                                resumeAgentSessionAfterRelaunch(session)
                             } label: {
                                 Label("Resume task", systemImage: "arrow.clockwise.circle.fill")
                                     .font(panelUIFont(size: 11, weight: .heavy))
@@ -2247,6 +2269,10 @@ struct OpenClickyNotchPanelView: View {
                             agents: agentStore.agents,
                             skillSuggestions: skillDiscoveryStore.suggestions
                         ) ? .handled : .ignored
+                    }
+                    .onKeyPress("v", phases: .down) { keyPress in
+                        guard keyPress.modifiers.contains(.command) else { return .ignored }
+                        return pasteExpandedAgentAttachmentsFromClipboard() ? .handled : .ignored
                     }
                 Button {
                     submitExpandedAgentPrompt(to: session)
@@ -2496,6 +2522,7 @@ struct OpenClickyNotchPanelView: View {
 
         quickPrompt = ""
         quickPromptAttachments.removeAll()
+        quickPromptDroppedPathFragments.removeAll()
         companionManager.submitNewAgentTaskFromUI(
             promptWithAttachments(trimmedPrompt, attachments: attachments),
             source: "open_clicky_panel_ask"
@@ -2530,6 +2557,7 @@ struct OpenClickyNotchPanelView: View {
 
         quickPrompt = ""
         quickPromptAttachments.removeAll()
+        quickPromptDroppedPathFragments.removeAll()
         withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
             isCompactChatExpanded = true
         }
@@ -2551,6 +2579,7 @@ struct OpenClickyNotchPanelView: View {
 
         quickPrompt = ""
         quickPromptAttachments.removeAll()
+        quickPromptDroppedPathFragments.removeAll()
         companionManager.submitNewAgentTaskFromUI(
             promptWithAttachments(trimmedPrompt, attachments: attachments),
             source: "open_clicky_panel_agent"
@@ -2621,6 +2650,32 @@ struct OpenClickyNotchPanelView: View {
         }
     }
 
+    private func pasteQuickPromptAttachmentsFromClipboard() -> Bool {
+        handleAttachmentPasteboard(NSPasteboard.general) { url, kind in
+            addQuickPromptAttachment(url, forcedKind: kind)
+        }
+    }
+
+    private func pasteExpandedAgentAttachmentsFromClipboard() -> Bool {
+        handleAttachmentPasteboard(NSPasteboard.general) { url, kind in
+            addExpandedAgentAttachment(url, forcedKind: kind)
+        }
+    }
+
+    private func handleAttachmentPasteboard(
+        _ pasteboard: NSPasteboard,
+        addAttachment: @escaping @MainActor (URL, PanelDraftAttachment.AttachmentKind?) -> Void
+    ) -> Bool {
+        let attachments = Self.attachmentURLs(from: pasteboard)
+        guard !attachments.isEmpty else { return false }
+
+        for attachment in attachments {
+            addAttachment(attachment.url, attachment.kind)
+        }
+        notifyPanelSizeChanged()
+        return true
+    }
+
     private func handlePanelAttachmentDrop(_ providers: [NSItemProvider]) -> Bool {
         if selectedTab == .agents, expandedAgentSessionID != nil {
             return handleAttachmentDrop(providers) { url, kind in
@@ -2671,9 +2726,12 @@ struct OpenClickyNotchPanelView: View {
 
     private func addQuickPromptAttachment(_ url: URL, forcedKind: PanelDraftAttachment.AttachmentKind? = nil) {
         let standardizedURL = url.standardizedFileURL
-        guard quickPromptAttachments.contains(where: { $0.url.standardizedFileURL == standardizedURL }) == false else { return }
-        let kind = forcedKind ?? Self.attachmentKind(for: standardizedURL)
-        quickPromptAttachments.append(PanelDraftAttachment(url: standardizedURL, kind: kind))
+        rememberQuickPromptDroppedPath(standardizedURL)
+        if quickPromptAttachments.contains(where: { $0.url.standardizedFileURL == standardizedURL }) == false {
+            let kind = forcedKind ?? Self.attachmentKind(for: standardizedURL)
+            quickPromptAttachments.append(PanelDraftAttachment(url: standardizedURL, kind: kind))
+        }
+        scrubDroppedPathsFromQuickPrompt()
     }
 
     private func addExpandedAgentAttachment(_ url: URL, forcedKind: PanelDraftAttachment.AttachmentKind? = nil) {
@@ -2685,6 +2743,36 @@ struct OpenClickyNotchPanelView: View {
 
     private func removeQuickPromptAttachment(_ attachment: PanelDraftAttachment) {
         quickPromptAttachments.removeAll { $0.id == attachment.id }
+        quickPromptDroppedPathFragments = Set(quickPromptAttachments.flatMap { Self.promptPathFragments(for: $0.url) })
+    }
+
+    private func rememberQuickPromptDroppedPath(_ url: URL) {
+        for fragment in Self.promptPathFragments(for: url) {
+            quickPromptDroppedPathFragments.insert(fragment)
+        }
+
+        // SwiftUI's text field may accept a file drop as text after our drop
+        // handler has already made the proper attachment chip. Scrub once now
+        // and again on the next main-actor turn so a dragged file never lands
+        // in the Home composer as a raw path.
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 80_000_000)
+            scrubDroppedPathsFromQuickPrompt()
+        }
+    }
+
+    private func scrubDroppedPathsFromQuickPrompt() {
+        guard !quickPrompt.isEmpty, !quickPromptDroppedPathFragments.isEmpty else { return }
+
+        var scrubbedPrompt = quickPrompt
+        for fragment in quickPromptDroppedPathFragments where !fragment.isEmpty {
+            scrubbedPrompt = scrubbedPrompt.replacingOccurrences(of: fragment, with: "")
+        }
+
+        let normalizedPrompt = Self.normalizedPromptAfterDroppingPathText(scrubbedPrompt)
+        if normalizedPrompt != quickPrompt {
+            quickPrompt = normalizedPrompt
+        }
     }
 
     private func removeExpandedAgentAttachment(_ attachment: PanelDraftAttachment) {
@@ -2706,6 +2794,68 @@ struct OpenClickyNotchPanelView: View {
         These attachments are task context/reference material. Use them to understand and complete the request; do not treat them as files the user is asking you to find or show back unless the request explicitly says so.
         \(attachmentLines)
         """.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    nonisolated private static func attachmentURLs(from pasteboard: NSPasteboard) -> [(url: URL, kind: PanelDraftAttachment.AttachmentKind?)] {
+        var attachments: [(url: URL, kind: PanelDraftAttachment.AttachmentKind?)] = []
+        var seen = Set<String>()
+
+        func appendURL(_ url: URL, kind: PanelDraftAttachment.AttachmentKind? = nil) {
+            let standardized = url.standardizedFileURL
+            let key = standardized.path
+            guard !seen.contains(key) else { return }
+            seen.insert(key)
+            attachments.append((standardized, kind))
+        }
+
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] {
+            for url in urls where url.isFileURL {
+                appendURL(url)
+            }
+        }
+
+        for item in pasteboard.pasteboardItems ?? [] {
+            if let fileURLString = item.string(forType: .fileURL),
+               let url = URL(string: fileURLString),
+               url.isFileURL {
+                appendURL(url)
+            }
+
+            if let pathString = item.string(forType: .string), let url = fileURLFromClipboardString(pathString) {
+                appendURL(url)
+            }
+
+            if let data = item.data(forType: .png) ?? item.data(forType: .tiff),
+               let url = persistDroppedImage(data) {
+                appendURL(url, kind: .image)
+            }
+        }
+
+        return attachments
+    }
+
+    nonisolated private static func fileURLFromClipboardString(_ string: String) -> URL? {
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.contains("\n") == false else { return nil }
+
+        if let url = URL(string: trimmed), url.isFileURL {
+            return url.standardizedFileURL
+        }
+
+        let expandedPath: String
+        if trimmed.hasPrefix("~/") {
+            expandedPath = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(String(trimmed.dropFirst(2)))
+                .path
+        } else {
+            expandedPath = trimmed
+        }
+
+        var isDirectory: ObjCBool = false
+        guard expandedPath.hasPrefix("/"), FileManager.default.fileExists(atPath: expandedPath, isDirectory: &isDirectory) else {
+            return nil
+        }
+        return URL(fileURLWithPath: expandedPath, isDirectory: isDirectory.boolValue).standardizedFileURL
     }
 
     private static var supportedAttachmentDropTypes: [String] {
@@ -2734,6 +2884,36 @@ struct OpenClickyNotchPanelView: View {
         return nil
     }
 
+    nonisolated private static func promptPathFragments(for url: URL) -> Set<String> {
+        let standardizedURL = url.standardizedFileURL
+        var fragments: Set<String> = [
+            standardizedURL.path,
+            standardizedURL.absoluteString
+        ]
+
+        if let decodedPath = standardizedURL.path.removingPercentEncoding {
+            fragments.insert(decodedPath)
+        }
+        if let decodedAbsoluteString = standardizedURL.absoluteString.removingPercentEncoding {
+            fragments.insert(decodedAbsoluteString)
+        }
+
+        return fragments.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    nonisolated private static func normalizedPromptAfterDroppingPathText(_ prompt: String) -> String {
+        prompt
+            .components(separatedBy: .newlines)
+            .map { line in
+                line
+                    .replacingOccurrences(of: "  ", with: " ")
+                    .trimmingCharacters(in: .whitespaces)
+            }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private static func attachmentKind(for url: URL) -> PanelDraftAttachment.AttachmentKind {
         if let type = try? url.resourceValues(forKeys: [.contentTypeKey]).contentType,
            type.conforms(to: .image) {
@@ -2748,6 +2928,15 @@ struct OpenClickyNotchPanelView: View {
         return .document
     }
 
+    nonisolated private static func pngImageData(from data: Data) -> Data? {
+        guard let image = NSImage(data: data),
+              let tiffData = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiffData) else {
+            return nil
+        }
+        return bitmap.representation(using: .png, properties: [:])
+    }
+
     nonisolated private static func persistDroppedImage(_ data: Data) -> URL? {
         let directory = FileManager.default
             .homeDirectoryForCurrentUser
@@ -2756,7 +2945,8 @@ struct OpenClickyNotchPanelView: View {
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let url = directory.appendingPathComponent("panel-image-\(UUID().uuidString).png", isDirectory: false)
-            try data.write(to: url, options: .atomic)
+            let pngData = pngImageData(from: data) ?? data
+            try pngData.write(to: url, options: .atomic)
             return url
         } catch {
             return nil
@@ -2788,6 +2978,17 @@ struct OpenClickyNotchPanelView: View {
         DispatchQueue.main.async {
             isExpandedAgentPromptFocused = true
         }
+    }
+
+    private func agentStatusLabel(for session: CodexAgentSession) -> String {
+        session.canResumeAfterRelaunch ? "Resume" : session.status.label
+    }
+
+    private func agentStatusColor(for session: CodexAgentSession) -> Color {
+        if session.canResumeAfterRelaunch {
+            return .orange
+        }
+        return agentStatusColor(session.status)
     }
 
     private func agentStatusColor(_ status: CodexAgentSessionStatus) -> Color {

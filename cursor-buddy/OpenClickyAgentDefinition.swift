@@ -61,7 +61,7 @@ struct OpenClickyAgentDefinition: Identifiable, Equatable {
   let builtinDirectory: URL?
 
   var id: String { slug }
-  var isProtectedSystemAgent: Bool { slug == OpenClickyAgentStore.skillDiscoveryAgentSlug }
+  var isProtectedSystemAgent: Bool { OpenClickyAgentStore.isProtectedSystemAgentSlug(slug) }
 
   /// String OpenClicky prepends to the Codex Agent Mode system prompt
   /// when a session launches under this agent. Includes the on-disk paths
@@ -87,6 +87,10 @@ struct OpenClickyAgentDefinition: Identifiable, Equatable {
     }
     if !skills.enabledSkillIDs.isEmpty {
       parts.append("--- Agent enabled skills (filenames in your custom skills dir or inherited) ---\n" + skills.enabledSkillIDs.joined(separator: ", "))
+      let resolvedSkills = resolvedEnabledSkillInstructions()
+      if !resolvedSkills.isEmpty {
+        parts.append("--- Agent associated skill instructions ---\n" + resolvedSkills.joined(separator: "\n\n"))
+      }
     }
     // Resolve effective paths so the runtime can read/write directly.
     var pathLines: [String] = []
@@ -100,6 +104,49 @@ struct OpenClickyAgentDefinition: Identifiable, Equatable {
     pathLines.append("- tools/: \(effectiveDir.appendingPathComponent("tools").path)")
     parts.append("--- Agent on-disk paths ---\n" + pathLines.joined(separator: "\n"))
     return parts.joined(separator: "\n\n")
+  }
+
+
+  private func resolvedEnabledSkillInstructions() -> [String] {
+    let fileManager = FileManager.default
+    let home = fileManager.homeDirectoryForCurrentUser
+    let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+      ?? home.appendingPathComponent("Library/Application Support")
+    let codexHome = appSupport
+      .appendingPathComponent("OpenClicky", isDirectory: true)
+      .appendingPathComponent("AgentMode", isDirectory: true)
+      .appendingPathComponent("CodexHome", isDirectory: true)
+
+    let effectiveDir = (isUserDefined ? userDirectory : (builtinDirectory ?? userDirectory))
+    let searchRoots = [
+      effectiveDir.appendingPathComponent("skills", isDirectory: true),
+      userDirectory.appendingPathComponent("skills", isDirectory: true),
+      builtinDirectory?.appendingPathComponent("skills", isDirectory: true),
+      codexHome.appendingPathComponent("OpenClickyLearnedSkills", isDirectory: true),
+      codexHome.appendingPathComponent("OpenClickyBundledSkills", isDirectory: true),
+      codexHome.appendingPathComponent("skills", isDirectory: true).appendingPathComponent(".system", isDirectory: true),
+      home.appendingPathComponent(".codex", isDirectory: true).appendingPathComponent("skills", isDirectory: true),
+      home.appendingPathComponent(".codex", isDirectory: true).appendingPathComponent("skills", isDirectory: true).appendingPathComponent(".system", isDirectory: true),
+      home.appendingPathComponent(".agents", isDirectory: true).appendingPathComponent("skills", isDirectory: true)
+    ].compactMap { $0 }
+
+    var seen = Set<String>()
+    return skills.enabledSkillIDs.compactMap { skillID in
+      let normalized = skillID.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !normalized.isEmpty, !seen.contains(normalized) else { return nil }
+      seen.insert(normalized)
+
+      for root in searchRoots {
+        let skillFile = root
+          .appendingPathComponent(normalized, isDirectory: true)
+          .appendingPathComponent("SKILL.md", isDirectory: false)
+        if let text = try? String(contentsOf: skillFile, encoding: .utf8),
+           !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+          return "### Skill: \(normalized)\nPath: \(skillFile.path)\n\n\(text)"
+        }
+      }
+      return "### Skill: \(normalized)\nPath: unresolved\n\nOpenClicky could not find this SKILL.md locally. If this skill is required, install or create it before relying on it."
+    }
   }
 
   // MARK: read

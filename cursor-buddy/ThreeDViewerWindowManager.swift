@@ -76,7 +76,15 @@ final class ThreeDViewerWindowManager: ObservableObject {
         OpenClickyWindowLevels.applyPanelDialogLevel(to: window)
         window.collectionBehavior.insert(.moveToActiveSpace)
         window.collectionBehavior.insert(.fullScreenAuxiliary)
-        window.center()
+        if let targetScreen = NSScreen.openClickyActiveInteractionScreen() {
+            window.setFrame(
+                NSScreen.centerFrame(size: window.frame.size, on: targetScreen),
+                display: true,
+                animate: false
+            )
+        } else {
+            window.center()
+        }
         window.setFrameAutosaveName("OpenClicky.ThreeDViewerWindow")
         OpenClickyLiquidGlassWindowSurface.install(
             hostingView: hosting,

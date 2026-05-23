@@ -163,9 +163,10 @@ final class MiniChatPanelManager: NSObject {
       strength: .expanded
     )
 
-    if let screen = NSScreen.main?.visibleFrame {
-      let x = screen.maxX - 380 - 24
-      let y = screen.maxY - 520 - 24
+    if let screen = NSScreen.openClickyActiveInteractionScreen() {
+      let visibleFrame = screen.visibleFrame.isEmpty ? screen.frame : screen.visibleFrame
+      let x = visibleFrame.maxX - 380 - 24
+      let y = visibleFrame.maxY - 520 - 24
       panel.setFrameOrigin(NSPoint(x: x, y: y))
     }
 
@@ -269,6 +270,13 @@ private struct MiniChatPanelView: View {
             .stroke(Color.white.opacity(0.10), lineWidth: 1)
         )
         .onSubmit(send)
+        .onKeyPress(.return, phases: .down) { keyPress in
+          if keyPress.modifiers.contains(.shift) {
+            return .ignored
+          }
+          send()
+          return .handled
+        }
       Button(action: send) {
         Image(systemName: "arrow.up.circle.fill")
           .font(.system(size: 20))

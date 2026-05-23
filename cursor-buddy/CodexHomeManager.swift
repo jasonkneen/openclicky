@@ -135,6 +135,11 @@ final class CodexHomeManager {
             try copyReplacingItem(at: agentsSource, to: home.appendingPathComponent("AGENTS.md", isDirectory: false))
         }
 
+        // Inline SOUL.md into AGENTS.md / OpenClickyModelInstructions.md and
+        // rewrite the "Read `SOUL.md`" pointers so agents stop trying to open
+        // SOUL.md from cwd (which doesn't contain it) on every task.
+        try inlinePersonaIntoHomeInstructions(home: home, soulFile: soul, modelInstructionsFile: modelInstructions)
+
         let configFile = try writeCodexConfigFromSettings()
         try writeRuntimeMap(
             home: home,
@@ -592,7 +597,7 @@ final class CodexHomeManager {
         ## Operating Rules
 
         - Read `memory.md` before work and update it with stable user preferences, project facts, task outcomes, and useful workflow context.
-        - Read `SOUL.md` before agent work. Treat it as OpenClicky's persona and operating identity.
+        - OpenClicky's persona is inlined into `AGENTS.md` in the Codex home under "## OpenClicky Persona (SOUL)". Treat it as identity; do not open `SOUL.md` separately.
         - Use or update learned skills when explicitly useful, especially when the user asks to inspect, optimize, or learn from skills/logs. Do not surface learned-skill work in normal task progress unless asked.
         - When optimizing skills, prompts, memory files, logs-derived notes, or other OpenClicky artifacts, archive the previous version under \(archivesDirectory.path) before replacing it. Do not delete old versions.
         - When learning from logs, create the needed memory entries, review notes, or learned skills, then archive superseded notes or skills instead of deleting them.
@@ -602,6 +607,54 @@ final class CodexHomeManager {
         """
 
         try runtimeMap.write(to: runtimeMapFile, atomically: true, encoding: .utf8)
+    }
+
+    /// Inlines SOUL.md content into AGENTS.md as a persona section and rewrites
+    /// every "Read `SOUL.md`" instruction in the home-level prompts so the
+    /// agent stops issuing a doomed `read SOUL.md` against cwd at task start.
+    /// Runs after the AGENTS.md / OpenClickyModelInstructions.md copies in
+    /// `prepare()` and is idempotent — fresh copies are post-processed each
+    /// launch, and the persona section is only appended when missing.
+    private func inlinePersonaIntoHomeInstructions(home: URL, soulFile: URL, modelInstructionsFile: URL) throws {
+        let soulContent = (try? String(contentsOf: soulFile, encoding: .utf8)) ?? ""
+        let agentsFile = home.appendingPathComponent("AGENTS.md", isDirectory: false)
+
+        if fileManager.fileExists(atPath: agentsFile.path),
+           let original = try? String(contentsOf: agentsFile, encoding: .utf8) {
+            var updated = original
+
+            let oldReadLine = "- Read `SOUL.md` before task work. It defines OpenClicky's operating identity, voice, autonomy, memory behavior, and quality bar."
+            let newReadLine = "- OpenClicky's persona is inlined under \"## OpenClicky Persona (SOUL)\" at the bottom of this file. Treat it as identity; do not open `SOUL.md` separately."
+            updated = updated.replacingOccurrences(of: oldReadLine, with: newReadLine)
+
+            if !updated.contains("## OpenClicky Persona (SOUL)"),
+               !soulContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let base = updated.hasSuffix("\n") ? updated : updated + "\n"
+                let trailing = soulContent.hasSuffix("\n") ? "" : "\n"
+                updated = base + "\n## OpenClicky Persona (SOUL)\n\n" + soulContent + trailing
+            }
+
+            if updated != original {
+                try updated.write(to: agentsFile, atomically: true, encoding: .utf8)
+            }
+        }
+
+        if fileManager.fileExists(atPath: modelInstructionsFile.path),
+           let original = try? String(contentsOf: modelInstructionsFile, encoding: .utf8) {
+            var updated = original
+
+            let oldLine1 = "- OpenClicky's persona is stored in Codex home at `SOUL.md`. Read it before task work and treat it as OpenClicky's operating identity."
+            let newLine1 = "- OpenClicky's persona is inlined into `AGENTS.md` in the Codex home under \"## OpenClicky Persona (SOUL)\". Treat it as identity; do not open `SOUL.md` separately."
+            updated = updated.replacingOccurrences(of: oldLine1, with: newLine1)
+
+            let oldLine2 = "- At the start of every task, read `SOUL.md` if it exists. It defines OpenClicky's persona, autonomy, memory behavior, and quality bar."
+            let newLine2 = "- OpenClicky's persona is already loaded inline via `AGENTS.md`. Do not open `SOUL.md` at task start."
+            updated = updated.replacingOccurrences(of: oldLine2, with: newLine2)
+
+            if updated != original {
+                try updated.write(to: modelInstructionsFile, atomically: true, encoding: .utf8)
+            }
+        }
     }
 
     private func uniqueMemoryFileURL(baseFilename: String) -> URL {

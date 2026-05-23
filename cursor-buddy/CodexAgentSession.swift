@@ -276,6 +276,10 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
         let taskTitle = spokenTaskTitle
         let latestActivity = latestActivitySummary
 
+        if canResumeAfterRelaunch {
+            return "\(taskTitle) needs resuming after relaunch."
+        }
+
         switch status {
         case .stopped:
             guard hasVisibleActivity else {
@@ -343,6 +347,10 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
     }
 
     var isFinishedForArchive: Bool {
+        if canResumeAfterRelaunch {
+            return false
+        }
+
         if progressStage == .completed {
             return true
         }
@@ -1312,6 +1320,10 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
             return true
         }
 
+        if normalized.contains("apply_patch verification failed") {
+            return true
+        }
+
         return false
     }
 
@@ -2076,6 +2088,10 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
     #endif
 
     private static func cleanedFastFriendlyTitle(_ rawTitle: String, fallbackTitle: String) -> String? {
+        if isRawTransportDiagnosticText(rawTitle) {
+            return "Runtime Event Filter"
+        }
+
         var title = rawTitle
             .components(separatedBy: .newlines)
             .first ?? rawTitle
@@ -2125,6 +2141,10 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
             .filter { !$0.isEmpty }
             .joined(separator: " ")
             .trimmingCharacters(in: CharacterSet(charactersIn: " `\"'.,:;!?-–—[](){}<>"))
+
+        if isRawTransportDiagnosticText(title) {
+            return "Runtime Event Filter"
+        }
 
         let directTitleRules: [(pattern: String, title: String)] = [
             (#"(?i)\b(?:see\s+(?:the\s+)?issue\s+here|look\s+at\s+this|fix\s+this)\b.*\b(?:OpenClickyLog|NSXPCDecoder|ViewBridge|unifiedReasons|NSXPCConnection)\b"#, "Log Issue Review"),
@@ -2375,7 +2395,34 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
         return spaced.isEmpty ? "tool" : spaced.lowercased()
     }
 
+
+    private static func isRawTransportDiagnosticText(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+
+        let signals = [
+            "/incoming]",
+            "/outgoing]",
+            "[incoming]",
+            "[outgoing]",
+            "codex.rpc.message",
+            "codex.rpc.notification",
+            "codex.rpc.request",
+            #""method":"#,
+            "paramsSummary",
+            "turn/completed",
+            "thread/tokenUsage/updated",
+            "account/rateLimits/updated"
+        ]
+        let signalCount = signals.filter { trimmed.localizedCaseInsensitiveContains($0) }.count
+        return signalCount >= 2 || (trimmed.localizedCaseInsensitiveContains("codex.rpc") && signalCount >= 1)
+    }
+
     private static func spokenSnippet(from text: String, maxLength: Int) -> String {
+        if isRawTransportDiagnosticText(text) {
+            return "OpenClicky runtime event"
+        }
+
         let flattened = strippingAgentResponseMetadata(from: text)
             .components(separatedBy: .whitespacesAndNewlines)
             .filter { !$0.isEmpty }
@@ -2394,6 +2441,10 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
     }
 
     private static func displaySnippet(from text: String, maxLength: Int) -> String {
+        if isRawTransportDiagnosticText(text) {
+            return "OpenClicky runtime event"
+        }
+
         let flattened = strippingAgentResponseMetadata(from: text)
             .components(separatedBy: .whitespacesAndNewlines)
             .filter { !$0.isEmpty }

@@ -158,7 +158,8 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
                 "name": "OpenClicky External Control Bridge",
                 "port": port,
                 "transport": "local-http+sse",
-                "tools": ["show_cursor", "show_cursors", "show_caption", "screenshot", "clear", "speak", "notify"],
+                "tools": ["openclicky_point", "openclicky_point_many", "show_cursor", "show_cursors", "show_caption", "screenshot", "clear", "speak", "notify"],
+                "multiToolEndpoints": ["/mcp/calls", "/tools/calls"],
                 "proxyEndpoints": ["/v1/messages", "/v1/responses", "/v1/chat/completions"]
             ], statusCode: 200, on: connection)
             return
@@ -202,6 +203,9 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
             command = Self.notifyCommand(from: request.jsonBody)
         case "/mcp/call", "/tools/call":
             command = Self.mcpToolCommand(from: request.jsonBody)
+        case "/mcp/calls", "/tools/calls":
+            handleBatchToolCall(request, on: connection)
+            return
         case "/mcp":
             if let response = Self.mcpJSONRPCResponse(from: request.jsonBody) {
                 if let command = response.command {
@@ -233,6 +237,50 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
             self.queue.async {
                 self.broadcast(event: "command", object: ["ok": response.statusCode < 400, "path": request.path])
                 self.sendJSON(response.body, statusCode: response.statusCode, on: connection)
+            }
+        }
+    }
+
+    private func handleBatchToolCall(_ request: HTTPRequest, on connection: NWConnection) {
+        guard let calls = Self.array(request.jsonBody["calls"] ?? request.jsonBody["tool_calls"] ?? request.jsonBody["tools"]) else {
+            sendJSON(["ok": false, "error": "Expected calls array"], statusCode: 400, on: connection)
+            return
+        }
+
+        let parsedCalls = calls.enumerated().compactMap { index, value -> (index: Int, name: String, command: OpenClickyExternalControlCommand, delay: TimeInterval)? in
+            guard let call = Self.dictionary(value) else { return nil }
+            let name = Self.string(call["tool"]) ?? Self.string(call["name"]) ?? "unknown"
+            guard let command = Self.mcpToolCommand(from: call) else { return nil }
+            let delayMilliseconds = Self.double(call["delayMs"]) ?? Self.double(call["waitMs"]) ?? 0
+            let delay = max(0, min(delayMilliseconds / 1000.0, 10.0))
+            return (index, name, command, delay)
+        }
+
+        guard parsedCalls.count == calls.count else {
+            sendJSON(["ok": false, "error": "Every batch call must include a valid tool/name and arguments"], statusCode: 400, on: connection)
+            return
+        }
+
+        Task { @MainActor in
+            var results: [[String: Any]] = []
+            var allSucceeded = true
+            for parsed in parsedCalls {
+                if parsed.delay > 0 {
+                    try? await Task.sleep(nanoseconds: UInt64(parsed.delay * 1_000_000_000))
+                }
+                let result = await self.handler(parsed.command)
+                allSucceeded = allSucceeded && result.statusCode < 400
+                results.append([
+                    "index": parsed.index,
+                    "tool": parsed.name,
+                    "ok": result.statusCode < 400,
+                    "statusCode": result.statusCode,
+                    "body": result.body
+                ])
+            }
+            self.queue.async {
+                self.broadcast(event: "command", object: ["ok": allSucceeded, "path": request.path, "count": parsedCalls.count])
+                self.sendJSON(["ok": allSucceeded, "results": results], statusCode: allSucceeded ? 200 : 207, on: connection)
             }
         }
     }
@@ -443,6 +491,35 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
     private static var mcpToolDescriptors: [[String: Any]] {
         [
             [
+                "name": "openclicky_point",
+                "description": "Point OpenClicky's native cursor at a macOS screen coordinate with a short caption. Use this as the normal pointing tool call for guided help and tutorials.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "x": ["type": "number"],
+                        "y": ["type": "number"],
+                        "caption": ["type": "string"],
+                        "durationMs": ["type": "number"],
+                        "travelMs": ["type": "number"],
+                        "accentHex": ["type": "string"],
+                        "mode": ["type": "string", "enum": ["primary", "secondary"]]
+                    ],
+                    "required": ["x", "y"]
+                ]
+            ],
+            [
+                "name": "openclicky_point_many",
+                "description": "Point at several visible UI targets at once with temporary secondary OpenClicky cursors.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "cursors": ["type": "array"],
+                        "durationMs": ["type": "number"]
+                    ],
+                    "required": ["cursors"]
+                ]
+            ],
+            [
                 "name": "show_cursor",
                 "description": "Use OpenClicky's native smooth primary-cursor pointing choreography by default, or show a secondary colored cursor when mode=secondary.",
                 "inputSchema": [
@@ -533,9 +610,9 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
         let tool = string(json["tool"]) ?? string(json["name"])
         let arguments = dictionary(json["arguments"]) ?? dictionary(json["args"]) ?? json
         switch tool {
-        case "show_cursor", "openclicky_show_cursor":
+        case "openclicky_point", "point", "show_cursor", "openclicky_show_cursor":
             return cursorCommand(from: arguments)
-        case "show_cursors", "openclicky_show_cursors":
+        case "openclicky_point_many", "point_many", "show_cursors", "openclicky_show_cursors":
             return cursorsCommand(from: arguments)
         case "show_caption", "openclicky_show_caption":
             return captionCommand(from: arguments)
@@ -557,6 +634,14 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
         let id = json["id"]
         let method = string(json["method"])
         switch method {
+        case "initialize":
+            return MCPJSONRPCBridgeResponse(id: id, command: nil, staticResult: [
+                "protocolVersion": "2024-11-05",
+                "capabilities": ["tools": ["listChanged": false]],
+                "serverInfo": ["name": "OpenClicky External Control Bridge", "version": "1.0.0"]
+            ])
+        case "notifications/initialized":
+            return MCPJSONRPCBridgeResponse(id: id, command: nil, staticResult: [:])
         case "tools/list":
             return MCPJSONRPCBridgeResponse(id: id, command: nil, staticResult: ["tools": mcpToolDescriptors])
         case "tools/call":
