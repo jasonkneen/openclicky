@@ -99,6 +99,8 @@ final class OpenClickyNotchCaptureWindowManager {
     private static let minimumVoicePanelWidth: CGFloat = 180
     private static let minimumExternalCollapsedPanelWidth: CGFloat = compactCollapsedChromeWidth
     private static let maximumExternalCollapsedPanelWidth: CGFloat = 190
+    private static let minimumExternalNonNotchedStatusPanelWidth: CGFloat = 260
+    private static let maximumExternalNonNotchedStatusPanelWidth: CGFloat = 300
     private static let maximumExpandedStatusPanelWidth: CGFloat = 320
     private static let collapsedLabelFont = NSFont.systemFont(ofSize: 13, weight: .heavy)
     private static let collapsedLabelMaxWidth: CGFloat = 300
@@ -1237,8 +1239,14 @@ final class OpenClickyNotchCaptureWindowManager {
             return Self.compactBuiltInVoicePanelWidth
         }
 
-        // External displays expand to fit the voice content (labels + waveform).
-        return expandedStatusPanelWidth(for: screen)
+        let preferredWidth = expandedStatusPanelWidth(for: screen)
+        guard usesWideExternalNonNotchedStatusPill(on: screen) else {
+            return preferredWidth
+        }
+        return min(
+            Self.maximumExternalNonNotchedStatusPanelWidth,
+            max(Self.minimumExternalNonNotchedStatusPanelWidth, preferredWidth)
+        )
     }
 
     private static func hidesVoiceStatusText(on screen: NSScreen?) -> Bool {
@@ -1269,9 +1277,16 @@ final class OpenClickyNotchCaptureWindowManager {
         }
 
         let intrinsic = intrinsicCollapsedWidth(forAppName: appName)
-        // When there's no real foreground app (or the name didn't fit), drop
-        // straight to the compact icon+play width with no artificial floor --
-        // it should look small, not padded.
+        if usesWideExternalNonNotchedStatusPill(on: screen) {
+            return min(
+                Self.maximumExternalNonNotchedStatusPanelWidth,
+                max(Self.minimumExternalNonNotchedStatusPanelWidth, intrinsic)
+            )
+        }
+
+        // Keep the legacy compact sizing for built-in/non-notched displays and
+        // any unusual notch-capable surface so this external-display widening
+        // cannot alter the MacBook Pro screen path.
         let floor: CGFloat = isPlaceholderAppName(appName) ? Self.compactCollapsedChromeWidth : Self.minimumExternalCollapsedPanelWidth
 
         return min(Self.maximumExternalCollapsedPanelWidth, max(floor, intrinsic))
@@ -1375,6 +1390,12 @@ final class OpenClickyNotchCaptureWindowManager {
             return preferred
         }
         return nil
+    }
+
+    private static func usesWideExternalNonNotchedStatusPill(on screen: NSScreen) -> Bool {
+        !screenLooksBuiltIn(screen)
+            && notchReservedTopInset(on: screen) == nil
+            && !hasPhysicalNotch(on: screen)
     }
 
     private static func isLikelyBuiltInNotchScreen(_ screen: NSScreen) -> Bool {
