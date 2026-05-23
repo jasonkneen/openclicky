@@ -125,7 +125,7 @@ final class WikiRuntimeManager {
     ) throws {
         try bootstrap()
 
-        let articleURL = wikiDirectory.appendingPathComponent(relativePath, isDirectory: false)
+        let articleURL = try safeArticleURL(for: relativePath)
         try fileManager.createDirectory(at: articleURL.deletingLastPathComponent(), withIntermediateDirectories: true)
 
         let date = isoDate()
@@ -135,11 +135,11 @@ final class WikiRuntimeManager {
 
         let frontmatter = [
             "title: \"\(escapeFrontmatter(title))\"",
-            "type: \(type)",
+            "type: \"\(escapeFrontmatter(type))\"",
             "created: \(created)",
             "last_updated: \(date)",
             "source_count: \(mergedSourceCount)",
-            related.isEmpty ? nil : "related: [\(related.map { "\"\($0)\"" }.joined(separator: ", "))]",
+            related.isEmpty ? nil : "related: [\(related.map { "\"\(escapeFrontmatter($0))\"" }.joined(separator: ", "))]",
         ].compactMap { $0 }.joined(separator: "\n")
 
         let markdown = """
@@ -157,7 +157,7 @@ final class WikiRuntimeManager {
 
     /// Reads an article by its relative path (e.g. `people/paul-graham.md`).
     func readArticle(relativePath: String) throws -> WikiArticle {
-        let articleURL = wikiDirectory.appendingPathComponent(relativePath, isDirectory: false)
+        let articleURL = try safeArticleURL(for: relativePath)
         let body = try String(contentsOf: articleURL, encoding: .utf8)
         let frontmatter = parseFrontmatter(body)
 
@@ -334,6 +334,40 @@ final class WikiRuntimeManager {
         formatter.timeZone = TimeZone(secondsFromGMT: 0)
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter.string(from: Date())
+    }
+
+    private func safeArticleURL(for relativePath: String) throws -> URL {
+        let trimmed = relativePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              !trimmed.hasPrefix("/"),
+              !trimmed.hasPrefix("~"),
+              !trimmed.contains("\\") else {
+            throw wikiPathError("Wiki article paths must be relative paths inside the wiki directory.")
+        }
+
+        let components = trimmed.split(separator: "/", omittingEmptySubsequences: false)
+        guard !components.isEmpty,
+              components.allSatisfy({ component in
+                  let value = String(component)
+                  return !value.isEmpty && value != "." && value != ".."
+              }) else {
+            throw wikiPathError("Wiki article path contains an unsafe path component.")
+        }
+
+        guard (trimmed as NSString).pathExtension.lowercased() == "md" else {
+            throw wikiPathError("Wiki article paths must end in .md.")
+        }
+
+        let rootURL = wikiDirectory.standardizedFileURL.resolvingSymlinksInPath()
+        let candidateURL = rootURL.appendingPathComponent(trimmed, isDirectory: false).standardizedFileURL.resolvingSymlinksInPath()
+        guard candidateURL.path.hasPrefix(rootURL.path + "/") else {
+            throw wikiPathError("Wiki article path escapes the wiki directory.")
+        }
+        return candidateURL
+    }
+
+    private func wikiPathError(_ message: String) -> NSError {
+        NSError(domain: "OpenClicky.WikiRuntimeManager", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
     }
 
     private func titleFromPath(_ relativePath: String) -> String {

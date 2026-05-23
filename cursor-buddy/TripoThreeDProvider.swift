@@ -55,13 +55,13 @@ actor TripoThreeDProvider: ThreeDGenerationProvider {
 
         try FileManager.default.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
         let glbDestination = destinationDirectory.appendingPathComponent("\(taskId).glb")
-        try await download(from: outcome.modelURL, to: glbDestination)
+        try await download(from: outcome.modelURL, to: glbDestination, maxBytes: 200 * 1024 * 1024)
 
         var thumbLocal: URL? = nil
         if let thumb = outcome.thumbnailURL {
             let thumbDest = destinationDirectory.appendingPathComponent("\(taskId).png")
             do {
-                try await download(from: thumb, to: thumbDest)
+                try await download(from: thumb, to: thumbDest, maxBytes: 25 * 1024 * 1024)
                 thumbLocal = thumbDest
             } catch {
                 // Thumbnails are best-effort.
@@ -209,10 +209,15 @@ actor TripoThreeDProvider: ThreeDGenerationProvider {
                 let candidate = d.output?.pbr_model
                     ?? d.output?.model
                     ?? d.output?.base_model
-                guard let modelStr = candidate, let modelURL = URL(string: modelStr) else {
+                guard let modelStr = candidate,
+                      let modelURL = URL(string: modelStr),
+                      Self.isAllowedDownloadURL(modelURL) else {
                     throw ThreeDGenerationError.noModelURL(provider: identifier)
                 }
-                let thumb = d.output?.rendered_image.flatMap { URL(string: $0) }
+                let thumb = d.output?.rendered_image.flatMap { raw -> URL? in
+                    guard let url = URL(string: raw), Self.isAllowedDownloadURL(url) else { return nil }
+                    return url
+                }
                 return PollOutcome(modelURL: modelURL, thumbnailURL: thumb)
 
             case "failed", "cancelled", "banned", "expired":
@@ -231,12 +236,24 @@ actor TripoThreeDProvider: ThreeDGenerationProvider {
 
     // MARK: - Download
 
-    private func download(from remote: URL, to destination: URL) async throws {
+    private func download(from remote: URL, to destination: URL, maxBytes: Int64) async throws {
+        guard Self.isAllowedDownloadURL(remote) else {
+            throw ThreeDGenerationError.downloadFailed(remote, underlying: "URL is not an allowed HTTPS download target")
+        }
         do {
             let (tempURL, resp) = try await session.download(from: remote)
             let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
             guard (200..<300).contains(status) else {
                 throw ThreeDGenerationError.downloadFailed(remote, underlying: "HTTP \(status)")
+            }
+            let expectedLength = resp.expectedContentLength
+            guard expectedLength <= 0 || expectedLength <= maxBytes else {
+                throw ThreeDGenerationError.downloadFailed(remote, underlying: "download is too large")
+            }
+            let attrs = try FileManager.default.attributesOfItem(atPath: tempURL.path)
+            let fileSize = (attrs[.size] as? NSNumber)?.int64Value ?? 0
+            guard fileSize > 0, fileSize <= maxBytes else {
+                throw ThreeDGenerationError.downloadFailed(remote, underlying: "downloaded file size is invalid")
             }
             if FileManager.default.fileExists(atPath: destination.path) {
                 try FileManager.default.removeItem(at: destination)
@@ -246,6 +263,42 @@ actor TripoThreeDProvider: ThreeDGenerationProvider {
             throw e
         } catch {
             throw ThreeDGenerationError.downloadFailed(remote, underlying: error.localizedDescription)
+        }
+    }
+
+    private static func isAllowedDownloadURL(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "https",
+              url.user == nil,
+              url.password == nil,
+              let host = url.host?.lowercased(),
+              !isBlockedDownloadHost(host) else {
+            return false
+        }
+        return true
+    }
+
+    private static func isBlockedDownloadHost(_ host: String) -> Bool {
+        let stripped = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        if stripped == "localhost" || stripped == "::1" || stripped.hasSuffix(".local") {
+            return true
+        }
+        if stripped.contains(":") {
+            return true
+        }
+
+        let octets = stripped.split(separator: ".").compactMap { Int($0) }
+        guard octets.count == 4 else { return false }
+        switch octets[0] {
+        case 0, 10, 127:
+            return true
+        case 169 where octets[1] == 254:
+            return true
+        case 172 where (16...31).contains(octets[1]):
+            return true
+        case 192 where octets[1] == 168:
+            return true
+        default:
+            return false
         }
     }
 }

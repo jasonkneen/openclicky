@@ -681,7 +681,7 @@ final class CodexHomeManager {
     }
 
     private static func singleLineSnippet(from text: String, maxLength: Int) -> String {
-        let flattened = text
+        let flattened = redactedSensitiveValues(in: text)
             .components(separatedBy: .whitespacesAndNewlines)
             .filter { !$0.isEmpty }
             .joined(separator: " ")
@@ -693,6 +693,27 @@ final class CodexHomeManager {
             return "\(prefix[..<lastSpace])..."
         }
         return "\(prefix)..."
+    }
+
+    private static let sensitiveValuePatterns = [
+        #"sk-ant-[A-Za-z0-9_\-]{20,}"#,
+        #"sk-proj-[A-Za-z0-9_\-]{20,}"#,
+        #"\bsk-[A-Za-z0-9_\-]{20,}"#,
+        #"\bgh[pousr]_[A-Za-z0-9_]{20,}"#,
+        #"\bAIza[0-9A-Za-z_\-]{20,}"#,
+        #"\b[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{20,}\b"#,
+        #"(?i)bearer\s+[A-Za-z0-9._\-=]{20,}"#,
+        #"(?i)\b(openai_api_key|anthropic_api_key|elevenlabs_api_key|api[_-]?key|token|secret|password)\s*[:=]\s*['\"]?[^'\"\s,}]{8,}"#
+    ]
+
+    private static func redactedSensitiveValues(in string: String) -> String {
+        var redacted = string
+        for pattern in sensitiveValuePatterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(redacted.startIndex..<redacted.endIndex, in: redacted)
+            redacted = regex.stringByReplacingMatches(in: redacted, options: [], range: range, withTemplate: "[redacted]")
+        }
+        return redacted
     }
 
     nonisolated static func defaultApplicationSupportDirectory(fileManager: FileManager = .default) -> URL {

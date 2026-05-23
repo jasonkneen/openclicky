@@ -1356,7 +1356,7 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
             .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
             .lowercased()
 
-        if isNoteWorkflow(combinedText: normalizedCombined) {
+        if isNoteWorkflow(requestText: normalizedRequest) {
             try homeManager.createLearnedSkillIfNeeded(
                 name: "create_apple_note",
                 title: "Create Apple Note",
@@ -1405,9 +1405,23 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
         )
     }
 
-    private func isNoteWorkflow(combinedText: String) -> Bool {
-        let noteTerms = ["note", "notes", "apple note", "apple notes"]
-        return noteTerms.contains { combinedText.contains($0) }
+    private func isNoteWorkflow(requestText: String) -> Bool {
+        let noteIntentPhrases = [
+            "create a note",
+            "create an apple note",
+            "make a note",
+            "save this to notes",
+            "save that to notes",
+            "save it to notes",
+            "save this in notes",
+            "add this to notes",
+            "add that to notes",
+            "add to apple notes",
+            "put this in notes",
+            "update my note",
+            "update the note"
+        ]
+        return noteIntentPhrases.contains { requestText.contains($0) }
     }
 
     private func reusableWorkflowTemplateIfRequested(

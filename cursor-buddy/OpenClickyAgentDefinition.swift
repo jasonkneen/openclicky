@@ -107,6 +107,9 @@ struct OpenClickyAgentDefinition: Identifiable, Equatable {
   }
 
 
+  private static let maxEmbeddedSkillBytes = 64 * 1024
+  private static let skillIDAllowedScalars = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-"))
+
   private func resolvedEnabledSkillInstructions() -> [String] {
     let fileManager = FileManager.default
     let home = fileManager.homeDirectoryForCurrentUser
@@ -132,14 +135,22 @@ struct OpenClickyAgentDefinition: Identifiable, Equatable {
 
     var seen = Set<String>()
     return skills.enabledSkillIDs.compactMap { skillID in
-      let normalized = skillID.trimmingCharacters(in: .whitespacesAndNewlines)
-      guard !normalized.isEmpty, !seen.contains(normalized) else { return nil }
+      let trimmed = skillID.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !trimmed.isEmpty else { return nil }
+      guard let normalized = Self.safeSkillID(from: trimmed) else {
+        return "### Skill: \(Self.skillIDPreview(trimmed))\nPath: invalid\n\nOpenClicky skipped this skill because its ID contains unsafe path characters."
+      }
+      guard !seen.contains(normalized) else { return nil }
       seen.insert(normalized)
 
       for root in searchRoots {
-        let skillFile = root
-          .appendingPathComponent(normalized, isDirectory: true)
-          .appendingPathComponent("SKILL.md", isDirectory: false)
+        guard let skillFile = Self.safeSkillFile(skillID: normalized, root: root) else { continue }
+        let attributes = try? fileManager.attributesOfItem(atPath: skillFile.path)
+        let byteCount = (attributes?[.size] as? NSNumber)?.intValue ?? 0
+        guard byteCount > 0 else { continue }
+        guard byteCount <= Self.maxEmbeddedSkillBytes else {
+          return "### Skill: \(normalized)\nPath: \(skillFile.path)\n\nOpenClicky skipped this SKILL.md because it is too large to embed safely (\(byteCount) bytes)."
+        }
         if let text = try? String(contentsOf: skillFile, encoding: .utf8),
            !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
           return "### Skill: \(normalized)\nPath: \(skillFile.path)\n\n\(text)"
@@ -147,6 +158,33 @@ struct OpenClickyAgentDefinition: Identifiable, Equatable {
       }
       return "### Skill: \(normalized)\nPath: unresolved\n\nOpenClicky could not find this SKILL.md locally. If this skill is required, install or create it before relying on it."
     }
+  }
+
+  private static func safeSkillID(from raw: String) -> String? {
+    guard (1...80).contains(raw.count),
+          !raw.contains(".."),
+          raw.unicodeScalars.allSatisfy({ skillIDAllowedScalars.contains($0) }),
+          let first = raw.unicodeScalars.first,
+          CharacterSet.alphanumerics.contains(first) else {
+      return nil
+    }
+    return raw
+  }
+
+  private static func safeSkillFile(skillID: String, root: URL) -> URL? {
+    let rootURL = root.standardizedFileURL.resolvingSymlinksInPath()
+    let skillFile = rootURL
+      .appendingPathComponent(skillID, isDirectory: true)
+      .appendingPathComponent("SKILL.md", isDirectory: false)
+      .standardizedFileURL
+      .resolvingSymlinksInPath()
+    guard skillFile.path.hasPrefix(rootURL.path + "/") else { return nil }
+    return skillFile
+  }
+
+  private static func skillIDPreview(_ value: String) -> String {
+    let prefix = String(value.prefix(80))
+    return prefix.count == value.count ? prefix : "\(prefix)…"
   }
 
   // MARK: read

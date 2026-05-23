@@ -292,10 +292,32 @@ nonisolated final class OpenClickyMessageLogStore: @unchecked Sendable {
             || lowered == "x-api-key"
     }
 
+    private static let sensitiveValuePatterns = [
+        #"sk-ant-[A-Za-z0-9_\-]{20,}"#,
+        #"sk-proj-[A-Za-z0-9_\-]{20,}"#,
+        #"\bsk-[A-Za-z0-9_\-]{20,}"#,
+        #"\bgh[pousr]_[A-Za-z0-9_]{20,}"#,
+        #"\bAIza[0-9A-Za-z_\-]{20,}"#,
+        #"\b[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{20,}\b"#,
+        #"(?i)bearer\s+[A-Za-z0-9._\-=]{20,}"#,
+        #"(?i)\b(openai_api_key|anthropic_api_key|elevenlabs_api_key|api[_-]?key|token|secret|password)\s*[:=]\s*['\"]?[^'\"\s,}]{8,}"#
+    ]
+
     private static func truncated(_ string: String, maxLength: Int = 12_000) -> String {
-        guard string.count > maxLength else { return string }
-        let endIndex = string.index(string.startIndex, offsetBy: maxLength)
-        return "\(string[..<endIndex])... [truncated \(string.count - maxLength) chars]"
+        let redactedString = redactedSensitiveValues(in: string)
+        guard redactedString.count > maxLength else { return redactedString }
+        let endIndex = redactedString.index(redactedString.startIndex, offsetBy: maxLength)
+        return "\(redactedString[..<endIndex])... [truncated \(redactedString.count - maxLength) chars]"
+    }
+
+    private static func redactedSensitiveValues(in string: String) -> String {
+        var redacted = string
+        for pattern in sensitiveValuePatterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(redacted.startIndex..<redacted.endIndex, in: redacted)
+            redacted = regex.stringByReplacingMatches(in: redacted, options: [], range: range, withTemplate: "[redacted]")
+        }
+        return redacted
     }
 
     private func emitConsoleLog(entry: [String: Any]) {

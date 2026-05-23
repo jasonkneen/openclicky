@@ -50,6 +50,7 @@ nonisolated enum OpenPetsCatalogInstallerError: LocalizedError {
     case manifestMismatch
     case installTargetExists
     case missingInstalledPet
+    case processTimedOut
 
     var errorDescription: String? {
         switch self {
@@ -63,6 +64,7 @@ nonisolated enum OpenPetsCatalogInstallerError: LocalizedError {
         case .manifestMismatch: return "OpenPets pet manifest did not match the selected catalog pet."
         case .installTargetExists: return "That pet is already installed."
         case .missingInstalledPet: return "The installed pet bundle was not found after installation."
+        case .processTimedOut: return "OpenPets pet install helper timed out."
         }
     }
 }
@@ -210,7 +212,7 @@ final class OpenPetsCatalogStore: ObservableObject {
 
     private enum CatalogURLKind { case catalogPage, zip }
 
-    private static func isAllowedCatalogURL(_ url: URL, kind: CatalogURLKind) -> Bool {
+    nonisolated private static func isAllowedCatalogURL(_ url: URL, kind: CatalogURLKind) -> Bool {
         guard url.scheme == "https", url.user == nil, url.password == nil, url.port == nil else { return false }
         switch kind {
         case .catalogPage:
@@ -230,7 +232,7 @@ final class OpenPetsCatalogStore: ObservableObject {
         return result
     }
 
-    private static func installPet(_ pet: OpenPetsCatalogPet, into petsRootURL: URL) async throws {
+    nonisolated private static func installPet(_ pet: OpenPetsCatalogPet, into petsRootURL: URL) async throws {
         guard let zipURL = URL(string: pet.zip), isAllowedCatalogURL(zipURL, kind: .zip) else {
             throw OpenPetsCatalogInstallerError.invalidZipURL
         }
@@ -259,7 +261,7 @@ final class OpenPetsCatalogStore: ObservableObject {
         try zipData.write(to: zipFileURL, options: .atomic)
 
         try validateZipListing(zipFileURL)
-        try runProcess("/usr/bin/ditto", arguments: ["-x", "-k", zipFileURL.path, extractedURL.path])
+        try runProcess("/usr/bin/ditto", arguments: ["-x", "-k", zipFileURL.path, extractedURL.path], timeout: 120)
         try validateExtractedPet(at: extractedURL, expectedPetID: pet.id)
 
         let installedStagingURL = petsRootURL.appendingPathComponent(".")
@@ -280,7 +282,7 @@ final class OpenPetsCatalogStore: ObservableObject {
         }
     }
 
-    private static func validateZipListing(_ zipFileURL: URL) throws {
+    nonisolated private static func validateZipListing(_ zipFileURL: URL) throws {
         let output = try runProcess("/usr/bin/unzip", arguments: ["-Z1", zipFileURL.path])
         let entries = output.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
         guard !entries.isEmpty else { throw OpenPetsCatalogInstallerError.zipListingFailed }
@@ -294,7 +296,7 @@ final class OpenPetsCatalogStore: ObservableObject {
         guard leaves == ["pet.json", "spritesheet.webp"] else { throw OpenPetsCatalogInstallerError.unsafeZipContents }
     }
 
-    private static func validateExtractedPet(at url: URL, expectedPetID: String) throws {
+    nonisolated private static func validateExtractedPet(at url: URL, expectedPetID: String) throws {
         let petJSON = url.appendingPathComponent("pet.json")
         let spritesheet = url.appendingPathComponent("spritesheet.webp")
         guard let data = try? Data(contentsOf: petJSON), data.count <= 128 * 1024 else {
@@ -313,7 +315,7 @@ final class OpenPetsCatalogStore: ObservableObject {
     }
 
     @discardableResult
-    private static func runProcess(_ launchPath: String, arguments: [String]) throws -> String {
+    nonisolated private static func runProcess(_ launchPath: String, arguments: [String], timeout: TimeInterval = 30) throws -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: launchPath)
         process.arguments = arguments
@@ -321,10 +323,23 @@ final class OpenPetsCatalogStore: ObservableObject {
         let errors = Pipe()
         process.standardOutput = output
         process.standardError = errors
+
+        let completion = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in
+            completion.signal()
+        }
+
         try process.run()
-        process.waitUntilExit()
+        let waitResult = completion.wait(timeout: .now() + .milliseconds(Int(timeout * 1000)))
+        guard waitResult == .success else {
+            process.terminate()
+            _ = completion.wait(timeout: .now() + .seconds(2))
+            throw OpenPetsCatalogInstallerError.processTimedOut
+        }
+
         guard process.terminationStatus == 0 else { throw OpenPetsCatalogInstallerError.extractionFailed }
         let data = output.fileHandleForReading.readDataToEndOfFile()
+        _ = errors.fileHandleForReading.readDataToEndOfFile()
         return String(data: data, encoding: .utf8) ?? ""
     }
 }
