@@ -1128,7 +1128,7 @@ struct OpenClickyNotchPanelView: View {
                 ZStack {
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .fill(accent.opacity(0.16))
-                    Image(systemName: agent.isUserDefined ? "person.crop.circle.fill.badge.checkmark" : "person.crop.circle.badge.gearshape")
+                    Image(systemName: agent.isUserDefined ? "person.crop.circle.fill.badge.checkmark" : "gearshape.fill")
                         .font(panelUIFont(size: 15, weight: .black))
                         .foregroundColor(accent)
                 }
