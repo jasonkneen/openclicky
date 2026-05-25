@@ -1946,29 +1946,6 @@ final class CompanionManager: ObservableObject {
     }
 
 
-    private static func cursorHex(for accentTheme: ClickyAccentTheme) -> String {
-        switch accentTheme {
-        case .blue:
-            return "#3380FF"
-        case .cyan:
-            return "#22D3EE"
-        case .mint:
-            return "#35D39A"
-        case .lime:
-            return "#A3E635"
-        case .amber:
-            return "#FACC15"
-        case .orange:
-            return "#FB923C"
-        case .rose:
-            return "#FF4F5E"
-        case .violet:
-            return "#A78BFA"
-        case .white:
-            return "#F8FAFC"
-        }
-    }
-
     private static func clampedExternalCursorPoint(_ point: CGPoint) -> CGPoint {
         NSScreen.pointClampedToDesktop(point)
     }
