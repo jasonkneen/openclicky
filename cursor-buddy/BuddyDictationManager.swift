@@ -283,6 +283,8 @@ final class BuddyDictationManager: NSObject, ObservableObject {
     private var activeDictationRequestedAt: Date?
     private var activeDictationRecordingStartedAt: Date?
     private var activeTranscriptionProviderOpenStartedAt: Date?
+    private var audioBuffersCapturedBeforeProviderReady: [AVAudioPCMBuffer] = []
+    private static let maximumBufferedAudioBuffersBeforeProviderReady = 360
     /// Timestamp of the last completed permission request, used to debounce
     /// rapid follow-up requests that arrive before macOS updates its cache.
     private var lastPermissionRequestCompletedAt: Date?
@@ -676,6 +678,7 @@ final class BuddyDictationManager: NSObject, ObservableObject {
             audioEngine.stop()
         }
         removeInputTapIfNeeded()
+        audioBuffersCapturedBeforeProviderReady.removeAll()
         if cancelTranscriptionSession {
             activeTranscriptionSession?.cancel()
             activeTranscriptionSession = nil
@@ -690,6 +693,8 @@ final class BuddyDictationManager: NSObject, ObservableObject {
 
     private func startRecognitionSession() async throws {
         tearDownAudioCapture(cancelTranscriptionSession: true)
+
+        try startAudioCaptureBeforeProviderReady()
 
         print("🎙️ BuddyDictationManager: opening transcription provider \(transcriptionProvider.displayName)")
         activeTranscriptionProviderOpenStartedAt = Date()
@@ -740,27 +745,80 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         )
 
         self.activeTranscriptionSession = activeTranscriptionSession
-        print("🎙️ BuddyDictationManager: provider ready, starting audio engine")
+        let bufferedAudioBufferCount = audioBuffersCapturedBeforeProviderReady.count
+        audioBuffersCapturedBeforeProviderReady.forEach { activeTranscriptionSession.appendAudioBuffer($0) }
+        audioBuffersCapturedBeforeProviderReady.removeAll()
+        print("🎙️ BuddyDictationManager: provider ready, flushed \(bufferedAudioBufferCount) buffered audio buffers")
         logDictationEvent(
             "voice.dictation.provider_ready",
             fields: [
-                "providerOpenDurationMs": Self.elapsedMilliseconds(since: activeTranscriptionProviderOpenStartedAt)
+                "providerOpenDurationMs": Self.elapsedMilliseconds(since: activeTranscriptionProviderOpenStartedAt),
+                "bufferedAudioBufferCount": bufferedAudioBufferCount,
+                "audioEngineAlreadyRunning": audioEngine.isRunning
             ]
         )
+    }
 
+    private func startAudioCaptureBeforeProviderReady() throws {
         let inputNode = audioEngine.inputNode
         let inputFormat = inputNode.outputFormat(forBus: 0)
 
         removeInputTapIfNeeded()
         // Smaller tap buffers lower capture-to-provider handoff latency.
         inputNode.installTap(onBus: 0, bufferSize: 256, format: inputFormat) { [weak self] buffer, _ in
-            self?.activeTranscriptionSession?.appendAudioBuffer(buffer)
+            if let activeTranscriptionSession = self?.activeTranscriptionSession {
+                activeTranscriptionSession.appendAudioBuffer(buffer)
+            } else {
+                self?.bufferAudioUntilTranscriptionProviderReady(buffer)
+            }
             self?.updateAudioPowerLevel(from: buffer)
         }
         hasInstalledInputTap = true
 
         audioEngine.prepare()
         try audioEngine.start()
+    }
+
+    private func bufferAudioUntilTranscriptionProviderReady(_ buffer: AVAudioPCMBuffer) {
+        guard let copiedBuffer = copyAudioBuffer(buffer) else { return }
+        audioBuffersCapturedBeforeProviderReady.append(copiedBuffer)
+        if audioBuffersCapturedBeforeProviderReady.count > Self.maximumBufferedAudioBuffersBeforeProviderReady {
+            audioBuffersCapturedBeforeProviderReady.removeFirst(
+                audioBuffersCapturedBeforeProviderReady.count - Self.maximumBufferedAudioBuffersBeforeProviderReady
+            )
+        }
+    }
+
+    private func copyAudioBuffer(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        guard let copiedBuffer = AVAudioPCMBuffer(
+            pcmFormat: buffer.format,
+            frameCapacity: buffer.frameLength
+        ) else {
+            return nil
+        }
+
+        copiedBuffer.frameLength = buffer.frameLength
+        let frameCount = Int(buffer.frameLength)
+        let channelCount = Int(buffer.format.channelCount)
+
+        if let source = buffer.floatChannelData,
+           let destination = copiedBuffer.floatChannelData {
+            for channel in 0..<channelCount {
+                destination[channel].assign(from: source[channel], count: frameCount)
+            }
+        } else if let source = buffer.int16ChannelData,
+                  let destination = copiedBuffer.int16ChannelData {
+            for channel in 0..<channelCount {
+                destination[channel].assign(from: source[channel], count: frameCount)
+            }
+        } else if let source = buffer.int32ChannelData,
+                  let destination = copiedBuffer.int32ChannelData {
+            for channel in 0..<channelCount {
+                destination[channel].assign(from: source[channel], count: frameCount)
+            }
+        }
+
+        return copiedBuffer
     }
 
     private func handleRecognitionError(_ error: Error) {

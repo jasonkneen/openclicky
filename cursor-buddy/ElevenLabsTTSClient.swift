@@ -2039,7 +2039,7 @@ final class MicrosoftEdgeTTSClient: OpenClickyTTSClient {
 @MainActor
 final class OpenAIRealtimeSpeechClient: OpenClickyTTSClient {
     nonisolated static let streamSampleRate: Double = 24_000
-    private nonisolated static let defaultVoiceID = "marin"
+    private nonisolated static let defaultVoiceID = "cedar"
     private nonisolated static let minimumInputAudioBytes = Int(streamSampleRate * 2 * 0.18)
     private nonisolated static let minimumInputPeakPower = 0.003
 
@@ -2094,7 +2094,7 @@ final class OpenAIRealtimeSpeechClient: OpenClickyTTSClient {
         ]
     ]
 
-    init(apiKey: String?, model: String, voiceID: String = "marin") {
+    init(apiKey: String?, model: String, voiceID: String = "cedar") {
         self.apiKey = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.model = model
         self.voiceID = voiceID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

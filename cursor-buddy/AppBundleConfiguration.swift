@@ -208,7 +208,7 @@ nonisolated enum AppBundleConfiguration {
             forKey: "OpenAIRealtimeVoiceID",
             environmentKeys: ["OPENAI_REALTIME_VOICE_ID"]
         ) ?? localDevelopmentEnvironmentValue(forKey: "OPENAI_REALTIME_VOICE_ID")
-        ?? "marin"
+        ?? "cedar"
     }
 
     /// Selected playback engine — "openai_realtime" (default), "elevenlabs",
