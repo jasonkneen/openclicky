@@ -5,6 +5,13 @@ version: 1.2.0
 argument-hint: "[what to show or say]"
 ---
 
+## OpenClicky compatibility guardrails
+
+- Follow `../_shared/OpenClickySkillCompatibilityPolicy.md` before acting.
+- Verify required local commands, tools, keys, or bridge endpoints before promising execution.
+- Treat sends, publishes, deploys, deletes, moves, merges, playlist/library changes, cloud writes, and app-control clicks as external writes unless this skill narrows them further.
+- Stop and report the exact missing setup step for unavailable tools, auth, or macOS permissions; do not loop or silently switch to browser automation.
+
 Use OpenClicky's local external-control bridge for immediate visual guidance. Do this instead of describing where to look when the user asks you to show them.
 
 ## Transport
@@ -178,3 +185,29 @@ curl -s -X POST http://127.0.0.1:32123/cursor \
 ```
 
 Then reply briefly: "Shown on screen."
+
+Scribble example:
+
+```bash
+curl -s -X POST http://127.0.0.1:32123/scribble \
+  -H "Authorization: Bearer $OPENCLICKY_BRIDGE_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"points":[{"x":640,"y":860},{"x":700,"y":900},{"x":760,"y":860}],"accentHex":"#F59E0B","lineWidth":6,"durationMs":3500,"caption":"Look here"}'
+```
+
+Rectangle highlight example:
+
+```bash
+curl -s -X POST http://127.0.0.1:32123/highlight \
+  -H "Authorization: Bearer $OPENCLICKY_BRIDGE_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"x":600,"y":720,"width":260,"height":140,"accentHex":"#60A5FA","fillOpacity":0.16,"durationMs":3500,"caption":"Important area"}'
+```
+
+## Current visual tool boundary
+
+The implemented local bridge is token-gated and currently exposes cursor pointing, multiple temporary cursor markers, captions, screenshot capture, coordinate click, clear, speak, notify, batch calls, and MCP tool descriptors.
+
+The bridge now implements temporary freehand scribbles via `/scribble` / `show_scribble` and rectangle highlights via `/highlight`, `/rectangle`, `show_highlight`, and `show_rectangle`. Do not claim spotlight masks, arrows, area dimming, or persistent annotations exist until `GET /mcp/tools` lists those tools and `OpenClickyExternalControlBridge.swift` implements matching commands.
+
+Before visual guidance, prefer `GET /health` or `GET /mcp/tools` when uncertain. Use only visible, current-screen targets and clear stale overlays with `/clear`.

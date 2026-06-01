@@ -3,6 +3,13 @@ name: openclicky-dev-setup-doctor
 description: Diagnose and fix developer environment, agent runtime, MCP, API key, package manager, localhost, Node/npm/Python, Supabase, Cloudflare/Wrangler, Codex, Claude Code, and terminal setup problems.
 ---
 
+## OpenClicky compatibility guardrails
+
+- Follow `../_shared/OpenClickySkillCompatibilityPolicy.md` before acting.
+- Verify required local commands, tools, keys, or bridge endpoints before promising execution.
+- Treat sends, publishes, deploys, deletes, moves, merges, playlist/library changes, cloud writes, and app-control clicks as external writes unless this skill narrows them further.
+- Stop and report the exact missing setup step for unavailable tools, auth, or macOS permissions; do not loop or silently switch to browser automation.
+
 # OpenClicky Dev Setup Doctor
 
 Help non-expert builders understand and repair their local development environment. Prefer diagnosis before changes, and explain the failure in plain language.

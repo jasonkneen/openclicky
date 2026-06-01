@@ -3,6 +3,13 @@ name: openclicky-email-assistant
 description: Draft, rewrite, summarize, triage, and prepare replies or outreach emails. Use for Gmail/Outlook/Mail tasks, email thread summaries, outbound sequences, follow-ups, humanizing drafts, and Gmail sends that require upgraded send permission plus explicit approval.
 ---
 
+## OpenClicky compatibility guardrails
+
+- Follow `../_shared/OpenClickySkillCompatibilityPolicy.md` before acting.
+- Verify required local commands, tools, keys, or bridge endpoints before promising execution.
+- Treat sends, publishes, deploys, deletes, moves, merges, playlist/library changes, cloud writes, and app-control clicks as external writes unless this skill narrows them further.
+- Stop and report the exact missing setup step for unavailable tools, auth, or macOS permissions; do not loop or silently switch to browser automation.
+
 # OpenClicky Email Assistant
 
 Act as a careful communication operator. Draft first, show the target, and require explicit approval before sending, deleting, archiving, labeling, or otherwise changing anything externally visible.
@@ -46,3 +53,9 @@ Act as a careful communication operator. Draft first, show the target, and requi
 - For drafts, verify required fields are present.
 - For approved sends, confirm the send result or clearly report uncertainty.
 - For triage, include categories and counts.
+
+## Send safety boundary
+
+Reading, summarizing, searching, and drafting are read-only or local-write tasks. Sending, forwarding, reply-all, modifying labels, archiving, deleting, creating calendar events, or changing contacts are external writes.
+
+For external writes, present the exact recipient(s), subject or thread, and final body/action, then require explicit approval immediately before running the send or mutation command. Prefer `gog` / `google-workspace-gogcli` when available; if auth is blocked, stop and report setup rather than using browser automation.

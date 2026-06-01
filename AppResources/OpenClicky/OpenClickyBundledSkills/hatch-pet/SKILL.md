@@ -3,6 +3,13 @@ name: hatch-pet
 description: Create, repair, validate, preview, and package Codex-compatible animated pet spritesheets from character art, screenshots, generated images, or visual references. Use when a user wants to hatch a Codex pet, create a custom animated pet, or build a built-in pet asset with an 8x9 atlas, transparent unused cells, row-by-row animation prompts, QA contact sheets, preview videos, and pet.json packaging. This skill composes the installed $imagegen system skill for visual generation and uses bundled scripts for deterministic spritesheet assembly.
 ---
 
+## OpenClicky compatibility guardrails
+
+- Follow `../_shared/OpenClickySkillCompatibilityPolicy.md` before acting.
+- Verify required local commands, tools, keys, or bridge endpoints before promising execution.
+- Treat sends, publishes, deploys, deletes, moves, merges, playlist/library changes, cloud writes, and app-control clicks as external writes unless this skill narrows them further.
+- Stop and report the exact missing setup step for unavailable tools, auth, or macOS permissions; do not loop or silently switch to browser automation.
+
 # Hatch Pet
 
 ## Overview

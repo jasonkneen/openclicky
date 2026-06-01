@@ -50,6 +50,7 @@ nonisolated enum AppBundleConfiguration {
     static let userMCPComputerUseEnabledDefaultsKey = "openClickyMCPComputerUseEnabled"
     static let userMCPCuaDriverCommandDefaultsKey = "openClickyMCPCuaDriverCommand"
     static let userExternalInferenceProxyEnabledDefaultsKey = "openClickyExternalInferenceProxyEnabled"
+    static let userVisualDrawingOverlayToolsEnabledDefaultsKey = "openClickyVisualDrawingOverlayToolsEnabled"
     static let userExternalControlBridgeTokenDefaultsKey = "openClickyExternalControlBridgeToken"
     static let userAgentPlaintextProviderSyncEnabledDefaultsKey = "openClickyAgentPlaintextProviderSyncEnabled"
     static let userDesktopNotificationsEnabledDefaultsKey = "openClickyDesktopNotificationsEnabled"
@@ -133,6 +134,13 @@ nonisolated enum AppBundleConfiguration {
         userDefaultsBool(forKey: userExternalInferenceProxyEnabledDefaultsKey, defaultValue: false)
             || normalizedConfigurationValue(ProcessInfo.processInfo.environment["OPENCLICKY_EXTERNAL_INFERENCE_PROXY_ENABLED"]) == "1"
             || normalizedConfigurationValue(ProcessInfo.processInfo.environment["OPENCLICKY_EXTERNAL_INFERENCE_PROXY_ENABLED"])?.lowercased() == "true"
+    }
+
+    static func visualDrawingOverlayToolsEnabled() -> Bool {
+        let environmentValue = normalizedConfigurationValue(ProcessInfo.processInfo.environment["OPENCLICKY_VISUAL_DRAWING_OVERLAY_TOOLS_ENABLED"])
+        return userDefaultsBool(forKey: userVisualDrawingOverlayToolsEnabledDefaultsKey, defaultValue: true)
+            && environmentValue != "0"
+            && environmentValue?.lowercased() != "false"
     }
 
     static func externalControlBridgeToken() -> String? {

@@ -1,0 +1,30 @@
+{
+  "configurations" : [
+    {
+      "id" : "C19E8C70-1D0D-4A78-9C9B-5F1E9E9C4F10",
+      "name" : "Debug",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "codeCoverage" : false,
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:cursor-buddy.xcodeproj",
+      "identifier" : "28F22CBE2F56440300A0FC59",
+      "name" : "cursor-buddy"
+    }
+  },
+  "testTargets" : [
+    {
+      "parallelizable" : false,
+      "target" : {
+        "containerPath" : "container:cursor-buddy.xcodeproj",
+        "identifier" : "28F22CCB2F56440300A0FC59",
+        "name" : "cursor-buddyTests"
+      }
+    }
+  ],
+  "version" : 1
+}

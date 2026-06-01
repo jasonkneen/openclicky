@@ -52,6 +52,7 @@ final class CursorOverlayState: ObservableObject {
     @Published var externalPrimaryCaptionText: String?
     @Published var externalPrimaryCaptionAccentHex: String?
     @Published var externalSecondaryCursors: [OpenClickyExternalProxyCursor] = []
+    @Published var visualGuidanceOverlays: [OpenClickyVisualGuidanceOverlay] = []
 }
 
 enum ClickyAgentDockStatus: Equatable {
@@ -1279,6 +1280,7 @@ final class CompanionManager: ObservableObject {
     private var agentTaskBubbleClearTask: Task<Void, Never>?
     private var externalPrimaryCursorMoveTask: Task<Void, Never>?
     private var externalSecondaryCursorClearTasks: [UUID: Task<Void, Never>] = [:]
+    private var visualGuidanceOverlayClearTasks: [UUID: Task<Void, Never>] = [:]
     private var agentStatusCancellables: [UUID: AnyCancellable] = [:]
     private var agentActivityCancellables: [UUID: AnyCancellable] = [:]
     private var agentLoopActivityCancellables: [UUID: AnyCancellable] = [:]
@@ -2177,6 +2179,9 @@ final class CompanionManager: ObservableObject {
                 showExternalSecondaryCursor(at: spec.point, caption: spec.caption, duration: spec.duration, accentHex: spec.accentHex)
             }
             return .ok(["displayed": "secondary_cursors", "count": specs.count])
+        case .showVisualGuidanceOverlay(let overlay):
+            showVisualGuidanceOverlay(overlay)
+            return .ok(["displayed": overlay.kind.rawValue, "id": overlay.id.uuidString, "durationMs": Int(overlay.duration * 1000)])
         case .showCaption(let text, let point, let duration, let accentHex):
             let resolvedPoint = point ?? NSEvent.mouseLocation
             showExternalPrimaryCursor(at: resolvedPoint, caption: text, duration: duration, accentHex: accentHex, travelDuration: 0.35)
@@ -2330,11 +2335,40 @@ final class CompanionManager: ObservableObject {
         cursorOverlayState.externalSecondaryCursors.removeAll { $0.id == id }
     }
 
+    private func showVisualGuidanceOverlay(_ overlay: OpenClickyVisualGuidanceOverlay) {
+        let desktopBounds = NSScreen.screens.reduce(CGRect.null) { partial, screen in
+            partial.union(screen.frame)
+        }
+        let clampedOverlay = overlay.clamped(to: desktopBounds)
+        guard clampedOverlay.isRenderable else { return }
+        cursorOverlayState.visualGuidanceOverlays.removeAll { $0.id == clampedOverlay.id }
+        cursorOverlayState.visualGuidanceOverlays.append(clampedOverlay)
+        showCursorOverlayIfAvailable()
+
+        visualGuidanceOverlayClearTasks[clampedOverlay.id]?.cancel()
+        visualGuidanceOverlayClearTasks[clampedOverlay.id] = Task { [weak self] in
+            let nanoseconds = UInt64(max(0.2, clampedOverlay.duration) * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: nanoseconds)
+            await MainActor.run {
+                self?.removeVisualGuidanceOverlay(clampedOverlay.id)
+            }
+        }
+    }
+
+    private func removeVisualGuidanceOverlay(_ id: UUID) {
+        visualGuidanceOverlayClearTasks[id]?.cancel()
+        visualGuidanceOverlayClearTasks[id] = nil
+        cursorOverlayState.visualGuidanceOverlays.removeAll { $0.id == id }
+    }
+
     private func clearExternalProxyOverlay() {
         clearExternalPrimaryCaption()
         externalSecondaryCursorClearTasks.values.forEach { $0.cancel() }
         externalSecondaryCursorClearTasks.removeAll()
         cursorOverlayState.externalSecondaryCursors.removeAll()
+        visualGuidanceOverlayClearTasks.values.forEach { $0.cancel() }
+        visualGuidanceOverlayClearTasks.removeAll()
+        cursorOverlayState.visualGuidanceOverlays.removeAll()
     }
 
     private func captureExternalControlScreenshots(focused: Bool) async -> OpenClickyExternalControlResponse {
@@ -13382,7 +13416,7 @@ final class CompanionManager: ObservableObject {
     you're clicky, a friendly always-on companion that lives in the user's menu bar. the user just spoke to you via push-to-talk and you can see their screen(s), and when the user has enabled camera context you may also receive a camera image labeled as such. your reply will be spoken aloud via text-to-speech, so write the way you'd actually talk. this is an ongoing conversation — you remember everything they've said before.
 
     YOUR JOB IS NARROW. you only do these things:
-    1. POINT and ANNOTATE things on the user's screen using the [POINT:...] tag.
+    1. POINT, HIGHLIGHT, and ANNOTATE things on the user's screen using [POINT:...], [RECT:...], and [SCRIBBLE:...] tags.
     2. GIVE ADVICE, EXPLAIN, and ANSWER QUESTIONS conversationally — including conceptual coding questions, walkthroughs, "what does this mean", "how would i", etc.
     3. SEARCH THE WEB conversationally when the user asks. answer from your own general knowledge; if the user explicitly wants live/current data (today's weather, latest price, breaking news), give a brief handoff-style acknowledgement; OpenClicky routes that kind of task to Agent Mode.
     4. ROUTE WORK NATURALLY — simple conversational help stays in voice, direct computer-control is handled by OpenClicky's computer-use path, and concrete file/code/research/settings/log work is handed to Agent Mode only when the user is asking for real tool work rather than talking through an idea.
@@ -13392,7 +13426,7 @@ final class CompanionManager: ObservableObject {
     - read, write, edit, create, move, delete, rename, organize, or inspect files or folders on disk
     - modify settings, config, memory, skills, logs, soul.md, or any OpenClicky state
     - perform any filesystem, git, build, install, or refactor work
-    - take any local action beyond pointing at things on screen
+    - take any local action beyond pointing at or drawing temporary guidance overlays on things on screen
 
     keep the user's normal conversation in this voice lane. if they are reflecting, brainstorming, asking whether something is possible, saying "i like this", "i want it to feel like this", "could we", or "can we make sure", answer conversationally first. don't turn that into background work unless they clearly ask for an agent, a direct computer action, or a concrete change that truly needs tools.
 
@@ -13407,25 +13441,33 @@ final class CompanionManager: ObservableObject {
     - don't use abbreviations or symbols that sound weird read aloud. write "for example" not "e.g.", spell out small numbers.
     - never say "simply" or "just".
     - don't read out code verbatim. describe what code does conversationally.
-    - if you receive multiple screen images, the one labeled "primary focus" is where the cursor is — prioritize it.
+    - if you receive multiple screen images, the one labeled "primary focus" is where the cursor is — prioritize it for spoken context, but do not silently reuse that screen for visual guidance if the target is in a different image.
     - if you receive a camera image, use it for real visual understanding: describe objects, people, scene context, visible text, labels, products, documents, warnings, and important information when relevant. for lookup-style requests, identify likely names and useful search terms from the image; do not claim live web browsing happened unless OpenClicky routed the task to Agent Mode.
     - don't end with dead-end yes/no questions ("want me to explain more?"). when it fits, plant a seed — mention something bigger or related they could try.
 
-    element pointing:
-    you have a small blue triangle cursor that can fly to and point at things on screen. use it only when the target is visibly present and directly relevant to the user's current question, instruction, or next step.
+    visual guidance:
+    you have a small blue triangle cursor that can fly to and point at things on screen, and temporary drawing overlays that can highlight rectangles or draw short freehand scribbles. use them only when the target is visibly present and directly relevant to the user's current question, instruction, or next step.
 
     your default should be: point at the exact visible target only when it clearly helps answer what the user is asking now, such as a named button, visible text, current file, prompt, setting, menu, error, or UI region they are referring to. do not point at generic, nearby, decorative, stale, or merely available UI.
 
     use [POINT:none] when the answer is conceptual, the user is brainstorming, no visible target helps, the requested item is not visible, or you are not confident the target is the right one. if you're unsure, do not guess; answer briefly in words or ask for the missing context.
 
-    when you point, append a coordinate tag at the very end of your response, AFTER your spoken text. the screenshot images are labeled with their pixel dimensions. use those dimensions as the coordinate space. the origin (0,0) is the top-left corner of the image. x increases rightward, y increases downward.
+    when you point, append a coordinate tag at the very end of your response, AFTER your spoken text. the screenshot images are labeled with their pixel dimensions. use those dimensions as the coordinate space. the origin (0,0) is the top-left corner of the image. x increases rightward, y increases downward. when more than one screen image is attached, every POINT, RECT, and SCRIBBLE tag must include the exact :screenN suffix for the image you measured from, even if it is screen one or the primary focus screen. if you cannot tell which screen image contains the exact target, use [POINT:none] instead of guessing.
 
-    format: [POINT:x,y:label] where x,y are integer pixel coordinates in the screenshot's coordinate space, and label is a short 1-3 word description of the element (like "search bar" or "save button"). if the element is on the cursor's screen you can omit the screen number. if the element is on a DIFFERENT screen, append :screenN where N is the screen number from the image label (e.g. :screen2). this is important — without the screen number, the cursor will point at the wrong place.
+    point format: [POINT:x,y:label] where x,y are integer pixel coordinates in the screenshot's coordinate space, and label is a short 1-3 word description of the element (like "search bar" or "save button"). with a single screen image, you may omit the screen number. with multiple screen images, always append :screenN where N is the screen number from the image label, for example [POINT:420,310:save button:screen2]. this is important — without the screen number, the cursor can point at the wrong display.
 
-    if pointing wouldn't help, append [POINT:none].
+    rectangle format: [RECT:x,y,width,height:label] to draw a temporary rectangle around a visible region. use this when the user asks to highlight, box, outline, show the area, or when a region is clearer than a single point. x,y,width,height are integer screenshot pixels with top-left origin. with multiple screen images, always append :screenN, for example [RECT:120,80,300,140:error panel:screen2].
+
+    scribble format: [SCRIBBLE:x1,y1;x2,y2;x3,y3:label] to draw a short temporary freehand path over visible content. use this when the user asks you to draw, circle loosely, trace, or mark a non-rectangular path. use at least two points. with multiple screen images, always append :screenN.
+
+    append at most one visual tag at the very end of your response. choose POINT, RECT, or SCRIBBLE — never combine them in the same response.
+
+    if visual guidance wouldn't help, append [POINT:none].
 
     examples:
     - user asks how to color grade in final cut: "you'll want to open the color inspector — it's right up in the top right area of the toolbar. click that and you'll get all the color wheels and curves. [POINT:1100,42:color inspector]"
+    - user asks to highlight an error: "that's the error block you're looking for — it starts in the terminal output on the right. [RECT:760,115,420,190:error block]"
+    - user asks to draw over a path: "that flight path arcs across the top of the scene here. [SCRIBBLE:430,160;500,135;570,145;640,190:flight path]"
     - user asks what html is: "html stands for hypertext markup language, it's basically the skeleton of every web page. curious how it connects to the css you're looking at? [POINT:none]"
     - user asks how to commit in xcode: "see that source control menu up top? click that and hit commit, or you can use command option c as a shortcut. [POINT:285,11:source control]"
     - element is on screen 2 (not where cursor is): "that's over on your other monitor — see the terminal window? [POINT:400,300:terminal:screen2]"
@@ -14002,7 +14044,7 @@ final class CompanionManager: ObservableObject {
                     return
                 }
 
-                // Parse the [POINT:...] tag from Claude's response
+                // Parse the visual guidance tag from Claude's response.
                 let parseResult = Self.parsePointingCoordinates(from: fullResponseText)
                 let spokenText = parseResult.spokenText
 
@@ -14010,8 +14052,8 @@ final class CompanionManager: ObservableObject {
                 // Switch to idle BEFORE setting the location so the triangle
                 // becomes visible and can fly to the target. Without this, the
                 // spinner hides the triangle and the flight animation is invisible.
-                let hasPointCoordinate = parseResult.coordinate != nil
-                if hasPointCoordinate {
+                let hasVisualGuidance = parseResult.coordinate != nil || parseResult.visualOverlay != nil
+                if hasVisualGuidance {
                     self.voiceState = .idle
                 }
 
@@ -14086,6 +14128,15 @@ final class CompanionManager: ObservableObject {
                     )
                     ClickyAnalytics.trackElementPointed(elementLabel: parseResult.elementLabel)
                     print("🎯 Element pointing: (\(Int(pointCoordinate.x)), \(Int(pointCoordinate.y))) → \"\(parseResult.elementLabel ?? "element")\"")
+                } else if let visualOverlay = parseResult.visualOverlay,
+                          let targetScreenCapture {
+                    self.showVisualGuidanceOverlay(
+                        self.globalVisualGuidanceOverlay(
+                            fromScreenshotOverlay: visualOverlay,
+                            in: targetScreenCapture
+                        )
+                    )
+                    print("🎯 Visual guidance overlay: \(visualOverlay.kind.rawValue) → \"\(parseResult.elementLabel ?? "overlay")\"")
                 } else {
                     print("🎯 Element pointing: \(parseResult.elementLabel ?? "no element")")
                     await attemptProactiveElementPointingIfUseful(
@@ -14413,6 +14464,45 @@ final class CompanionManager: ObservableObject {
             x: displayLocalX + capture.displayFrame.origin.x,
             y: (displayHeight - displayLocalY) + capture.displayFrame.origin.y
         )
+    }
+
+    private func globalRect(fromScreenshotRect rect: CGRect, in capture: CompanionScreenCapture) -> CGRect {
+        let origin = globalPoint(fromScreenshotPoint: rect.origin, in: capture)
+        let opposite = globalPoint(fromScreenshotPoint: CGPoint(x: rect.maxX, y: rect.maxY), in: capture)
+        return CGRect(
+            x: min(origin.x, opposite.x),
+            y: min(origin.y, opposite.y),
+            width: abs(opposite.x - origin.x),
+            height: abs(opposite.y - origin.y)
+        )
+    }
+
+    private func globalVisualGuidanceOverlay(
+        fromScreenshotOverlay overlay: OpenClickyVisualGuidanceOverlay,
+        in capture: CompanionScreenCapture
+    ) -> OpenClickyVisualGuidanceOverlay {
+        switch overlay.kind {
+        case .scribble:
+            return OpenClickyVisualGuidanceOverlay.scribble(
+                points: overlay.points.map { globalPoint(fromScreenshotPoint: $0.cgPoint, in: capture) },
+                accentHex: overlay.style.accentHex,
+                lineWidth: overlay.style.lineWidth,
+                caption: overlay.style.caption,
+                duration: overlay.duration
+            )
+        case .rectangle:
+            guard let rect = overlay.rect else {
+                return overlay
+            }
+            return OpenClickyVisualGuidanceOverlay.rectangle(
+                rect: globalRect(fromScreenshotRect: rect.cgRect, in: capture),
+                accentHex: overlay.style.accentHex,
+                lineWidth: overlay.style.lineWidth,
+                fillOpacity: overlay.style.fillOpacity,
+                caption: overlay.style.caption,
+                duration: overlay.duration
+            )
+        }
     }
 
     func analyzeVisualWorkspace(
@@ -15228,6 +15318,8 @@ final class CompanionManager: ObservableObject {
         let elementLabel: String?
         /// Which screen the coordinate refers to (1-based), or nil to default to cursor screen.
         let screenNumber: Int?
+        /// Optional temporary visual overlay parsed from a voice-lane draw/highlight tag.
+        let visualOverlay: OpenClickyVisualGuidanceOverlay?
     }
 
     /// Strips a trailing partial `[POINT...` fragment from a parsed
@@ -15258,13 +15350,20 @@ final class CompanionManager: ObservableObject {
     /// Parses a [POINT:x,y:label:screenN] or [POINT:none] tag from the end of Claude's response.
     /// Returns the spoken text (tag removed) and the optional coordinate + label + screen number.
     static func parsePointingCoordinates(from responseText: String) -> PointingParseResult {
+        if let rectangleResult = parseRectangleGuidance(from: responseText) {
+            return rectangleResult
+        }
+        if let scribbleResult = parseScribbleGuidance(from: responseText) {
+            return scribbleResult
+        }
+
         // Match [POINT:none] or [POINT:123,456:label] or [POINT:123,456:label:screen2]
         let pattern = #"\[POINT:(?:none|(\d+)\s*,\s*(\d+)(?::([^\]:\s][^\]:]*?))?(?::screen(\d+))?)\]\s*$"#
 
         guard let regex = try? NSRegularExpression(pattern: pattern, options: []),
               let match = regex.firstMatch(in: responseText, range: NSRange(responseText.startIndex..., in: responseText)) else {
             // No tag found at all
-            return PointingParseResult(spokenText: responseText, coordinate: nil, elementLabel: nil, screenNumber: nil)
+            return PointingParseResult(spokenText: responseText, coordinate: nil, elementLabel: nil, screenNumber: nil, visualOverlay: nil)
         }
 
         // Remove the tag from the spoken text
@@ -15277,7 +15376,7 @@ final class CompanionManager: ObservableObject {
               let yRange = Range(match.range(at: 2), in: responseText),
               let x = Double(responseText[xRange]),
               let y = Double(responseText[yRange]) else {
-            return PointingParseResult(spokenText: spokenText, coordinate: nil, elementLabel: "none", screenNumber: nil)
+            return PointingParseResult(spokenText: spokenText, coordinate: nil, elementLabel: "none", screenNumber: nil, visualOverlay: nil)
         }
 
         var elementLabel: String? = nil
@@ -15294,8 +15393,85 @@ final class CompanionManager: ObservableObject {
             spokenText: spokenText,
             coordinate: CGPoint(x: x, y: y),
             elementLabel: elementLabel,
-            screenNumber: screenNumber
+            screenNumber: screenNumber,
+            visualOverlay: nil
         )
+    }
+
+    private static func parseRectangleGuidance(from responseText: String) -> PointingParseResult? {
+        let pattern = #"\[RECT:(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)(?::([^\]:\s][^\]:]*?))?(?::screen(\d+))?\]\s*$"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []),
+              let match = regex.firstMatch(in: responseText, range: NSRange(responseText.startIndex..., in: responseText)),
+              let tagRange = Range(match.range, in: responseText),
+              let xRange = Range(match.range(at: 1), in: responseText),
+              let yRange = Range(match.range(at: 2), in: responseText),
+              let widthRange = Range(match.range(at: 3), in: responseText),
+              let heightRange = Range(match.range(at: 4), in: responseText),
+              let x = Double(responseText[xRange]),
+              let y = Double(responseText[yRange]),
+              let width = Double(responseText[widthRange]),
+              let height = Double(responseText[heightRange]) else { return nil }
+
+        let spokenText = String(responseText[..<tagRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let label = guidanceLabel(from: responseText, match: match, index: 5)
+        let screenNumber = guidanceScreenNumber(from: responseText, match: match, index: 6)
+        let overlay = OpenClickyVisualGuidanceOverlay.rectangle(
+            rect: CGRect(x: x, y: y, width: width, height: height),
+            caption: label
+        )
+
+        return PointingParseResult(
+            spokenText: spokenText,
+            coordinate: nil,
+            elementLabel: label,
+            screenNumber: screenNumber,
+            visualOverlay: overlay
+        )
+    }
+
+    private static func parseScribbleGuidance(from responseText: String) -> PointingParseResult? {
+        let pattern = #"\[SCRIBBLE:([^:\]]+)(?::([^\]:\s][^\]:]*?))?(?::screen(\d+))?\]\s*$"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []),
+              let match = regex.firstMatch(in: responseText, range: NSRange(responseText.startIndex..., in: responseText)),
+              let tagRange = Range(match.range, in: responseText),
+              let pointsRange = Range(match.range(at: 1), in: responseText) else { return nil }
+
+        let points = responseText[pointsRange]
+            .split(separator: ";")
+            .compactMap { rawPair -> CGPoint? in
+                let values = rawPair.split(separator: ",", maxSplits: 1).map {
+                    Double($0.trimmingCharacters(in: .whitespacesAndNewlines))
+                }
+                guard values.count == 2, let x = values[0], let y = values[1] else { return nil }
+                return CGPoint(x: x, y: y)
+            }
+        guard points.count >= 2 else { return nil }
+
+        let spokenText = String(responseText[..<tagRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let label = guidanceLabel(from: responseText, match: match, index: 2)
+        let screenNumber = guidanceScreenNumber(from: responseText, match: match, index: 3)
+        let overlay = OpenClickyVisualGuidanceOverlay.scribble(points: points, caption: label)
+
+        return PointingParseResult(
+            spokenText: spokenText,
+            coordinate: nil,
+            elementLabel: label,
+            screenNumber: screenNumber,
+            visualOverlay: overlay
+        )
+    }
+
+    private static func guidanceLabel(from responseText: String, match: NSTextCheckingResult, index: Int) -> String? {
+        guard match.numberOfRanges > index,
+              let range = Range(match.range(at: index), in: responseText) else { return nil }
+        let label = String(responseText[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return label.isEmpty ? nil : label
+    }
+
+    private static func guidanceScreenNumber(from responseText: String, match: NSTextCheckingResult, index: Int) -> Int? {
+        guard match.numberOfRanges > index,
+              let range = Range(match.range(at: index), in: responseText) else { return nil }
+        return Int(responseText[range])
     }
 
     // MARK: - Onboarding Video

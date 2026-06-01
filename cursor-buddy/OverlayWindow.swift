@@ -455,6 +455,7 @@ struct BlueCursorView: View {
     let isFirstAppearance: Bool
     let companionManager: CompanionManager
     @ObservedObject var cursorState: CursorOverlayState
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @AppStorage(ClickyAccentTheme.userDefaultsKey) private var selectedAccentThemeID = ClickyAccentTheme.blue.rawValue
     @AppStorage(ClickyCursorAvatarSizePreference.userDefaultsKey) private var cursorAvatarSizeScale = ClickyCursorAvatarSizePreference.defaultScale
     @AppStorage(AppBundleConfiguration.userVoiceResponseCaptionFontDefaultsKey) private var voiceResponseCaptionFontRawValue = OpenClickyResponseCaptionFont.fallback.rawValue
@@ -688,6 +689,10 @@ struct BlueCursorView: View {
                 externalSecondaryCursor(cursor)
             }
 
+            ForEach(visualGuidanceOverlaysOnThisScreen) { overlay in
+                visualGuidanceOverlay(overlay)
+            }
+
             if shouldShowAgentTaskBubble,
                let agentTaskBubbleText = cursorState.agentTaskBubbleText?.trimmingCharacters(in: .whitespacesAndNewlines),
                !agentTaskBubbleText.isEmpty {
@@ -896,6 +901,77 @@ struct BlueCursorView: View {
         cursorState.externalSecondaryCursors.filter { cursor in
             screenFrame.contains(cursor.screenLocation)
         }
+    }
+
+    private var visualGuidanceOverlaysOnThisScreen: [OpenClickyVisualGuidanceOverlay] {
+        cursorState.visualGuidanceOverlays.filter { overlay in
+            overlay.screenBounds.intersects(screenFrame)
+        }
+    }
+
+    @ViewBuilder
+    private func visualGuidanceOverlay(_ overlay: OpenClickyVisualGuidanceOverlay) -> some View {
+        let color = colorFromHex(overlay.style.accentHex) ?? overlayCursorColor
+        ZStack {
+            switch overlay.kind {
+            case .scribble:
+                visualGuidanceScribble(overlay, color: color)
+            case .rectangle:
+                visualGuidanceRectangle(overlay, color: color)
+            }
+
+            if let caption = overlay.style.caption?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !caption.isEmpty {
+                externalCaption(caption, at: captionAnchor(for: overlay), color: color)
+            }
+        }
+        .transition(accessibilityReduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.98)))
+        .animation(accessibilityReduceMotion ? nil : .easeOut(duration: 0.18), value: overlay.id)
+        .allowsHitTesting(false)
+    }
+
+    @ViewBuilder
+    private func visualGuidanceScribble(_ overlay: OpenClickyVisualGuidanceOverlay, color: Color) -> some View {
+        let localPoints = overlay.points.map { convertScreenPointToSwiftUICoordinates($0.cgPoint) }
+        Path { path in
+            guard let first = localPoints.first else { return }
+            path.move(to: first)
+            for point in localPoints.dropFirst() {
+                path.addLine(to: point)
+            }
+        }
+        .stroke(
+            color,
+            style: StrokeStyle(lineWidth: CGFloat(overlay.style.lineWidth), lineCap: .round, lineJoin: .round)
+        )
+        .shadow(color: color.opacity(0.65), radius: accessibilityReduceMotion ? 2 : 7, x: 0, y: 0)
+    }
+
+    @ViewBuilder
+    private func visualGuidanceRectangle(_ overlay: OpenClickyVisualGuidanceOverlay, color: Color) -> some View {
+        if let rect = overlay.rect?.normalized.cgRect {
+            let localRect = convertScreenRectToSwiftUICoordinates(rect)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(color.opacity(overlay.style.fillOpacity))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(color, lineWidth: CGFloat(overlay.style.lineWidth))
+                )
+                .shadow(color: color.opacity(accessibilityReduceMotion ? 0.30 : 0.70), radius: accessibilityReduceMotion ? 2 : 9, x: 0, y: 0)
+                .frame(width: localRect.width, height: localRect.height)
+                .position(x: localRect.midX, y: localRect.midY)
+        }
+    }
+
+    private func captionAnchor(for overlay: OpenClickyVisualGuidanceOverlay) -> CGPoint {
+        let bounds = overlay.screenBounds
+        guard !bounds.isNull else { return cursorPosition }
+        return convertScreenPointToSwiftUICoordinates(CGPoint(x: bounds.midX, y: bounds.maxY))
+    }
+
+    private func convertScreenRectToSwiftUICoordinates(_ rect: CGRect) -> CGRect {
+        let topLeft = convertScreenPointToSwiftUICoordinates(CGPoint(x: rect.minX, y: rect.maxY))
+        return CGRect(x: topLeft.x, y: topLeft.y, width: rect.width, height: rect.height)
     }
 
     @ViewBuilder
@@ -1525,6 +1601,7 @@ private struct ClickyAgentDockStackView: View {
     private let dockItemSpacing: CGFloat = 14
     private let hoverCardHeight: CGFloat = 236
     private let hoverExitGraceDelay: TimeInterval = 0.42
+    private let terminalHoverExitGraceDelay: TimeInterval = 1.20
     // Leave generous transparent overdraw room above the first parked avatar.
     // The avatar glow/status pulse intentionally paints outside the 52pt
     // circle; without this inset, the panel can crop the first parked task
@@ -1594,7 +1671,7 @@ private struct ClickyAgentDockStackView: View {
         .padding(layoutState.opensPanelsToRight ? .leading : .trailing, 0)
         .onHover { isHovering in
             guard isExpanded || hoveredItemID == item.id else { return }
-            updateHoverState(for: item.id, isHovering: isHovering)
+            updateHoverState(for: item, isHovering: isHovering)
         }
     }
 
@@ -1627,7 +1704,7 @@ private struct ClickyAgentDockStackView: View {
             )
             .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .onHover { isHovering in
-                updateHoverState(for: item.id, isHovering: isHovering)
+                updateHoverState(for: item, isHovering: isHovering)
             }
             .transition(.clickyAgentDockCardSlide(opensToRight: layoutState.opensPanelsToRight))
         }
@@ -1640,7 +1717,7 @@ private struct ClickyAgentDockStackView: View {
                 .frame(width: 22, height: hoverCardHeight)
                 .contentShape(Rectangle())
                 .onHover { isHovering in
-                    updateHoverState(for: item.id, isHovering: isHovering)
+                    updateHoverState(for: item, isHovering: isHovering)
                 }
         }
     }
@@ -1659,7 +1736,7 @@ private struct ClickyAgentDockStackView: View {
         .contentShape(Rectangle())
         .pointerCursor()
         .onHover { isHovering in
-            updateHoverState(for: item.id, isHovering: isHovering)
+            updateHoverState(for: item, isHovering: isHovering)
         }
         .onDrop(
             of: [UTType.fileURL.identifier, UTType.image.identifier],
@@ -1752,7 +1829,8 @@ private struct ClickyAgentDockStackView: View {
         return hoveredItemID == item.id && !manuallyClosedExpandedItemIDs.contains(item.id)
     }
 
-    private func updateHoverState(for itemID: UUID, isHovering: Bool) {
+    private func updateHoverState(for item: ClickyAgentDockItem, isHovering: Bool) {
+        let itemID = item.id
         pendingHoverExit?.cancel()
         pendingHoverExit = nil
 
@@ -1777,7 +1855,20 @@ private struct ClickyAgentDockStackView: View {
         // newly revealed hover card/bridge receives its enter event. Keep a
         // small grace window so the card stays open while the pointer travels
         // into the actions, but still collapses naturally after a real exit.
-        DispatchQueue.main.asyncAfter(deadline: .now() + hoverExitGraceDelay, execute: exitWorkItem)
+        //
+        // Finished/stopped agents need a longer hold because their visible
+        // card is primarily an action surface. SwiftUI/AppKit can emit a
+        // transient leave while the pointer crosses the glass buttons or
+        // while those buttons restyle on hover; do not collapse the parked
+        // agent before the user has a fair chance to click Text/Chat/Archive.
+        let graceDelay: TimeInterval
+        switch item.status {
+        case .done, .failed:
+            graceDelay = terminalHoverExitGraceDelay
+        case .starting, .running:
+            graceDelay = hoverExitGraceDelay
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + graceDelay, execute: exitWorkItem)
     }
 }
 

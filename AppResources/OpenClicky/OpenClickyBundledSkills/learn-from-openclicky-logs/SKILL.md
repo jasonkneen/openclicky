@@ -3,6 +3,13 @@ name: "learn_from_openclicky_logs"
 description: "Use when the user asks OpenClicky to review logs, find learnings, tune behavior from logs, or create improvements from logged messages."
 ---
 
+## OpenClicky compatibility guardrails
+
+- Follow `../_shared/OpenClickySkillCompatibilityPolicy.md` before acting.
+- Verify required local commands, tools, keys, or bridge endpoints before promising execution.
+- Treat sends, publishes, deploys, deletes, moves, merges, playlist/library changes, cloud writes, and app-control clicks as external writes unless this skill narrows them further.
+- Stop and report the exact missing setup step for unavailable tools, auth, or macOS permissions; do not loop or silently switch to browser automation.
+
 # Learn From OpenClicky Logs
 
 Use this workflow when the user asks to review logs, learn from logs, tune OpenClicky, inspect message JSONL, or turn flagged log comments into improvements.

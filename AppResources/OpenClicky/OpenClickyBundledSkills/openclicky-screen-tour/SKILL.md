@@ -5,6 +5,13 @@ version: 1.0.0
 argument-hint: "[area or topic to tour visually]"
 ---
 
+## OpenClicky compatibility guardrails
+
+- Follow `../_shared/OpenClickySkillCompatibilityPolicy.md` before acting.
+- Verify required local commands, tools, keys, or bridge endpoints before promising execution.
+- Treat sends, publishes, deploys, deletes, moves, merges, playlist/library changes, cloud writes, and app-control clicks as external writes unless this skill narrows them further.
+- Stop and report the exact missing setup step for unavailable tools, auth, or macOS permissions; do not loop or silently switch to browser automation.
+
 Use OpenClicky's local external-control bridge to create a visual tour directly on the user's screen.
 
 Bridge base URL:
@@ -184,3 +191,9 @@ Clear:
 ```bash
 curl -s -X POST http://127.0.0.1:32123/clear
 ```
+
+## Current visual tool boundary
+
+Screen tours may use primary cursor choreography, secondary marker cursors, captions, screenshots, speech, clear, temporary freehand scribbles, and temporary rectangle highlights. They must not promise unsupported spotlight masks, persistent highlight boxes, arrows, or area dimming.
+
+Use `show_scribble` for short freehand emphasis and `show_highlight` / `show_rectangle` for bounded areas. The renderer clamps duration, line width, opacity, and desktop bounds. Use `/clear` between scenes.

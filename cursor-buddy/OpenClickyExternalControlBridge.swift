@@ -19,6 +19,7 @@ enum OpenClickyExternalCursorMode: String {
 enum OpenClickyExternalControlCommand {
     case showCursor(point: CGPoint, caption: String?, duration: TimeInterval, accentHex: String?, mode: OpenClickyExternalCursorMode, travelDuration: TimeInterval)
     case showCursors([OpenClickyExternalCursorSpec])
+    case showVisualGuidanceOverlay(OpenClickyVisualGuidanceOverlay)
     case showCaption(text: String, point: CGPoint?, duration: TimeInterval, accentHex: String?)
     case captureScreenshot(focused: Bool)
     case click(point: CGPoint, caption: String?)
@@ -162,7 +163,8 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
                 "transport": "local-http+sse",
                 "bridgeTokenRequired": true,
                 "bridgeTokenConfigured": AppBundleConfiguration.externalControlBridgeToken() != nil,
-                "tools": ["openclicky_point", "openclicky_point_many", "openclicky_click", "show_cursor", "show_cursors", "show_caption", "screenshot", "click", "clear", "speak", "notify"],
+                "tools": Self.mcpToolDescriptors.compactMap { $0["name"] as? String },
+                "capabilities": Self.capabilityCompatibilityMetadata,
                 "multiToolEndpoints": ["/mcp/calls", "/tools/calls"],
                 "inferenceProxyEnabled": AppBundleConfiguration.externalInferenceProxyEnabled()
             ]
@@ -215,6 +217,10 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
             command = Self.cursorCommand(from: request.jsonBody)
         case "/cursors":
             command = Self.cursorsCommand(from: request.jsonBody)
+        case "/scribble":
+            command = Self.scribbleCommand(from: request.jsonBody)
+        case "/highlight", "/rectangle":
+            command = Self.rectangleCommand(from: request.jsonBody)
         case "/caption":
             command = Self.captionCommand(from: request.jsonBody)
         case "/screenshot", "/screenshots":
@@ -545,7 +551,7 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
     }
 
     private static var mcpToolDescriptors: [[String: Any]] {
-        [
+        var descriptors: [[String: Any]] = [
             [
                 "name": "openclicky_point",
                 "description": "Point OpenClicky's native cursor at a macOS screen coordinate with a short caption. Use this as the normal pointing tool call for guided help and tutorials.",
@@ -618,6 +624,13 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
                     "required": ["text"]
                 ]
             ],
+        ]
+
+        if AppBundleConfiguration.visualDrawingOverlayToolsEnabled() {
+            descriptors.append(contentsOf: visualDrawingMCPToolDescriptors)
+        }
+
+        descriptors.append(contentsOf: [
             [
                 "name": "screenshot",
                 "description": "Capture current screens to local JPEG files with frame metadata so the agent can locate UI and then show or click it.",
@@ -685,6 +698,91 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
                 "description": "Clear the OpenClicky proxy cursor/caption overlay.",
                 "inputSchema": ["type": "object", "properties": [:]]
             ]
+        ])
+
+        return descriptors
+    }
+
+    private static var visualDrawingMCPToolDescriptors: [[String: Any]] {
+        [
+            [
+                "name": "show_scribble",
+                "description": "Draw a temporary freehand visual guidance path over visible screen content. Coordinates are global AppKit screen points.",
+                "compatibility": ["status": "supported", "capability": "visual_guidance.scribble"],
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "points": ["type": "array"],
+                        "durationMs": ["type": "number"],
+                        "accentHex": ["type": "string"],
+                        "lineWidth": ["type": "number"],
+                        "caption": ["type": "string"]
+                    ],
+                    "required": ["points"]
+                ]
+            ],
+            [
+                "name": "show_highlight",
+                "description": "Draw a temporary rectangle highlight over visible screen content. Coordinates are global AppKit screen points.",
+                "compatibility": ["status": "supported", "capability": "visual_guidance.rectangle"],
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "x": ["type": "number"],
+                        "y": ["type": "number"],
+                        "width": ["type": "number"],
+                        "height": ["type": "number"],
+                        "durationMs": ["type": "number"],
+                        "accentHex": ["type": "string"],
+                        "lineWidth": ["type": "number"],
+                        "fillOpacity": ["type": "number"],
+                        "caption": ["type": "string"]
+                    ],
+                    "required": ["x", "y", "width", "height"]
+                ]
+            ],
+            [
+                "name": "show_rectangle",
+                "description": "Alias for show_highlight.",
+                "compatibility": ["status": "supported", "capability": "visual_guidance.rectangle"],
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "x": ["type": "number"],
+                        "y": ["type": "number"],
+                        "width": ["type": "number"],
+                        "height": ["type": "number"],
+                        "durationMs": ["type": "number"],
+                        "accentHex": ["type": "string"],
+                        "lineWidth": ["type": "number"],
+                        "fillOpacity": ["type": "number"],
+                        "caption": ["type": "string"]
+                    ],
+                    "required": ["x", "y", "width", "height"]
+                ]
+            ],
+        ]
+    }
+
+    private static var capabilityCompatibilityMetadata: [[String: Any]] {
+        let drawingStatus = AppBundleConfiguration.visualDrawingOverlayToolsEnabled() ? "supported" : "gated"
+        return [
+            [
+                "id": "visual_guidance.scribble",
+                "title": "Scribble drawing overlay",
+                "status": drawingStatus,
+                "tools": ["show_scribble"],
+                "featureFlag": AppBundleConfiguration.userVisualDrawingOverlayToolsEnabledDefaultsKey,
+                "policy": "visible-current-screen-content-only"
+            ],
+            [
+                "id": "visual_guidance.rectangle",
+                "title": "Rectangle highlight overlay",
+                "status": drawingStatus,
+                "tools": ["show_highlight", "show_rectangle"],
+                "featureFlag": AppBundleConfiguration.userVisualDrawingOverlayToolsEnabledDefaultsKey,
+                "policy": "visible-current-screen-content-only"
+            ]
         ]
     }
 
@@ -698,6 +796,10 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
             return cursorsCommand(from: arguments)
         case "show_caption", "openclicky_show_caption":
             return captionCommand(from: arguments)
+        case "show_scribble", "openclicky_show_scribble", "scribble":
+            return scribbleCommand(from: arguments)
+        case "show_highlight", "show_rectangle", "openclicky_show_highlight", "highlight", "rectangle":
+            return rectangleCommand(from: arguments)
         case "screenshot", "screenshots", "capture_screenshot", "openclicky_screenshot":
             return .captureScreenshot(focused: bool(arguments["focused"]) ?? false)
         case "openclicky_click", "click", "left_click", "mouse_click":
@@ -748,6 +850,55 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
         }
         guard let x = double(json["x"]), let y = double(json["y"]) else { return nil }
         return CGPoint(x: x, y: y)
+    }
+
+    private static func scribbleCommand(from json: [String: Any]) -> OpenClickyExternalControlCommand? {
+        guard let rawPoints = array(json["points"]) else { return nil }
+        let points = rawPoints.compactMap { value -> CGPoint? in
+            if let dict = dictionary(value) { return point(from: dict) }
+            if let pair = array(value), pair.count >= 2, let x = double(pair[0]), let y = double(pair[1]) {
+                return CGPoint(x: x, y: y)
+            }
+            return nil
+        }
+        guard points.count >= 2 else { return nil }
+        let overlay = OpenClickyVisualGuidanceOverlay.scribble(
+            points: points,
+            accentHex: string(json["accentHex"]),
+            lineWidth: double(json["lineWidth"]) ?? double(json["strokeWidth"]) ?? 5,
+            caption: string(json["caption"]),
+            duration: duration(from: json)
+        )
+        return overlay.isRenderable ? .showVisualGuidanceOverlay(overlay) : nil
+    }
+
+    private static func rectangleCommand(from json: [String: Any]) -> OpenClickyExternalControlCommand? {
+        let rect: CGRect?
+        if let rectDict = dictionary(json["rect"]) ?? dictionary(json["rectangle"]) {
+            rect = rectFrom(rectDict)
+        } else {
+            rect = rectFrom(json)
+        }
+        guard let rect else { return nil }
+        let overlay = OpenClickyVisualGuidanceOverlay.rectangle(
+            rect: rect,
+            accentHex: string(json["accentHex"]),
+            lineWidth: double(json["lineWidth"]) ?? double(json["strokeWidth"]) ?? 4,
+            fillOpacity: double(json["fillOpacity"]) ?? 0.14,
+            caption: string(json["caption"]),
+            duration: duration(from: json)
+        )
+        return overlay.isRenderable ? .showVisualGuidanceOverlay(overlay) : nil
+    }
+
+    private static func rectFrom(_ json: [String: Any]) -> CGRect? {
+        if let x = double(json["x"]), let y = double(json["y"]), let width = double(json["width"]), let height = double(json["height"]) {
+            return CGRect(x: x, y: y, width: width, height: height)
+        }
+        if let x1 = double(json["x1"]), let y1 = double(json["y1"]), let x2 = double(json["x2"]), let y2 = double(json["y2"]) {
+            return CGRect(x: x1, y: y1, width: x2 - x1, height: y2 - y1)
+        }
+        return nil
     }
 
     private static func cursorMode(from json: [String: Any]) -> OpenClickyExternalCursorMode {
@@ -818,6 +969,22 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
         }
     }
 }
+
+#if DEBUG
+extension OpenClickyExternalControlBridgeServer {
+    static var testMCPToolDescriptors: [[String: Any]] {
+        mcpToolDescriptors
+    }
+
+    static var testCapabilityCompatibilityMetadata: [[String: Any]] {
+        capabilityCompatibilityMetadata
+    }
+
+    static func testCommand(from json: [String: Any]) -> OpenClickyExternalControlCommand? {
+        mcpToolCommand(from: json)
+    }
+}
+#endif
 
 private struct MCPJSONRPCBridgeResponse {
     let id: Any?

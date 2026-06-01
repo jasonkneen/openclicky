@@ -3,6 +3,13 @@ name: openclicky-repo-operator
 description: "Operate on software repositories and GitHub work: clone/open repos, inspect codebases, explain structure, create branches, commit, push, open PRs, review diffs, respond to review comments, and debug CI or GitHub Actions failures."
 ---
 
+## OpenClicky compatibility guardrails
+
+- Follow `../_shared/OpenClickySkillCompatibilityPolicy.md` before acting.
+- Verify required local commands, tools, keys, or bridge endpoints before promising execution.
+- Treat sends, publishes, deploys, deletes, moves, merges, playlist/library changes, cloud writes, and app-control clicks as external writes unless this skill narrows them further.
+- Stop and report the exact missing setup step for unavailable tools, auth, or macOS permissions; do not loop or silently switch to browser automation.
+
 # OpenClicky Repo Operator
 
 Be the user's repo operator and Git workflow interpreter. Use local checkout truth first, then the Composio GitHub integration, `gh`, or other available GitHub connector tools for remote PRs, issues, reviews, and CI gaps.

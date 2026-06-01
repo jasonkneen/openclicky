@@ -3,6 +3,13 @@ name: openclicky-build-preview
 description: Build, modify, launch, preview, and iterate websites, web apps, dashboards, landing pages, HTML files, React/Next apps, and frontend UI. Use when the user wants a visible working thing, not only code.
 ---
 
+## OpenClicky compatibility guardrails
+
+- Follow `../_shared/OpenClickySkillCompatibilityPolicy.md` before acting.
+- Verify required local commands, tools, keys, or bridge endpoints before promising execution.
+- Treat sends, publishes, deploys, deletes, moves, merges, playlist/library changes, cloud writes, and app-control clicks as external writes unless this skill narrows them further.
+- Stop and report the exact missing setup step for unavailable tools, auth, or macOS permissions; do not loop or silently switch to browser automation.
+
 # OpenClicky Build Preview
 
 Build the thing, launch it when appropriate, show or report where it is, and iterate. This workflow absorbs frontend design, polish, and animation guidance without exposing those raw skills separately.

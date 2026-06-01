@@ -10,6 +10,13 @@ metadata:
     tags: [FindMy, AirTag, location, tracking, macOS, Apple]
 ---
 
+## OpenClicky compatibility guardrails
+
+- Follow `../_shared/OpenClickySkillCompatibilityPolicy.md` before acting.
+- Verify required local commands, tools, keys, or bridge endpoints before promising execution.
+- Treat sends, publishes, deploys, deletes, moves, merges, playlist/library changes, cloud writes, and app-control clicks as external writes unless this skill narrows them further.
+- Stop and report the exact missing setup step for unavailable tools, auth, or macOS permissions; do not loop or silently switch to browser automation.
+
 # Find My (Apple)
 
 Track Apple devices and AirTags via the FindMy.app on macOS. Since Apple doesn't

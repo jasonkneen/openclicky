@@ -4,6 +4,13 @@ description: Ingest links, screenshots, and notes into a personal knowledge wiki
 argument-hint: "[url | screenshot path | text]"
 ---
 
+## OpenClicky compatibility guardrails
+
+- Follow `../_shared/OpenClickySkillCompatibilityPolicy.md` before acting.
+- Verify required local commands, tools, keys, or bridge endpoints before promising execution.
+- Treat sends, publishes, deploys, deletes, moves, merges, playlist/library changes, cloud writes, and app-control clicks as external writes unless this skill narrows them further.
+- Stop and report the exact missing setup step for unavailable tools, auth, or macOS permissions; do not loop or silently switch to browser automation.
+
 # LLM Wiki — Ingest
 
 Inspired by Karpathy's LLM Wiki pattern. The wiki is a persistent, compounding artifact — a structured, interlinked markdown collection sitting between you and raw sources. When adding a new source, you read it, extract key information, and integrate it into the existing wiki: updating entity pages, revising summaries, adding cross-references, noting contradictions.

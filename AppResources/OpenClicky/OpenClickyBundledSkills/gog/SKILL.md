@@ -4,6 +4,13 @@ description: Use OpenClicky's local gog CLI as the primary Google Workspace rout
 version: 1.0.0
 ---
 
+## OpenClicky compatibility guardrails
+
+- Follow `../_shared/OpenClickySkillCompatibilityPolicy.md` before acting.
+- Verify required local commands, tools, keys, or bridge endpoints before promising execution.
+- Treat sends, publishes, deploys, deletes, moves, merges, playlist/library changes, cloud writes, and app-control clicks as external writes unless this skill narrows them further.
+- Stop and report the exact missing setup step for unavailable tools, auth, or macOS permissions; do not loop or silently switch to browser automation.
+
 # gog
 
 Use `gog` as OpenClicky's primary local Google Workspace CLI for Gmail, Calendar, Drive, Docs, Sheets/spreadsheets, Google Workspace automations, Chat, Contacts, Tasks, People, Forms, Slides, Apps Script, Groups, Admin, and auth/account inspection.
@@ -117,3 +124,9 @@ gog --version
 gog --json auth status
 gog auth credentials list --json
 ```
+
+## Mutation safety boundary
+
+Use `gog` for Google Workspace read/search/list/get routes first. Treat all sends, shares, edits, deletes, calendar creates, label changes, contact changes, chat posts, and task mutations as external writes requiring explicit approval immediately before execution.
+
+If the local command shape differs from this document, use installed `gog -h` output as source of truth and update the skill later rather than repeating stale commands.

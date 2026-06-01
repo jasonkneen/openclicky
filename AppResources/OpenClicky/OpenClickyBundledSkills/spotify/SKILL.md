@@ -12,6 +12,13 @@ metadata:
     related_skills: [gif-search]
 ---
 
+## OpenClicky compatibility guardrails
+
+- Follow `../_shared/OpenClickySkillCompatibilityPolicy.md` before acting.
+- Verify required local commands, tools, keys, or bridge endpoints before promising execution.
+- Treat sends, publishes, deploys, deletes, moves, merges, playlist/library changes, cloud writes, and app-control clicks as external writes unless this skill narrows them further.
+- Stop and report the exact missing setup step for unavailable tools, auth, or macOS permissions; do not loop or silently switch to browser automation.
+
 # Spotify
 
 Control the user's Spotify account via the OpenClicky Spotify toolset (7 tools). Setup guide: https://openclicky-agent.nousresearch.com/docs/user-guide/features/spotify
@@ -132,3 +139,9 @@ Entity types: `track`, `album`, `artist`, `playlist`, `show`, `episode`. Use the
 - **Don't retry on `403 Premium required` or `403 No active device`.** Those are permanent until user action.
 - **Don't use `spotify_search` to find a playlist by name** — that searches the public Spotify catalog. User playlists come from `spotify_playlists list`.
 - **Don't mix `kind: "tracks"` with album URIs** in `spotify_library` (or vice versa). The tool normalizes IDs but the API endpoint differs.
+
+## Runtime availability boundary
+
+Only use the Spotify toolset if the current runtime exposes the listed Spotify tools. If tools are absent, report that Spotify control is not available in this agent runtime instead of trying browser automation.
+
+Playback, queue, playlist, and library mutations should match the user's explicit request. For destructive playlist/library changes such as removing items or changing playlist details, confirm the playlist/item target before executing.

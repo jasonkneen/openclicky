@@ -3,6 +3,13 @@ name: openclicky-research-report
 description: Research a topic, market, competitor set, product, person, or question and turn findings into a useful Markdown, PDF, DOCX, CSV, or brief artifact. Use for competitor research, market intel, source-backed summaries, web research, research briefs, and shareable reports.
 ---
 
+## OpenClicky compatibility guardrails
+
+- Follow `../_shared/OpenClickySkillCompatibilityPolicy.md` before acting.
+- Verify required local commands, tools, keys, or bridge endpoints before promising execution.
+- Treat sends, publishes, deploys, deletes, moves, merges, playlist/library changes, cloud writes, and app-control clicks as external writes unless this skill narrows them further.
+- Stop and report the exact missing setup step for unavailable tools, auth, or macOS permissions; do not loop or silently switch to browser automation.
+
 # OpenClicky Research Report
 
 Turn research into a finished artifact. Prefer search, fetch, curl/API access, source files, and local extraction before any GUI/browser work. Use Cua/Computer Use only when the source truly requires logged-in or visible browser interaction and the runtime exposes that capability.

@@ -12,6 +12,13 @@ prerequisites:
   commands: [imsg]
 ---
 
+## OpenClicky compatibility guardrails
+
+- Follow `../_shared/OpenClickySkillCompatibilityPolicy.md` before acting.
+- Verify required local commands, tools, keys, or bridge endpoints before promising execution.
+- Treat sends, publishes, deploys, deletes, moves, merges, playlist/library changes, cloud writes, and app-control clicks as external writes unless this skill narrows them further.
+- Stop and report the exact missing setup step for unavailable tools, auth, or macOS permissions; do not loop or silently switch to browser automation.
+
 # iMessage
 
 Use `imsg` to read and send iMessage/SMS via macOS Messages.app.
@@ -100,3 +107,9 @@ imsg chats --limit 20 --json | jq '.[] | select(.displayName | contains("Mom"))'
 # 3. Send after confirmation
 imsg send --to "+1555123456" --text "I'll be late"
 ```
+
+## Message safety boundary
+
+Reading/searching existing messages may be treated as read-only after user intent is clear. Sending SMS/iMessage, replying, forwarding, deleting, or changing recipients requires explicit approval immediately before execution with the recipient and message text shown.
+
+Do not trigger Contacts or Messages permission prompts unless the user asked to configure message access.

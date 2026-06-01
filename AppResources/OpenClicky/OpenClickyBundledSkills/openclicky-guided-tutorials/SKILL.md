@@ -5,6 +5,13 @@ version: 1.0.0
 argument-hint: "[workflow to teach]"
 ---
 
+## OpenClicky compatibility guardrails
+
+- Follow `../_shared/OpenClickySkillCompatibilityPolicy.md` before acting.
+- Verify required local commands, tools, keys, or bridge endpoints before promising execution.
+- Treat sends, publishes, deploys, deletes, moves, merges, playlist/library changes, cloud writes, and app-control clicks as external writes unless this skill narrows them further.
+- Stop and report the exact missing setup step for unavailable tools, auth, or macOS permissions; do not loop or silently switch to browser automation.
+
 Use OpenClicky's local external-control bridge as a real tool surface for guided tutorials. Do not fake pointing with hidden text tags when tool calls are available.
 
 ## Tool surface
@@ -28,6 +35,8 @@ Primary tools:
 - `openclicky_point_many`: show several temporary secondary cursors at once.
 - `screenshot`: capture screen/window context and display-frame metadata.
 - `show_caption`: place a caption near a point.
+- `show_scribble`: draw a temporary freehand path over visible current-screen content when `visual_guidance.scribble` is supported.
+- `show_highlight` / `show_rectangle`: draw a temporary rectangle highlight over visible current-screen content when `visual_guidance.rectangle` is supported.
 - `speak`: speak a short instruction through OpenClicky.
 - `clear`: remove stale overlay markers.
 
@@ -115,3 +124,9 @@ Suggested flow:
 - Do not click or type unless the user asked OpenClicky to perform the action; this skill is for teaching and pointing.
 - Keep captions to one to four words when possible.
 - For safety or permission prompts, point and explain; let the user confirm.
+
+## Current visual tool boundary
+
+Guided tutorials should use the existing point, multi-point, caption, screenshot, speak, clear, scribble, and rectangle highlight bridge commands. When the user asks to highlight or draw, verify `/health` reports the matching visual guidance capability as `supported` and `show_scribble`, `show_highlight`, or `show_rectangle` appears in `/mcp/tools`, then use temporary overlays on visible current-screen targets.
+
+Do not use coordinate clicks as tutorial steps unless the user asked OpenClicky to perform the action rather than show it.

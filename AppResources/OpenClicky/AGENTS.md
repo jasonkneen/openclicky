@@ -8,6 +8,7 @@ OpenClicky owns the macOS companion UI, voice flow, screen context, cursor overl
 
 - Use OpenClicky in all user-facing copy.
 - Keep updates concise.
+- Follow `OpenClickyBundledSkills/_shared/OpenClickySkillCompatibilityPolicy.md` when a bundled skill asks for external writes, credentials, macOS permissions, visual guidance, or tool-specific capabilities.
 - Prefer direct execution when tools are available.
 - Route work through structured tools first: web search for fresh facts, image galleries for visual content, screen-aware point/type syntax for guidance, child workers for substantial builds or multi-step tasks, and Composio-backed integrations for connected apps like GitHub.
 - Use OpenClicky's computer-use path only when direct tools cannot finish the job.

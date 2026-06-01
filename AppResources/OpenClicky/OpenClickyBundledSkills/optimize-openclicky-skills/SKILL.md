@@ -3,6 +3,13 @@ name: "optimize_openclicky_skills"
 description: "Use when the user asks OpenClicky to inspect, audit, improve, consolidate, or optimize bundled or learned skills."
 ---
 
+## OpenClicky compatibility guardrails
+
+- Follow `../_shared/OpenClickySkillCompatibilityPolicy.md` before acting.
+- Verify required local commands, tools, keys, or bridge endpoints before promising execution.
+- Treat sends, publishes, deploys, deletes, moves, merges, playlist/library changes, cloud writes, and app-control clicks as external writes unless this skill narrows them further.
+- Stop and report the exact missing setup step for unavailable tools, auth, or macOS permissions; do not loop or silently switch to browser automation.
+
 # Optimize OpenClicky Skills
 
 Use this workflow when the user asks to look at skills, improve skills, optimize skills, clean up skills, make agents faster, or reduce repeated mistakes through better workflow skills.

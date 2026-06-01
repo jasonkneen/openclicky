@@ -3,6 +3,13 @@ name: cua-driver
 description: Drive native macOS apps and browser UI through OpenClicky's local computer-use MCP server, backed by Cua. Snapshot AX state, act by element_index, keep work backgrounded, prefer the user's default browser, and verify via re-snapshot. Use when the user asks you to operate, drive, automate, or perform a GUI task in a real macOS application on the host.
 ---
 
+## OpenClicky compatibility guardrails
+
+- Follow `../_shared/OpenClickySkillCompatibilityPolicy.md` before acting.
+- Verify required local commands, tools, keys, or bridge endpoints before promising execution.
+- Treat sends, publishes, deploys, deletes, moves, merges, playlist/library changes, cloud writes, and app-control clicks as external writes unless this skill narrows them further.
+- Stop and report the exact missing setup step for unavailable tools, auth, or macOS permissions; do not loop or silently switch to browser automation.
+
 # cua-driver
 
 Orchestrates macOS app automation through Cua. In OpenClicky's managed

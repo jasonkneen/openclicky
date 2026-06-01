@@ -3,6 +3,13 @@ name: openclicky-artifacts
 description: Open, reveal, find, export, rename, move, organize, or explain existing OpenClicky-generated files and local artifacts. Use when the user asks where a PDF, CSV, DOCX, PPTX, XLSX, HTML page, report, deck, video, image, or generated file went, asks to open it again, show it in Finder, export it, or organize it. Do not use for creating the content from scratch unless another workflow already produced the artifact.
 ---
 
+## OpenClicky compatibility guardrails
+
+- Follow `../_shared/OpenClickySkillCompatibilityPolicy.md` before acting.
+- Verify required local commands, tools, keys, or bridge endpoints before promising execution.
+- Treat sends, publishes, deploys, deletes, moves, merges, playlist/library changes, cloud writes, and app-control clicks as external writes unless this skill narrows them further.
+- Stop and report the exact missing setup step for unavailable tools, auth, or macOS permissions; do not loop or silently switch to browser automation.
+
 # OpenClicky Artifacts
 
 Manage concrete files created or touched by OpenClicky. This workflow wraps the available file/document capabilities so every artifact job ends with an exact path, an opened/revealed file, or a clear blocker.

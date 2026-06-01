@@ -5,6 +5,13 @@ version: 1.0.0
 argument-hint: "[workspace task or auth setup]"
 ---
 
+## OpenClicky compatibility guardrails
+
+- Follow `../_shared/OpenClickySkillCompatibilityPolicy.md` before acting.
+- Verify required local commands, tools, keys, or bridge endpoints before promising execution.
+- Treat sends, publishes, deploys, deletes, moves, merges, playlist/library changes, cloud writes, and app-control clicks as external writes unless this skill narrows them further.
+- Stop and report the exact missing setup step for unavailable tools, auth, or macOS permissions; do not loop or silently switch to browser automation.
+
 Use `gog` from https://github.com/steipete/gogcli as OpenClicky's local Google Workspace connector.
 
 This is a local CLI integration, not an OpenClicky-hosted Google login. Do not add hosted key sync, server-side OAuth, or repository-stored credentials. `gog` stores credentials in its own OS keyring or encrypted/file keyring under the user's local account.
@@ -202,3 +209,9 @@ When you use this skill:
 3. If authenticated, run the smallest read command that answers the user's request.
 4. For writes, confirm or restate the exact mutation unless the user's command was already explicit.
 5. Return concise results with account/context, not raw huge JSON unless asked.
+
+## Mutation safety boundary
+
+Read/search/list/get commands may run when task intent is clear. Sending mail, forwarding, reply-all, modifying labels, creating/updating/deleting calendar events, changing Drive permissions, editing Docs/Sheets/Slides, contacts writes, Chat sends, and Tasks mutations require explicit approval immediately before execution.
+
+Do not initiate OAuth, keyring passphrase, or credential setup from a normal task. If `gog` is missing, unauthenticated, or blocked by the keyring, report the exact setup step and stop unless the user asked for setup.

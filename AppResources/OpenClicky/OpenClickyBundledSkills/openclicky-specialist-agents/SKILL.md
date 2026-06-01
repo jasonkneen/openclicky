@@ -3,6 +3,13 @@ name: openclicky-specialist-agents
 description: Create, equip, or repair OpenClicky specialist agents with explicit soul, instructions, memory, heartbeat, and skills.json wiring.
 ---
 
+## OpenClicky compatibility guardrails
+
+- Follow `../_shared/OpenClickySkillCompatibilityPolicy.md` before acting.
+- Verify required local commands, tools, keys, or bridge endpoints before promising execution.
+- Treat sends, publishes, deploys, deletes, moves, merges, playlist/library changes, cloud writes, and app-control clicks as external writes unless this skill narrows them further.
+- Stop and report the exact missing setup step for unavailable tools, auth, or macOS permissions; do not loop or silently switch to browser automation.
+
 # OpenClicky Specialist Agents
 
 Use this skill when the user asks OpenClicky to create a new specialist, expert agent, recurring maintenance agent, or agent with domain expertise.

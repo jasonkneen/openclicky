@@ -3,6 +3,13 @@ name: openclicky-creative-studio
 description: "Route broad creative work to available OpenClicky capabilities: frontend polish, design critique, brand/social planning, document/PDF outputs, spreadsheet/table outputs, and existing visual artifact handling. Provider-backed image, video, motion, and new slide/deck generation are not shipped unless the runtime explicitly exposes those capabilities."
 ---
 
+## OpenClicky compatibility guardrails
+
+- Follow `../_shared/OpenClickySkillCompatibilityPolicy.md` before acting.
+- Verify required local commands, tools, keys, or bridge endpoints before promising execution.
+- Treat sends, publishes, deploys, deletes, moves, merges, playlist/library changes, cloud writes, and app-control clicks as external writes unless this skill narrows them further.
+- Stop and report the exact missing setup step for unavailable tools, auth, or macOS permissions; do not loop or silently switch to browser automation.
+
 # OpenClicky Creative Studio
 
 Route creative work to the right available medium. Do not make everything an image prompt; choose the production path that gives the user a reliable artifact, and report blockers for unshipped provider-backed routes.
@@ -44,3 +51,7 @@ Route creative work to the right available medium. Do not make everything an ima
 ## Verification
 - Inspect generated images or key frames.
 - For provider-backed images, videos, or decks, report the missing runtime capability unless a real tool is exposed. Do not suggest retrying a route that is not shipped.
+
+## Provider capability boundary
+
+Do not promise provider-backed image generation, video generation, new slide/deck rendering, or complex design extraction unless the runtime exposes that capability. Offer available alternatives: frontend prototypes, markdown reports, PDFs, DOCX, CSV/XLSX, Excalidraw JSON, screenshots, or design critique.

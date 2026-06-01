@@ -10,6 +10,13 @@ metadata:
     related_skills: [github-pr-workflow, github-code-review, github-issues, github-repo-management]
 ---
 
+## OpenClicky compatibility guardrails
+
+- Follow `../_shared/OpenClickySkillCompatibilityPolicy.md` before acting.
+- Verify required local commands, tools, keys, or bridge endpoints before promising execution.
+- Treat sends, publishes, deploys, deletes, moves, merges, playlist/library changes, cloud writes, and app-control clicks as external writes unless this skill narrows them further.
+- Stop and report the exact missing setup step for unavailable tools, auth, or macOS permissions; do not loop or silently switch to browser automation.
+
 # GitHub Authentication Setup
 
 This skill sets up authentication so the agent can work with GitHub repositories, PRs, issues, and CI. It covers two paths:

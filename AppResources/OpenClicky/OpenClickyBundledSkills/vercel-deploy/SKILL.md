@@ -3,6 +3,13 @@ name: vercel-deploy
 description: Deploy applications and websites to Vercel. Use when the user requests deployment actions like "deploy my app", "deploy and give me the link", "push this live", or "create a preview deployment".
 ---
 
+## OpenClicky compatibility guardrails
+
+- Follow `../_shared/OpenClickySkillCompatibilityPolicy.md` before acting.
+- Verify required local commands, tools, keys, or bridge endpoints before promising execution.
+- Treat sends, publishes, deploys, deletes, moves, merges, playlist/library changes, cloud writes, and app-control clicks as external writes unless this skill narrows them further.
+- Stop and report the exact missing setup step for unavailable tools, auth, or macOS permissions; do not loop or silently switch to browser automation.
+
 # Vercel Deploy
 
 Deploy any project to Vercel instantly. **Always deploy as preview** (not production) unless the user explicitly asks for production.
@@ -75,3 +82,9 @@ Example guidance to the user:
 ```
 The deploy needs escalated network access to deploy to Vercel. I can rerun the command with escalated permissions—want me to proceed?
 ```
+
+## Deployment safety boundary
+
+Preview deploys and production deploys publish external URLs. Verify the target directory, project, account/team, and production-vs-preview intent before deployment. Production deploys require explicit approval immediately before running the deploy command unless the user explicitly requested production in the current turn.
+
+If Vercel auth is missing, stop with the setup step; do not create accounts or tokens for the user.
