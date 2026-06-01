@@ -260,6 +260,22 @@ struct CodexAgentModeTests {
         #expect(CompanionManager.hybridAgentTaskInstruction(from: "What do you think is on my screen?") == nil)
     }
 
+    @MainActor @Test func agentRoutingSplitsOnlyExplicitIndependentWorkstreams() throws {
+        let splitInstructions = CompanionManager.testParallelAgentInstructions(
+            from: "Use separate agents: first review the logs for routing failures; second patch the voice route in the app; third update the tests for agent routing."
+        )
+
+        #expect(splitInstructions.count == 3)
+        #expect(splitInstructions[0].lowercased().contains("review the logs"))
+        #expect(splitInstructions[1].lowercased().contains("patch the voice route"))
+        #expect(splitInstructions[2].lowercased().contains("update the tests"))
+
+        let combinedInstructions = CompanionManager.testParallelAgentInstructions(
+            from: "Patch the voice route and update the tests for the same behavior."
+        )
+        #expect(combinedInstructions.count == 1)
+    }
+
     @MainActor @Test func agentDelegationPhrasesDoNotCancelCurrentAgent() throws {
         #expect(!CompanionManager.isCancelCurrentAgentTaskRequest("Can you start another agent to inspect the logs?"))
         #expect(!CompanionManager.isCancelCurrentAgentTaskRequest("Please get an agent to look at what just happened."))

@@ -147,4 +147,14 @@ struct OpenClickyVisualGuidanceOverlayTests {
             CGPoint(x: 50, y: 60),
         ])
     }
+
+    @Test func voiceLaneRoutesShapeDrawingRequestsToScreenContext() throws {
+        #expect(CompanionManager.testShouldAttachScreenContext(to: "draw a circle around that button"))
+        #expect(CompanionManager.testShouldAttachScreenContext(to: "can you put a rectangle around the error"))
+        #expect(CompanionManager.testShouldAttachScreenContext(to: "box around the login panel"))
+        #expect(CompanionManager.testShouldAttachScreenContext(to: "trace around that shape"))
+
+        #expect(!CompanionManager.testShouldAttachScreenContext(to: "draw me a cheerful mascot idea"))
+        #expect(!CompanionManager.testShouldAttachScreenContext(to: "mark this task as done later"))
+    }
 }

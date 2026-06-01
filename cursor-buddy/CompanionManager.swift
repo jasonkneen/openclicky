@@ -4484,7 +4484,7 @@ final class CompanionManager: ObservableObject {
                 "requestID": activeRequestTiming?.requestID ?? "none"
             ]
         )
-        startVoiceAgentTask(instruction: instruction)
+        startVoiceAgentTaskPlan(instruction: instruction)
         return true
     }
 
@@ -4505,7 +4505,7 @@ final class CompanionManager: ObservableObject {
                 "requestID": activeRequestTiming?.requestID ?? "none"
             ]
         )
-        startVoiceAgentTask(
+        startVoiceAgentTaskPlan(
             instruction: instruction,
             acknowledgement: "i’ll take care of that in the background.",
             voiceContextUserTranscript: finalTranscript
@@ -4532,7 +4532,7 @@ final class CompanionManager: ObservableObject {
                 "requestID": activeRequestTiming?.requestID ?? "none"
             ]
         )
-        startVoiceAgentTask(
+        startVoiceAgentTaskPlan(
             instruction: decision.instruction,
             acknowledgement: decision.acknowledgement,
             voiceContextUserTranscript: finalTranscript
@@ -4558,7 +4558,7 @@ final class CompanionManager: ObservableObject {
                 "requestID": activeRequestTiming?.requestID ?? "none"
             ]
         )
-        startVoiceAgentTask(
+        startVoiceAgentTaskPlan(
             instruction: instruction,
             acknowledgement: "i’ll handle the background part too.",
             route: "agent.hybrid_start",
@@ -7394,7 +7394,7 @@ final class CompanionManager: ObservableObject {
         pendingAgentOfferInstruction = nil
         pendingAgentOfferAt = nil
         let acknowledgement = "on it, starting an agent for that."
-        startVoiceAgentTask(instruction: instruction, acknowledgement: acknowledgement)
+        startVoiceAgentTaskPlan(instruction: instruction, acknowledgement: acknowledgement)
         return true
     }
 
@@ -8126,7 +8126,7 @@ final class CompanionManager: ObservableObject {
                 return true
             }
 
-            startVoiceAgentTask(instruction: newTaskInstruction)
+            startVoiceAgentTaskPlan(instruction: newTaskInstruction)
             return true
         }
 
@@ -8163,7 +8163,7 @@ final class CompanionManager: ObservableObject {
             }
 
             print("OpenClicky agent task creation request detected: \(taskCreationInstruction)")
-            startVoiceAgentTask(instruction: taskCreationInstruction)
+            startVoiceAgentTaskPlan(instruction: taskCreationInstruction)
             return true
         }
 
@@ -8258,7 +8258,7 @@ final class CompanionManager: ObservableObject {
         }
 
         print("OpenClicky agent task detected; starting agent task: \(instruction)")
-        startVoiceAgentTask(instruction: instruction)
+        startVoiceAgentTaskPlan(instruction: instruction)
         return true
     }
 
@@ -10225,6 +10225,60 @@ final class CompanionManager: ObservableObject {
         let confidence: Double
     }
 
+    private static func parallelAgentInstructions(from instruction: String) -> [String] {
+        let cleanedInstruction = cleanedAgentTaskInstruction(instruction)
+        guard !cleanedInstruction.isEmpty else { return [] }
+        guard shouldSplitAgentInstruction(cleanedInstruction) else { return [cleanedInstruction] }
+
+        let pieces = splitAgentInstructionClauses(cleanedInstruction)
+            .map(cleanedAgentTaskInstruction)
+            .filter { !$0.isEmpty && !isAgentTaskPlaceholderInstruction($0) }
+
+        guard pieces.count >= 2 else { return [cleanedInstruction] }
+        guard pieces.allSatisfy({ isLikelySpecificAgentInstruction($0) || hasAgentWorkVerbAndArtifact($0) }) else {
+            return [cleanedInstruction]
+        }
+
+        return Array(pieces.prefix(4))
+    }
+
+    private static func shouldSplitAgentInstruction(_ instruction: String) -> Bool {
+        let normalized = normalizedSpokenCommandText(instruction)
+        let explicitSplitPattern = #"\b(?:multiple|several|separate|parallel|independent)\s+(?:background\s+)?(?:agents?|tasks?|workstreams?)\b|\bsplit\b.{0,48}\b(?:agents?|tasks?|workstreams?)\b|\b(?:agents?|tasks?)\b.{0,48}\b(?:separately|in\s+parallel|side\s+by\s+side)\b"#
+        if normalized.range(of: explicitSplitPattern, options: .regularExpression) != nil {
+            return true
+        }
+
+        let enumeratedPattern = #"(?:^|[\n;,.]\s*)(?:first|second|third|fourth|1[.)]|2[.)]|3[.)]|4[.)])\b"#
+        return instruction.range(of: enumeratedPattern, options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
+    private static func splitAgentInstructionClauses(_ instruction: String) -> [String] {
+        let markerPattern = #"(?i)(?:^|[\n;]\s+|\s+)(?:first(?:ly)?|second(?:ly)?|third(?:ly)?|fourth(?:ly)?|1[.)]|2[.)]|3[.)]|4[.)]|also|separately|another\s+agent\s+(?:to|for)|and\s+another\s+(?:agent\s+)?(?:to|for))[:,]?\s+"#
+        let markerRegex = try? NSRegularExpression(pattern: markerPattern)
+        let fullRange = NSRange(instruction.startIndex..<instruction.endIndex, in: instruction)
+        let matches = markerRegex?.matches(in: instruction, range: fullRange) ?? []
+        guard matches.count >= 2 else {
+            return instruction
+                .components(separatedBy: ";")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        }
+
+        var pieces: [String] = []
+        for (index, match) in matches.enumerated() {
+            guard let start = Range(match.range, in: instruction)?.upperBound else { continue }
+            let end: String.Index
+            if index + 1 < matches.count,
+               let nextStart = Range(matches[index + 1].range, in: instruction)?.lowerBound {
+                end = nextStart
+            } else {
+                end = instruction.endIndex
+            }
+            pieces.append(String(instruction[start..<end]).trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        return pieces
+    }
+
     private static func shouldDeferLiveComputerUseForAgentRoute(_ transcript: String) -> Bool {
         isAgentRoutingCandidate(transcript)
     }
@@ -10666,7 +10720,7 @@ final class CompanionManager: ObservableObject {
     private static func hasAgentWorkVerbAndArtifact(_ transcript: String) -> Bool {
         let normalized = normalizedSpokenCommandText(transcript)
         let workVerbPattern = #"\b(?:create|make|build|update|change|edit|fix|design|redesign|open|show|preview|pull\s+up|find|save|export|write|review|test|run|stop|ensure|verify|validate|diagnose|investigate|repair|polish|improve|finish|wire|route)\b"#
-        let artifactPattern = #"\b(?:form|page|site|website|app|file|document|report|code|repo|repository|github|issue|issues|pull\s+request|pr|folder|version|style|design|panel|overlay|status|progress|comments|thinking|calls|ui|volume|slider|control|voice|realtime|computer\s+use|tool|tools|tooling|model|models|routing|route|background|agent\s+mode)\b"#
+        let artifactPattern = #"\b(?:form|page|site|website|app|file|document|report|code|repo|repository|github|issue|issues|pull\s+request|pr|folder|version|style|design|panel|overlay|status|progress|comments|logs?|tests?|thinking|calls|ui|volume|slider|control|voice|realtime|computer\s+use|tool|tools|tooling|model|models|routing|route|background|agent\s+mode)\b"#
         return normalized.range(of: workVerbPattern, options: .regularExpression) != nil
             && normalized.range(of: artifactPattern, options: .regularExpression) != nil
     }
@@ -11330,6 +11384,53 @@ final class CompanionManager: ObservableObject {
         let trimmedInstruction = rawInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanedInstruction = trimmedInstruction.trimmingCharacters(in: CharacterSet(charactersIn: ".,:;!?- "))
         return cleanedInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func startVoiceAgentTaskPlan(
+        instruction: String,
+        acknowledgement: String? = nil,
+        route: String = "agent.start",
+        speakAcknowledgement: Bool = true,
+        interruptVoiceResponse: Bool = false,
+        voiceContextUserTranscript: String? = nil
+    ) {
+        let plannedInstructions = Self.parallelAgentInstructions(from: instruction)
+        guard plannedInstructions.count > 1 else {
+            startVoiceAgentTask(
+                instruction: instruction,
+                acknowledgement: acknowledgement,
+                route: route,
+                speakAcknowledgement: speakAcknowledgement,
+                interruptVoiceResponse: interruptVoiceResponse,
+                voiceContextUserTranscript: voiceContextUserTranscript
+            )
+            return
+        }
+
+        let splitAcknowledgement = acknowledgement ?? "i’ll split that into \(plannedInstructions.count) background agents."
+        OpenClickyMessageLogStore.shared.append(
+            lane: "agent",
+            direction: "incoming",
+            event: "openclicky.agent_task.split_route",
+            fields: [
+                "originalInstruction": instruction,
+                "taskCount": plannedInstructions.count,
+                "executor": "agent_mode",
+                "route": "\(route).split",
+                "requestID": activeRequestTiming?.requestID ?? "none"
+            ]
+        )
+
+        for (index, plannedInstruction) in plannedInstructions.enumerated() {
+            startVoiceAgentTask(
+                instruction: plannedInstruction,
+                acknowledgement: index == 0 ? splitAcknowledgement : nil,
+                route: "\(route).split",
+                speakAcknowledgement: speakAcknowledgement && index == 0,
+                interruptVoiceResponse: interruptVoiceResponse && index == 0,
+                voiceContextUserTranscript: voiceContextUserTranscript ?? instruction
+            )
+        }
     }
 
     private func startVoiceAgentTask(
@@ -13581,7 +13682,9 @@ final class CompanionManager: ObservableObject {
         - selected computer-use backend: \(backend.rawValue) (\(backend.label))
         - selected computer-use model: \(computerUseModel.id) (\(computerUseModel.provider.rawValue), \(computerUseModel.label))
         - background Agent Mode model: \(codexAgentSession.model)
-        - keep spoken voice inference on the realtime model. for direct computer-control requests, including app-plus-action commands like "open Spotify and play a track", call OpenClicky's computer-use tool so the app can execute through the selected backend. do not route ordinary app control to Agent Mode just because it has more than one step. for deeper file, code, research, settings, logs, builds, installs, or long-running work, call the background-agent tool so Agent Mode can run on the full configured model.
+        - keep spoken voice inference on the realtime model. for direct computer-control requests, including app-plus-action commands like "open Spotify and play a track", call OpenClicky's computer-use tool so the app can execute through the selected backend. do not route ordinary app control to Agent Mode just because it has more than one step. for deeper file, code, research, settings, logs, builds, installs, refactors, or long-running work, call the background-agent tool so Agent Mode can run on the full configured model.
+        - when background work has several parts, choose the agent shape deliberately: keep tightly coupled work in one background agent, but split into multiple background-agent calls when the user explicitly asks for multiple/separate/parallel agents or the request clearly contains independent workstreams that can run safely side by side.
+        - temporary visual guidance is not computer-use and not Agent Mode. if the user asks OpenClicky to point, highlight, draw a rectangle, box an area, circle something, draw around something, scribble, trace, mark, or put a shape around visible screen content, do not say you'll get another system to do it and do not call a routing tool. let OpenClicky's screen-aware voice-response path handle it directly.
         """
     }
 
@@ -14812,6 +14915,10 @@ final class CompanionManager: ObservableObject {
             .lowercased()
         let commandText = normalizedSpokenCommandText(transcript)
 
+        if isVisualGuidanceDrawingRequest(normalized: normalized, commandText: commandText) {
+            return true
+        }
+
         let explicitVisualPhrases = [
             "my screen", "the screen", "on screen", "on the screen", "this screen",
             "what am i looking", "what's on", "what is on", "what do you see",
@@ -14819,7 +14926,10 @@ final class CompanionManager: ObservableObject {
             "this window", "that window", "current window", "active window",
             "this app", "that app", "this page", "that page", "this button", "that button",
             "this field", "that field", "this menu", "that menu",
-            "where is", "where's", "point to", "show me where", "highlight", "logo",
+            "where is", "where's", "point to", "show me where", "highlight",
+            "draw around", "draw round", "circle around", "circle round", "rectangle around",
+            "rectangle round", "box around", "box round", "outline", "scribble", "trace",
+            "selection around", "shape around", "shapes around", "logo",
             "layout", "spacing", "padding", "margin", "margins", "green symbol",
             "green mark",
             "click", "press", "select", "open this", "open that"
@@ -14833,7 +14943,9 @@ final class CompanionManager: ObservableObject {
             "page", "tab", "cursor", "visible", "shown", "displayed", "image",
             "screenshot", "icon", "link", "sidebar", "toolbar", "dock", "logo",
             "layout", "spacing", "padding", "margin", "margins", "size", "sized",
-            "left", "right", "top", "bottom", "symbol", "mark", "green"
+            "highlight", "rectangle", "rectangles", "circle", "circles",
+            "shape", "shapes", "box", "outline", "scribble", "scribbles", "trace",
+            "left", "right", "top", "bottom", "symbol", "green"
         ]
         let tokens = commandText.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
         if tokens.contains(where: { visualTokens.contains($0) }) { return true }
@@ -14861,6 +14973,24 @@ final class CompanionManager: ObservableObject {
                    .contains(where: { visualTokens.contains(String($0)) })
            }) {
             return true
+        }
+
+        return false
+    }
+
+    private static func isVisualGuidanceDrawingRequest(normalized: String, commandText: String) -> Bool {
+        let visualDrawPatterns = [
+            #"\b(?:draw|put|place|add|show|make)\s+(?:a\s+|an\s+|the\s+)?(?:rectangle|rect|box|circle|oval|ring|outline|shape)\s+(?:around|round|over|on|onto)\b"#,
+            #"\b(?:circle|box|outline|mark|highlight)\s+(?:the\s+|this\s+|that\s+|a\s+|an\s+)?[a-z0-9][a-z0-9\s-]{0,80}\b"#,
+            #"\b(?:draw|trace|scribble)\s+(?:around|round|over|on|onto)\b"#
+        ]
+
+        for text in [normalized, commandText] {
+            for pattern in visualDrawPatterns {
+                if text.range(of: pattern, options: .regularExpression) != nil {
+                    return true
+                }
+            }
         }
 
         return false
@@ -16344,6 +16474,14 @@ extension CompanionManager {
             selectedVoiceModelID: selectedVoiceModelID,
             selectedComputerUseModelID: selectedComputerUseModelID
         ).rawValue
+    }
+
+    static func testShouldAttachScreenContext(to transcript: String) -> Bool {
+        shouldAttachScreenContext(to: transcript)
+    }
+
+    static func testParallelAgentInstructions(from instruction: String) -> [String] {
+        parallelAgentInstructions(from: instruction)
     }
 }
 #endif

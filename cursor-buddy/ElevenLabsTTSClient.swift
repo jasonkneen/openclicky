@@ -2063,7 +2063,7 @@ final class OpenAIRealtimeSpeechClient: OpenClickyTTSClient {
         [
             "type": "function",
             "name": "openclicky_use_computer",
-            "description": "Route a direct Mac control request through OpenClicky's selected computer-use backend. Use this for opening apps, app-plus-action requests such as opening an app and doing something inside it, focused-window typing, key presses, clicking, or other direct computer actions. Do not use the background-agent tool for ordinary app control just because it has more than one step.",
+            "description": "Route a direct Mac control request through OpenClicky's selected computer-use backend. Use this for opening apps, app-plus-action requests such as opening an app and doing something inside it, focused-window typing, key presses, clicking, or other direct computer actions. Do not use this for temporary visual guidance such as pointing, highlighting, rectangles, circling, scribbling, tracing, marking, or drawing around visible screen content; OpenClicky's screen-aware voice-response path handles those directly. Do not use the background-agent tool for ordinary app control just because it has more than one step.",
             "parameters": [
                 "type": "object",
                 "properties": [
