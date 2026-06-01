@@ -933,33 +933,28 @@ struct BlueCursorView: View {
     @ViewBuilder
     private func visualGuidanceScribble(_ overlay: OpenClickyVisualGuidanceOverlay, color: Color) -> some View {
         let localPoints = overlay.points.map { convertScreenPointToSwiftUICoordinates($0.cgPoint) }
-        Path { path in
-            guard let first = localPoints.first else { return }
-            path.move(to: first)
-            for point in localPoints.dropFirst() {
-                path.addLine(to: point)
-            }
-        }
-        .stroke(
-            color,
-            style: StrokeStyle(lineWidth: CGFloat(overlay.style.lineWidth), lineCap: .round, lineJoin: .round)
+        OpenClickyVisualGuidanceScribbleView(
+            points: localPoints,
+            color: color,
+            lineWidth: CGFloat(overlay.style.lineWidth),
+            drawingDuration: min(1.2, max(0.35, overlay.duration * 0.20)),
+            reduceMotion: accessibilityReduceMotion
         )
-        .shadow(color: color.opacity(0.65), radius: accessibilityReduceMotion ? 2 : 7, x: 0, y: 0)
     }
 
     @ViewBuilder
     private func visualGuidanceRectangle(_ overlay: OpenClickyVisualGuidanceOverlay, color: Color) -> some View {
         if let rect = overlay.rect?.normalized.cgRect {
             let localRect = convertScreenRectToSwiftUICoordinates(rect)
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(color.opacity(overlay.style.fillOpacity))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(color, lineWidth: CGFloat(overlay.style.lineWidth))
-                )
-                .shadow(color: color.opacity(accessibilityReduceMotion ? 0.30 : 0.70), radius: accessibilityReduceMotion ? 2 : 9, x: 0, y: 0)
-                .frame(width: localRect.width, height: localRect.height)
-                .position(x: localRect.midX, y: localRect.midY)
+            OpenClickyVisualGuidanceRectangleView(
+                color: color,
+                lineWidth: CGFloat(overlay.style.lineWidth),
+                fillOpacity: overlay.style.fillOpacity,
+                drawingDuration: min(0.95, max(0.38, overlay.duration * 0.22)),
+                reduceMotion: accessibilityReduceMotion
+            )
+            .frame(width: localRect.width, height: localRect.height)
+            .position(x: localRect.midX, y: localRect.midY)
         }
     }
 
@@ -1488,6 +1483,196 @@ struct BlueCursorView: View {
     }
 }
 
+// MARK: - Visual Guidance Drawing
+
+private struct OpenClickyVisualGuidanceScribbleView: View {
+    let points: [CGPoint]
+    let color: Color
+    let lineWidth: CGFloat
+    let drawingDuration: TimeInterval
+    let reduceMotion: Bool
+
+    @State private var drawProgress: CGFloat = 0
+
+    var body: some View {
+        let clampedProgress = min(max(drawProgress, 0), 1)
+
+        ZStack(alignment: .topLeading) {
+            OpenClickySmoothScribblePath(points: points)
+                .trim(from: 0, to: clampedProgress)
+                .stroke(
+                    color,
+                    style: StrokeStyle(
+                        lineWidth: lineWidth,
+                        lineCap: .round,
+                        lineJoin: .round
+                    )
+                )
+                .shadow(
+                    color: color.opacity(reduceMotion ? 0.30 : 0.68),
+                    radius: reduceMotion ? 2 : 7,
+                    x: 0,
+                    y: 0
+                )
+
+            if !reduceMotion,
+               let cursorPoint = OpenClickySmoothScribblePath.point(on: points, progress: clampedProgress),
+               clampedProgress < 0.995 {
+                ClickyCursorAvatarView(accentColor: color)
+                    .frame(width: 18, height: 24)
+                    .rotationEffect(.degrees(12))
+                    .shadow(color: color.opacity(0.65), radius: 6, x: 0, y: 0)
+                    .position(cursorPoint)
+            }
+        }
+        .onAppear {
+            drawProgress = reduceMotion ? 1 : 0
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: drawingDuration)) {
+                drawProgress = 1
+            }
+        }
+    }
+}
+
+private struct OpenClickySmoothScribblePath: Shape {
+    let points: [CGPoint]
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        guard let first = points.first else { return path }
+        path.move(to: first)
+
+        guard points.count > 2 else {
+            if let last = points.last {
+                path.addLine(to: last)
+            }
+            return path
+        }
+
+        for index in 1..<points.count {
+            let current = points[index]
+            if index < points.count - 1 {
+                let next = points[index + 1]
+                let midpoint = CGPoint(
+                    x: (current.x + next.x) / 2,
+                    y: (current.y + next.y) / 2
+                )
+                path.addQuadCurve(to: midpoint, control: current)
+            } else {
+                path.addQuadCurve(to: current, control: current)
+            }
+        }
+
+        return path
+    }
+
+    static func point(on points: [CGPoint], progress: CGFloat) -> CGPoint? {
+        guard let first = points.first else { return nil }
+        guard points.count > 1 else { return first }
+
+        let segments = zip(points, points.dropFirst()).map { pair in
+            let start = pair.0
+            let end = pair.1
+            let dx = end.x - start.x
+            let dy = end.y - start.y
+            return (start: start, end: end, length: (dx * dx + dy * dy).squareRoot())
+        }
+        let totalLength = segments.reduce(CGFloat(0)) { $0 + $1.length }
+        guard totalLength > 0 else { return first }
+
+        var remaining = min(max(progress, 0), 1) * totalLength
+        for segment in segments {
+            guard segment.length > 0 else { continue }
+            if remaining <= segment.length {
+                let t = remaining / segment.length
+                return CGPoint(
+                    x: segment.start.x + (segment.end.x - segment.start.x) * t,
+                    y: segment.start.y + (segment.end.y - segment.start.y) * t
+                )
+            }
+            remaining -= segment.length
+        }
+
+        return points.last
+    }
+}
+
+private struct OpenClickyVisualGuidanceRectangleView: View {
+    let color: Color
+    let lineWidth: CGFloat
+    let fillOpacity: Double
+    let drawingDuration: TimeInterval
+    let reduceMotion: Bool
+
+    @State private var drawProgress: CGFloat = 0
+
+    var body: some View {
+        GeometryReader { geometry in
+            let size = geometry.size
+            let clampedProgress = min(max(drawProgress, 0), 1)
+
+            ZStack(alignment: .topLeading) {
+                Rectangle()
+                    .fill(color.opacity(fillOpacity * Double(clampedProgress)))
+
+                OpenClickyTopLeftRectangleOutline()
+                    .trim(from: 0, to: clampedProgress)
+                    .stroke(
+                        color,
+                        style: StrokeStyle(
+                            lineWidth: lineWidth,
+                            lineCap: .round,
+                            lineJoin: .round,
+                            dash: [lineWidth * 2.4, lineWidth * 1.7]
+                        )
+                    )
+                    .shadow(
+                        color: color.opacity(reduceMotion ? 0.30 : 0.70),
+                        radius: reduceMotion ? 2 : 9,
+                        x: 0,
+                        y: 0
+                    )
+
+                if !reduceMotion && clampedProgress < 0.995 {
+                    ClickyCursorAvatarView(accentColor: color)
+                        .frame(width: 18, height: 24)
+                        .rotationEffect(.degrees(12))
+                        .shadow(color: color.opacity(0.65), radius: 6, x: 0, y: 0)
+                        .position(
+                            x: max(0, min(size.width, size.width * clampedProgress)),
+                            y: max(0, min(size.height, size.height * clampedProgress))
+                        )
+                }
+            }
+            .onAppear {
+                drawProgress = reduceMotion ? 1 : 0
+                guard !reduceMotion else { return }
+                withAnimation(.easeOut(duration: drawingDuration)) {
+                    drawProgress = 1
+                }
+            }
+            .onChange(of: geometry.size) { _, _ in
+                if reduceMotion {
+                    drawProgress = 1
+                }
+            }
+        }
+    }
+}
+
+private struct OpenClickyTopLeftRectangleOutline: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
+        return path
+    }
+}
+
 // MARK: - Blue Cursor Waveform
 
 /// A small blue waveform that replaces the cursor companion while
@@ -1597,8 +1782,8 @@ private struct ClickyAgentDockStackView: View {
     @State private var pendingHoverExit: DispatchWorkItem?
     @State private var didDragDock = false
     @State private var manuallyClosedExpandedItemIDs: Set<UUID> = []
-    private let dockItemSlotSize: CGFloat = 92
-    private let dockItemSpacing: CGFloat = 14
+    private let dockItemSlotSize: CGFloat = 78
+    private let dockItemSpacing: CGFloat = 12
     private let hoverCardHeight: CGFloat = 236
     private let hoverExitGraceDelay: TimeInterval = 0.42
     private let terminalHoverExitGraceDelay: TimeInterval = 1.20
@@ -1606,7 +1791,7 @@ private struct ClickyAgentDockStackView: View {
     // The avatar glow/status pulse intentionally paints outside the 52pt
     // circle; without this inset, the panel can crop the first parked task
     // when the dock is parked near the screen edge.
-    private let avatarTopOverdrawPadding: CGFloat = 64
+    private let avatarTopOverdrawPadding: CGFloat = 54
 
     var body: some View {
         ZStack(alignment: layoutState.opensPanelsToRight ? .topLeading : .topTrailing) {
@@ -1952,9 +2137,9 @@ private struct ClickyAgentDockItemView: View {
                         endPoint: .bottomTrailing
                     )
                 )
-                // Smaller icon (was 68×68) so the dock takes up less screen
-                // real estate when collapsed — ties to UX request 2026-04-28.
-                .frame(width: 52, height: 52)
+                // Keep parked agents compact: the outer circle is 15%
+                // smaller than the previous 52pt treatment.
+                .frame(width: 44, height: 44)
                 .overlay(
                     Circle()
                         .stroke(
@@ -1985,7 +2170,7 @@ private struct ClickyAgentDockItemView: View {
                 .shadow(color: Color.black.opacity(0.50), radius: 8, x: 0, y: 4)
 
             ClickyCursorAvatarView(accentColor: item.accentTheme.cursorColor)
-                .frame(width: 25, height: 33)
+                .frame(width: 20, height: 26)
                 .rotationEffect(.degrees(2))
                 .shadow(
                     color: shouldShowAccentGlow ? item.accentTheme.cursorColor.opacity(0.82) : .clear,
@@ -1993,12 +2178,12 @@ private struct ClickyAgentDockItemView: View {
                     x: 0,
                     y: 0
                 )
-                .frame(width: 52, height: 52)
+                .frame(width: 44, height: 44)
 
             statusIndicator
                 .offset(x: -2, y: 2)
         }
-        .frame(width: 92, height: 92, alignment: .center)
+        .frame(width: 78, height: 78, alignment: .center)
         .help(item.title)
         .onAppear {
             lastObservedStatus = item.status
@@ -2027,7 +2212,7 @@ private struct ClickyAgentDockItemView: View {
         if shouldShowAccentGlow {
             Circle()
                 .stroke(item.accentTheme.cursorColor.opacity(isCompletionFlashVisible ? 0.92 : 0), lineWidth: 2)
-                .frame(width: 62, height: 62)
+                .frame(width: 53, height: 53)
                 .scaleEffect(isCompletionFlashVisible ? 1.18 : 0.88)
                 .opacity(isCompletionFlashVisible ? 0.95 : 0)
                 .shadow(
@@ -2372,7 +2557,7 @@ final class ClickyAgentDockWindowManager {
     // gives glows, status rings, and top-parked icons room to overdraw instead
     // of being clipped by the NSPanel/content-view bounds.
     private let dockVerticalScreenInset: CGFloat = 16
-    private let dockAvatarTopOverdrawPadding: CGFloat = 64
+    private let dockAvatarTopOverdrawPadding: CGFloat = 54
     private let dockAvatarBottomOverdrawPadding: CGFloat = 8
     private var dockVerticalPadding: CGFloat {
         dockAvatarTopOverdrawPadding + dockAvatarBottomOverdrawPadding
@@ -2382,13 +2567,13 @@ final class ClickyAgentDockWindowManager {
     // Track the icon container size used by `ClickyAgentDockItemView`. Used
     // by `textFollowUpOrigin()` to position follow-up popovers relative to
     // the icon's actual width.
-    private let dockIconWidth: CGFloat = 92
+    private let dockIconWidth: CGFloat = 78
     // Trailing inset between the dock icon and the panel's right edge.
     // Reduced together with the SwiftUI inner paddings so the icon sits
     // closer to the screen corner.
-    private let dockTrailingInset: CGFloat = 4
+    private let dockTrailingInset: CGFloat = 0
     private let dockItemSpacing: CGFloat = 22
-    private let dockRowSpacing: CGFloat = 14
+    private let dockRowSpacing: CGFloat = 12
 
     func show(
         companionManager: CompanionManager,
@@ -2555,8 +2740,8 @@ final class ClickyAgentDockWindowManager {
         // UX tweak (2026-05-01): move the default top-right parked dock
         // closer into the corner by nudging it up/right.
         if position == .topRight {
-            origin.x += 70
-            origin.y += 70
+            origin.x += 82
+            origin.y += 82
         }
         origin = clampedDockOrigin(origin, size: size, on: screen)
         let targetFrame = NSRect(origin: origin, size: size)

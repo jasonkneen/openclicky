@@ -170,7 +170,7 @@ extension OpenClickyVisualGuidanceOverlay {
         rect: CGRect,
         accentHex: String? = nil,
         lineWidth: Double = 4,
-        fillOpacity: Double = 0.14,
+        fillOpacity: Double = 0.05,
         caption: String? = nil,
         duration: TimeInterval = 4
     ) -> OpenClickyVisualGuidanceOverlay {
