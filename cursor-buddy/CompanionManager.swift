@@ -147,12 +147,37 @@ private struct OpenClickyCompositeAppSearchActionRequest {
     let instruction: String
 }
 
-private enum OpenClickySpotifyPlaybackControlAction: String {
-    case play
-    case pause
-    case playPause
-    case next
-    case previous
+private struct OpenClickySpotifyPlaybackControlAction {
+    enum Kind: String {
+        case play
+        case pause
+        case playPause
+        case next
+        case previous
+        case shuffleOn
+        case shuffleOff
+        case repeatOn
+        case repeatOff
+        case volumeUp
+        case volumeDown
+        case volumeMute
+        case volumeSet
+    }
+
+    let kind: Kind
+    let volumePercent: Int?
+
+    var rawValue: String {
+        if kind == .volumeSet, let volumePercent {
+            return "\(kind.rawValue):\(volumePercent)"
+        }
+        return kind.rawValue
+    }
+
+    init(_ kind: Kind, volumePercent: Int? = nil) {
+        self.kind = kind
+        self.volumePercent = volumePercent
+    }
 }
 
 private enum OpenClickyComputerUsePointingResolver: String {
@@ -5342,12 +5367,12 @@ final class CompanionManager: ObservableObject {
     ) {
         interruptCurrentVoiceResponse()
         let timing = activeRequestTiming
-        let route = "native_cua.spotify_playback_control"
+        let route = "\(backend.executorID).spotify_playback_control"
         let executionStartedAt = markRequestExecutionStarted(
             route: route,
             timing: timing,
             extra: [
-                "executor": "native_cua",
+                "executor": backend.executorID,
                 "selectedComputerUseBackend": backend.rawValue,
                 "executionMethod": "OpenClickyLocalAutomationRunner.runAppleScript",
                 "controller": "/usr/bin/osascript",
@@ -5358,7 +5383,7 @@ final class CompanionManager: ObservableObject {
 
         let appleScriptCommand: String
         let acknowledgement: String
-        switch action {
+        switch action.kind {
         case .play:
             appleScriptCommand = "play"
             acknowledgement = "playing Spotify."
@@ -5374,6 +5399,45 @@ final class CompanionManager: ObservableObject {
         case .previous:
             appleScriptCommand = "previous track"
             acknowledgement = "went back in Spotify."
+        case .shuffleOn:
+            appleScriptCommand = "set shuffling to true"
+            acknowledgement = "turned shuffle on in Spotify."
+        case .shuffleOff:
+            appleScriptCommand = "set shuffling to false"
+            acknowledgement = "turned shuffle off in Spotify."
+        case .repeatOn:
+            appleScriptCommand = "set repeating to true"
+            acknowledgement = "turned repeat on in Spotify."
+        case .repeatOff:
+            appleScriptCommand = "set repeating to false"
+            acknowledgement = "turned repeat off in Spotify."
+        case .volumeUp:
+            appleScriptCommand = """
+            set currentVolume to sound volume
+            if currentVolume > 90 then
+                set sound volume to 100
+            else
+                set sound volume to currentVolume + 10
+            end if
+            """
+            acknowledgement = "turned Spotify volume up."
+        case .volumeDown:
+            appleScriptCommand = """
+            set currentVolume to sound volume
+            if currentVolume < 10 then
+                set sound volume to 0
+            else
+                set sound volume to currentVolume - 10
+            end if
+            """
+            acknowledgement = "turned Spotify volume down."
+        case .volumeMute:
+            appleScriptCommand = "set sound volume to 0"
+            acknowledgement = "muted Spotify."
+        case .volumeSet:
+            let volumePercent = min(100, max(0, action.volumePercent ?? 50))
+            appleScriptCommand = "set sound volume to \(volumePercent)"
+            acknowledgement = "set Spotify volume to \(volumePercent) percent."
         }
 
         let script = """
@@ -5399,9 +5463,10 @@ final class CompanionManager: ObservableObject {
                 OpenClickyMessageLogStore.shared.append(
                     lane: "computer-use",
                     direction: "outgoing",
-                    event: "native_cua.spotify_playback_control",
+                    event: "\(backend.executorID).spotify_playback_control",
                     fields: [
-                        "executor": "native_cua",
+                        "executor": backend.executorID,
+                        "selectedComputerUseBackend": backend.rawValue,
                         "executionMethod": "OpenClickyLocalAutomationRunner.runAppleScript",
                         "controller": "/usr/bin/osascript",
                         "appName": request.appName,
@@ -5414,7 +5479,8 @@ final class CompanionManager: ObservableObject {
                     executionStartedAt: executionStartedAt,
                     timing: timing,
                     extra: [
-                        "executor": "native_cua",
+                        "executor": backend.executorID,
+                        "selectedComputerUseBackend": backend.rawValue,
                         "executionMethod": "OpenClickyLocalAutomationRunner.runAppleScript",
                         "controller": "/usr/bin/osascript",
                         "appName": request.appName,
@@ -5427,9 +5493,10 @@ final class CompanionManager: ObservableObject {
                 OpenClickyMessageLogStore.shared.append(
                     lane: "computer-use",
                     direction: "error",
-                    event: "native_cua.spotify_playback_control_error",
+                    event: "\(backend.executorID).spotify_playback_control_error",
                     fields: [
-                        "executor": "native_cua",
+                        "executor": backend.executorID,
+                        "selectedComputerUseBackend": backend.rawValue,
                         "executionMethod": "OpenClickyLocalAutomationRunner.runAppleScript",
                         "controller": "/usr/bin/osascript",
                         "appName": request.appName,
@@ -5443,7 +5510,8 @@ final class CompanionManager: ObservableObject {
                     timing: timing,
                     status: "failed",
                     extra: [
-                        "executor": "native_cua",
+                        "executor": backend.executorID,
+                        "selectedComputerUseBackend": backend.rawValue,
                         "executionMethod": "OpenClickyLocalAutomationRunner.runAppleScript",
                         "controller": "/usr/bin/osascript",
                         "appName": request.appName,
@@ -9904,26 +9972,62 @@ final class CompanionManager: ObservableObject {
     private static func spotifyPlaybackControlAction(from actionText: String) -> OpenClickySpotifyPlaybackControlAction? {
         var normalized = normalizedSpokenCommandText(cleanedCompositeAppActionText(actionText))
         normalized = normalized.replacingOccurrences(
-            of: #"\s+(?:in|on)\s+spotify$"#,
+            of: #"\s+(?:(?:in|on)\s+)?spotify$"#,
             with: "",
             options: .regularExpression
         )
+        if let volumePercent = spotifyVolumePercent(fromNormalizedControlText: normalized) {
+            return OpenClickySpotifyPlaybackControlAction(.volumeSet, volumePercent: volumePercent)
+        }
         switch normalized {
         case "play", "resume", "start playing", "keep playing",
              "play music", "play some music", "play something", "play anything",
              "put on music", "put some music on", "put anything on":
-            return .play
+            return OpenClickySpotifyPlaybackControlAction(.play)
         case "pause", "stop", "stop playing":
-            return .pause
+            return OpenClickySpotifyPlaybackControlAction(.pause)
         case "play pause", "playpause", "toggle playback":
-            return .playPause
+            return OpenClickySpotifyPlaybackControlAction(.playPause)
         case "skip", "next", "next song", "next track":
-            return .next
-        case "back", "previous", "previous song", "previous track", "last song", "last track":
-            return .previous
+            return OpenClickySpotifyPlaybackControlAction(.next)
+        case "back", "go back", "previous", "previous song", "previous track", "last song", "last track":
+            return OpenClickySpotifyPlaybackControlAction(.previous)
+        case "shuffle", "shuffle on", "turn shuffle on", "enable shuffle", "shuffle music":
+            return OpenClickySpotifyPlaybackControlAction(.shuffleOn)
+        case "shuffle off", "turn shuffle off", "disable shuffle":
+            return OpenClickySpotifyPlaybackControlAction(.shuffleOff)
+        case "repeat", "repeat on", "repeat track", "repeat song", "repeat one", "turn repeat on", "enable repeat", "loop", "loop on":
+            return OpenClickySpotifyPlaybackControlAction(.repeatOn)
+        case "repeat off", "turn repeat off", "disable repeat", "loop off":
+            return OpenClickySpotifyPlaybackControlAction(.repeatOff)
+        case "volume up", "spotify volume up", "turn volume up", "turn spotify volume up", "increase volume", "increase spotify volume", "raise volume", "raise spotify volume", "turn it up", "louder", "make it louder":
+            return OpenClickySpotifyPlaybackControlAction(.volumeUp)
+        case "volume down", "spotify volume down", "turn volume down", "turn spotify volume down", "decrease volume", "decrease spotify volume", "lower volume", "lower spotify volume", "turn it down", "quieter", "make it quieter":
+            return OpenClickySpotifyPlaybackControlAction(.volumeDown)
+        case "mute", "mute volume", "mute spotify":
+            return OpenClickySpotifyPlaybackControlAction(.volumeMute)
         default:
             return nil
         }
+    }
+
+    private static func spotifyVolumePercent(fromNormalizedControlText normalized: String) -> Int? {
+        let patterns = [
+            #"^(?:set\s+)?(?:spotify\s+)?volume\s+(?:to\s+)?(\d{1,3})(?:\s*percent)?$"#,
+            #"^(?:turn\s+)?(?:spotify\s+)?volume\s+(?:to\s+)?(\d{1,3})(?:\s*percent)?$"#,
+            #"^(?:set\s+)?(?:spotify\s+)?sound\s+volume\s+(?:to\s+)?(\d{1,3})(?:\s*percent)?$"#
+        ]
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(normalized.startIndex..<normalized.endIndex, in: normalized)
+            guard let match = regex.firstMatch(in: normalized, range: range),
+                  let percentRange = Range(match.range(at: 1), in: normalized),
+                  let value = Int(normalized[percentRange]) else {
+                continue
+            }
+            return min(100, max(0, value))
+        }
+        return nil
     }
 
     private static func spotifySearchURL(for query: String) -> URL? {

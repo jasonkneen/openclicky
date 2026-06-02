@@ -150,6 +150,19 @@ struct OpenClickyComputerUseTests {
         #expect(CompanionManager.testStandaloneSpotifyPlaybackQuery(from: "play anything in Spotify") == nil)
         #expect(CompanionManager.testSpotifyPlaybackControlAction(from: "play anything in Spotify") == "play")
         #expect(CompanionManager.testSpotifyPlaybackControlAction(from: "play music") == "play")
+        #expect(CompanionManager.testSpotifyPlaybackControlAction(from: "pause Spotify") == "pause")
+        #expect(CompanionManager.testSpotifyPlaybackControlAction(from: "skip in Spotify") == "next")
+        #expect(CompanionManager.testSpotifyPlaybackControlAction(from: "go back in Spotify") == "previous")
+        #expect(CompanionManager.testSpotifyPlaybackControlAction(from: "turn shuffle on in Spotify") == "shuffleOn")
+        #expect(CompanionManager.testSpotifyPlaybackControlAction(from: "turn shuffle off in Spotify") == "shuffleOff")
+        #expect(CompanionManager.testSpotifyPlaybackControlAction(from: "turn repeat on in Spotify") == "repeatOn")
+        #expect(CompanionManager.testSpotifyPlaybackControlAction(from: "turn repeat off in Spotify") == "repeatOff")
+        #expect(CompanionManager.testSpotifyPlaybackControlAction(from: "turn Spotify volume up") == "volumeUp")
+        #expect(CompanionManager.testSpotifyPlaybackControlAction(from: "turn Spotify volume down") == "volumeDown")
+        #expect(CompanionManager.testSpotifyPlaybackControlAction(from: "increase Spotify volume") == "volumeUp")
+        #expect(CompanionManager.testSpotifyPlaybackControlAction(from: "lower Spotify volume") == "volumeDown")
+        #expect(CompanionManager.testSpotifyPlaybackControlAction(from: "set Spotify volume to 35 percent") == "volumeSet:35")
+        #expect(CompanionManager.testSpotifyPlaybackControlAction(from: "set Spotify volume to 150") == "volumeSet:100")
     }
 
     @Test func spotifySearchPlayRouteStaysOnComputerUseExecution() throws {
