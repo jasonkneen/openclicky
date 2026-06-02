@@ -2,7 +2,7 @@
 
 OpenClicky Agent Mode can optionally use [Nodex](https://github.com/skysmith/nodex) for hands-free yes/no confirmations through AirPods head gestures.
 
-This integration is intentionally lightweight: OpenClicky does not vendor Nodex or take on its hardware-permission surface. Instead, Agent Mode receives a bundled `nodex-head-gestures` skill that can call a locally installed `nodex-motion` or `nodex` command when the user asks to answer by nodding or shaking their head.
+This integration is intentionally lightweight: OpenClicky does not vendor Nodex or take on its hardware-permission surface. Instead, Agent Mode receives a bundled `nodex-head-gestures` skill that calls a locally installed `nodex-motion` command for head gestures, with optional fallback to `nodex` for keyboard yes/no prompts.
 
 ## Setup
 
