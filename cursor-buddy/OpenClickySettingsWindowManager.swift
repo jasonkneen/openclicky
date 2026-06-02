@@ -1156,6 +1156,11 @@ struct OpenClickySettingsView: View {
                     isGranted: companionManager.hasSystemEventsAutomationPermission,
                     settingsURL: OpenClickyMacPrivacyPermissionProbe.automationSettingsURL
                 )
+                valueRow(
+                    title: "System volume commands",
+                    subtitle: "Ready through CoreAudio; no Accessibility or System Events approval needed.",
+                    systemImageName: "speaker.wave.2"
+                )
             }
 
             settingsGroup("Desktop notifications") {

@@ -180,6 +180,30 @@ private struct OpenClickySpotifyPlaybackControlAction {
     }
 }
 
+private struct OpenClickySystemVolumeControlAction {
+    enum Kind: String {
+        case volumeUp
+        case volumeDown
+        case mute
+        case setVolume
+    }
+
+    let kind: Kind
+    let volumePercent: Int?
+
+    var rawValue: String {
+        if kind == .setVolume, let volumePercent {
+            return "\(kind.rawValue):\(volumePercent)"
+        }
+        return kind.rawValue
+    }
+
+    init(_ kind: Kind, volumePercent: Int? = nil) {
+        self.kind = kind
+        self.volumePercent = volumePercent
+    }
+}
+
 private enum OpenClickyComputerUsePointingResolver: String {
     case openAIRealtime = "openai_realtime"
     case anthropicAPI = "anthropic_api"
@@ -4821,6 +4845,27 @@ final class CompanionManager: ObservableObject {
             }
         }
 
+        if let systemVolumeAction = Self.systemVolumeControlAction(from: transcript) {
+            OpenClickyMessageLogStore.shared.append(
+                lane: "computer-use",
+                direction: "incoming",
+                event: "native_cua.direct_request.system_volume_detected",
+                fields: [
+                    "source": source,
+                    "transcript": transcript,
+                    "executor": "native_cua",
+                    "route": "native_cua.system_volume",
+                    "executionMethod": "CoreAudio default output volume",
+                    "action": systemVolumeAction.rawValue,
+                    "requiresAccessibility": false,
+                    "requiresSystemEventsAutomation": false,
+                    "requestID": activeRequestTiming?.requestID ?? "none"
+                ]
+            )
+            runSystemVolumeControl(systemVolumeAction, instruction: transcript)
+            return true
+        }
+
         if let appOpenRequest = Self.localAppOpenRequest(from: transcript) {
             let fingerprint = Self.directComputerUseFingerprint(kind: "app", value: appOpenRequest.appName)
             OpenClickyMessageLogStore.shared.append(
@@ -5135,13 +5180,13 @@ final class CompanionManager: ObservableObject {
         _ request: OpenClickyCompositeAppActionRequest,
         backend: OpenClickyComputerUseBackendID
     ) -> Bool {
-        if let query = Self.spotifyPlaybackQuery(from: request.actionText) {
-            openSpotifySearchAndPlayTopResult(query: query, request: request, backend: backend)
+        if let controlAction = Self.spotifyPlaybackControlAction(from: request.actionText) {
+            runSpotifyPlaybackControl(controlAction, request: request, backend: backend)
             return true
         }
 
-        if let controlAction = Self.spotifyPlaybackControlAction(from: request.actionText) {
-            runSpotifyPlaybackControl(controlAction, request: request, backend: backend)
+        if let query = Self.spotifyPlaybackQuery(from: request.actionText) {
+            openSpotifySearchAndPlayTopResult(query: query, request: request, backend: backend)
             return true
         }
 
@@ -5357,6 +5402,108 @@ final class CompanionManager: ObservableObject {
                     ]
                 )
             }
+        }
+    }
+
+    private func runSystemVolumeControl(_ action: OpenClickySystemVolumeControlAction, instruction: String) {
+        interruptCurrentVoiceResponse()
+        let timing = activeRequestTiming
+        let route = "native_cua.system_volume"
+        let executionStartedAt = markRequestExecutionStarted(
+            route: route,
+            timing: timing,
+            extra: [
+                "executor": "native_cua",
+                "executionMethod": "CoreAudio default output volume",
+                "controller": "OpenClickySystemOutputVolume",
+                "action": action.rawValue,
+                "requiresAccessibility": false,
+                "requiresSystemEventsAutomation": false
+            ]
+        )
+
+        let currentVolume = OpenClickySystemOutputVolume.currentScalar()
+        let targetVolume: Float
+        let acknowledgement: String
+        switch action.kind {
+        case .volumeUp:
+            targetVolume = min((currentVolume ?? 0.5) + 0.1, 1.0)
+            acknowledgement = "turned system volume up."
+        case .volumeDown:
+            targetVolume = max((currentVolume ?? 0.5) - 0.1, 0.0)
+            acknowledgement = "turned system volume down."
+        case .mute:
+            targetVolume = 0
+            acknowledgement = "muted system volume."
+        case .setVolume:
+            let percent = min(100, max(0, action.volumePercent ?? 50))
+            targetVolume = Float(percent) / 100
+            acknowledgement = "set system volume to \(percent) percent."
+        }
+
+        let didApply = OpenClickySystemOutputVolume.setScalar(targetVolume)
+        if didApply {
+            latestVoiceResponseCard = ClickyResponseCard(
+                source: .voice,
+                rawText: acknowledgement,
+                contextTitle: instruction
+            )
+            speakShortSystemResponse(acknowledgement)
+            OpenClickyMessageLogStore.shared.append(
+                lane: "computer-use",
+                direction: "outgoing",
+                event: "native_cua.system_volume",
+                fields: [
+                    "executor": "native_cua",
+                    "executionMethod": "CoreAudio default output volume",
+                    "controller": "OpenClickySystemOutputVolume",
+                    "action": action.rawValue,
+                    "previousVolume": currentVolume.map { Double($0) } ?? -1,
+                    "targetVolume": Double(targetVolume),
+                    "requiresAccessibility": false,
+                    "requiresSystemEventsAutomation": false
+                ]
+            )
+            markRequestCompleted(
+                route: route,
+                executionStartedAt: executionStartedAt,
+                timing: timing,
+                extra: [
+                    "executor": "native_cua",
+                    "executionMethod": "CoreAudio default output volume",
+                    "action": action.rawValue,
+                    "targetVolume": Double(targetVolume)
+                ]
+            )
+        } else {
+            let errorText = "default output volume is unavailable or not settable for the current audio device"
+            speakShortSystemResponse("System volume hit a blocker: \(errorText).")
+            OpenClickyMessageLogStore.shared.append(
+                lane: "computer-use",
+                direction: "error",
+                event: "native_cua.system_volume_error",
+                fields: [
+                    "executor": "native_cua",
+                    "executionMethod": "CoreAudio default output volume",
+                    "controller": "OpenClickySystemOutputVolume",
+                    "action": action.rawValue,
+                    "error": errorText,
+                    "requiresAccessibility": false,
+                    "requiresSystemEventsAutomation": false
+                ]
+            )
+            markRequestCompleted(
+                route: route,
+                executionStartedAt: executionStartedAt,
+                timing: timing,
+                status: "failed",
+                extra: [
+                    "executor": "native_cua",
+                    "executionMethod": "CoreAudio default output volume",
+                    "action": action.rawValue,
+                    "error": errorText
+                ]
+            )
         }
     }
 
@@ -8413,6 +8560,11 @@ final class CompanionManager: ObservableObject {
                 return true
             }
 
+            if let systemVolumeAction = Self.systemVolumeControlAction(from: taskCreationInstruction) {
+                runSystemVolumeControl(systemVolumeAction, instruction: taskCreationInstruction)
+                return true
+            }
+
             if let folderRequest = folderOpenRequest(from: taskCreationInstruction),
                Self.shouldInlineDirectFolderOpenFromAgentInstruction(taskCreationInstruction) {
                 openRequestedFolder(folderRequest)
@@ -8486,6 +8638,11 @@ final class CompanionManager: ObservableObject {
 
         if let clickRequest = Self.nativeClickRequest(from: instruction) {
             clickUsingNativeComputerUse(clickRequest)
+            return true
+        }
+
+        if let systemVolumeAction = Self.systemVolumeControlAction(from: instruction) {
+            runSystemVolumeControl(systemVolumeAction, instruction: instruction)
             return true
         }
 
@@ -9911,7 +10068,7 @@ final class CompanionManager: ObservableObject {
             let query = cleanedCompositeActionPayload(String(candidate[queryRange]))
             let normalized = normalizedSpokenCommandText(query)
             guard !query.isEmpty,
-                  !["something", "music", "a song", "the song", "anything"].contains(normalized) else {
+                  !["something", "music", "a song", "the song", "anything", "spotify"].contains(normalized) else {
                 continue
             }
             return query
@@ -9929,8 +10086,8 @@ final class CompanionManager: ObservableObject {
         }
 
         let actionText = cleanedCompositeAppActionText(candidate)
-        if let query = spotifyPlaybackQuery(from: actionText),
-           !isAmbiguousStandaloneSpotifyPlaybackQuery(query) {
+        if let controlAction = spotifyPlaybackControlAction(from: actionText),
+           !spotifyPlaybackControlRequiresExplicitSpotifyContext(controlAction) || hasSpotifyContext(candidate) {
             return OpenClickyCompositeAppActionRequest(
                 appName: "Spotify",
                 actionText: actionText,
@@ -9938,7 +10095,8 @@ final class CompanionManager: ObservableObject {
             )
         }
 
-        if spotifyPlaybackControlAction(from: actionText) != nil {
+        if let query = spotifyPlaybackQuery(from: actionText),
+           !isAmbiguousStandaloneSpotifyPlaybackQuery(query) {
             return OpenClickyCompositeAppActionRequest(
                 appName: "Spotify",
                 actionText: actionText,
@@ -9967,6 +10125,72 @@ final class CompanionManager: ObservableObject {
             "youtube video"
         ]
         return ambiguousTargets.contains(normalized)
+    }
+
+    private static func systemVolumeControlAction(from transcript: String) -> OpenClickySystemVolumeControlAction? {
+        let candidate = normalizedCommandCandidate(from: transcript)
+        guard !candidate.isEmpty,
+              !isExplicitAgentRoutingCandidate(candidate),
+              !hasSpotifyContext(candidate),
+              compositeAppActionRequest(from: candidate) == nil else {
+            return nil
+        }
+
+        let normalized = normalizedSpokenCommandText(cleanedCompositeAppActionText(candidate))
+        if let volumePercent = systemVolumePercent(fromNormalizedControlText: normalized) {
+            return OpenClickySystemVolumeControlAction(.setVolume, volumePercent: volumePercent)
+        }
+
+        switch normalized {
+        case "volume up", "system volume up", "turn volume up", "turn system volume up",
+             "increase volume", "increase system volume", "raise volume", "raise system volume",
+             "turn it up", "louder", "make it louder":
+            return OpenClickySystemVolumeControlAction(.volumeUp)
+        case "volume down", "system volume down", "turn volume down", "turn system volume down",
+             "decrease volume", "decrease system volume", "lower volume", "lower system volume",
+             "turn it down", "quieter", "make it quieter":
+            return OpenClickySystemVolumeControlAction(.volumeDown)
+        case "mute", "mute volume", "mute system volume", "mute the volume", "mute the system volume",
+             "turn mute on", "turn system mute on":
+            return OpenClickySystemVolumeControlAction(.mute)
+        default:
+            return nil
+        }
+    }
+
+    private static func systemVolumePercent(fromNormalizedControlText normalized: String) -> Int? {
+        let patterns = [
+            #"^(?:set\s+)?(?:system\s+)?volume\s+(?:to\s+)?(\d{1,3})(?:\s*percent)?$"#,
+            #"^(?:turn\s+)?(?:system\s+)?volume\s+(?:to\s+)?(\d{1,3})(?:\s*percent)?$"#,
+            #"^(?:set\s+)?(?:system\s+)?sound\s+volume\s+(?:to\s+)?(\d{1,3})(?:\s*percent)?$"#
+        ]
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(normalized.startIndex..<normalized.endIndex, in: normalized)
+            guard let match = regex.firstMatch(in: normalized, range: range),
+                  let percentRange = Range(match.range(at: 1), in: normalized),
+                  let value = Int(normalized[percentRange]) else {
+                continue
+            }
+            return min(100, max(0, value))
+        }
+        return nil
+    }
+
+    private static func spotifyPlaybackControlRequiresExplicitSpotifyContext(_ action: OpenClickySpotifyPlaybackControlAction) -> Bool {
+        switch action.kind {
+        case .volumeUp, .volumeDown, .volumeMute, .volumeSet:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func hasSpotifyContext(_ transcript: String) -> Bool {
+        normalizedSpokenCommandText(transcript).range(
+            of: #"\bspotify\b"#,
+            options: .regularExpression
+        ) != nil
     }
 
     private static func spotifyPlaybackControlAction(from actionText: String) -> OpenClickySpotifyPlaybackControlAction? {
@@ -16932,6 +17156,10 @@ extension CompanionManager {
         guard let request = standaloneSpotifyPlaybackRequest(from: transcript),
               request.appName == "Spotify" else { return nil }
         return spotifyPlaybackControlAction(from: request.actionText)?.rawValue
+    }
+
+    static func testSystemVolumeControlAction(from transcript: String) -> String? {
+        systemVolumeControlAction(from: transcript)?.rawValue
     }
 
     static func testSpotifySearchPlayExecutionMethods(

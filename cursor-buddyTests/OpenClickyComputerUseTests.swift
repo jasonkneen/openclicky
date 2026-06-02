@@ -147,7 +147,9 @@ struct OpenClickyComputerUseTests {
         #expect(CompanionManager.testSpotifyPlaybackQuery(from: "Spotify and play Back in Black.") == "Back in Black")
         #expect(CompanionManager.testStandaloneSpotifyPlaybackQuery(from: "Can you play Back in Black?") == "Back in Black")
         #expect(CompanionManager.testStandaloneSpotifyPlaybackQuery(from: "play the video") == nil)
+        #expect(CompanionManager.testStandaloneSpotifyPlaybackQuery(from: "Can you play Spotify?") == nil)
         #expect(CompanionManager.testStandaloneSpotifyPlaybackQuery(from: "play anything in Spotify") == nil)
+        #expect(CompanionManager.testSpotifyPlaybackControlAction(from: "Can you play Spotify?") == "play")
         #expect(CompanionManager.testSpotifyPlaybackControlAction(from: "play anything in Spotify") == "play")
         #expect(CompanionManager.testSpotifyPlaybackControlAction(from: "play music") == "play")
         #expect(CompanionManager.testSpotifyPlaybackControlAction(from: "pause Spotify") == "pause")
@@ -163,6 +165,19 @@ struct OpenClickyComputerUseTests {
         #expect(CompanionManager.testSpotifyPlaybackControlAction(from: "lower Spotify volume") == "volumeDown")
         #expect(CompanionManager.testSpotifyPlaybackControlAction(from: "set Spotify volume to 35 percent") == "volumeSet:35")
         #expect(CompanionManager.testSpotifyPlaybackControlAction(from: "set Spotify volume to 150") == "volumeSet:100")
+        #expect(CompanionManager.testSpotifyPlaybackControlAction(from: "turn volume up") == nil)
+        #expect(CompanionManager.testSpotifyPlaybackControlAction(from: "mute volume") == nil)
+    }
+
+    @Test func standaloneSystemVolumeCommandsUseSystemAudioRoute() throws {
+        #expect(CompanionManager.testSystemVolumeControlAction(from: "turn volume up") == "volumeUp")
+        #expect(CompanionManager.testSystemVolumeControlAction(from: "turn volume down") == "volumeDown")
+        #expect(CompanionManager.testSystemVolumeControlAction(from: "mute") == "mute")
+        #expect(CompanionManager.testSystemVolumeControlAction(from: "mute volume") == "mute")
+        #expect(CompanionManager.testSystemVolumeControlAction(from: "set volume to 35 percent") == "setVolume:35")
+        #expect(CompanionManager.testSystemVolumeControlAction(from: "set volume to 150") == "setVolume:100")
+        #expect(CompanionManager.testSystemVolumeControlAction(from: "turn Spotify volume up") == nil)
+        #expect(CompanionManager.testSystemVolumeControlAction(from: "open Spotify and turn volume up") == nil)
     }
 
     @Test func spotifySearchPlayRouteStaysOnComputerUseExecution() throws {
