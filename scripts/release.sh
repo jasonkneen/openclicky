@@ -13,16 +13,16 @@
 #        security find-identity -v -p codesigning | grep 'Developer ID'
 #   2) Create an app-specific password at https://appleid.apple.com -- sign in
 #      with the Apple ID associated with your developer account (for this
-#      project: jason.knen@bouncingfish.com), then under
+#      project: jason.kneen@bouncingfish.com), then under
 #      Sign-In and Security -> App-Specific Passwords, generate one labeled
 #      e.g. "OpenClicky Notary".
 #   3) Store the notary credentials in a keychain profile (one time):
 #        xcrun notarytool store-credentials \
-#          --apple-id "jason.knen@bouncingfish.com" \
+#          --apple-id "jason.kneen@bouncingfish.com" \
 #          --team-id "SW75ZJJ5R6" \
 #          --password "abcd-efgh-ijkl-mnop" \
-#          OpenClickyNotary
-#      The profile name "OpenClickyNotary" is what NOTARY_PROFILE below
+#          OpenClicky
+#      The profile name "OpenClicky" is what NOTARY_PROFILE below
 #      points at; change both if you prefer a different name.
 #   4) If you keep modifying .mcp.json locally and don't want it staged each
 #      time, run once: git update-index --skip-worktree .mcp.json
@@ -46,7 +46,7 @@ APP_NAME="OpenClicky"
 BUNDLE_ID="com.jkneen.openclicky"
 TEAM_ID="SW75ZJJ5R6"
 SIGNING_IDENTITY="Developer ID Application: Jason Kneen (${TEAM_ID})"
-NOTARY_PROFILE="OpenClickyNotary"
+NOTARY_PROFILE="OpenClicky"
 EXPORT_OPTIONS="scripts/ExportOptions.plist"
 
 BUILD_DIR="build"

@@ -489,7 +489,7 @@ struct BlueCursorView: View {
     let companionManager: CompanionManager
     @ObservedObject var cursorState: CursorOverlayState
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
-    @AppStorage(ClickyAccentTheme.userDefaultsKey) private var selectedAccentThemeID = ClickyAccentTheme.blue.rawValue
+    @AppStorage(ClickyAccentTheme.userDefaultsKey) private var selectedAccentThemeID = ClickyAccentTheme.mint.rawValue
     @AppStorage(ClickyCursorAvatarSizePreference.userDefaultsKey) private var cursorAvatarSizeScale = ClickyCursorAvatarSizePreference.defaultScale
     @AppStorage(AppBundleConfiguration.userVoiceResponseCaptionFontDefaultsKey) private var voiceResponseCaptionFontRawValue = OpenClickyResponseCaptionFont.fallback.rawValue
     @AppStorage(AppBundleConfiguration.userVoiceResponseCaptionOpacityDefaultsKey) private var voiceResponseCaptionOpacity = AppBundleConfiguration.defaultVoiceResponseCaptionOpacity
@@ -632,7 +632,7 @@ struct BlueCursorView: View {
 
     private let fullWelcomeMessage = "hey! i'm clicky"
     private var overlayCursorColor: Color {
-        (ClickyAccentTheme(rawValue: selectedAccentThemeID) ?? .blue).cursorColor
+        (ClickyAccentTheme(rawValue: selectedAccentThemeID) ?? .mint).cursorColor
     }
 
     private var captionBubbleBackgroundColor: Color { .white }

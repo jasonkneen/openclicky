@@ -45,6 +45,10 @@ private struct OpenClickyPendingVisualGuidanceCalibrationAnchor {
     let caption: String
     let predictedRect: CGRect
     let screenFrame: CGRect
+    let screenshotWidthInPixels: Int?
+    let screenshotHeightInPixels: Int?
+    let displayNativeWidthInPixels: Int?
+    let displayNativeHeightInPixels: Int?
     let createdAt: Date
 }
 
@@ -1049,6 +1053,30 @@ final class CompanionManager: ObservableObject {
                 "archiveSummaryLength": compactedVoiceConversationArchive?.count ?? 0,
                 "userTranscriptLength": trimmedUserTranscript.count,
                 "assistantResponseLength": trimmedAssistantResponse.count
+            ]
+        )
+    }
+
+    private func rememberSilentAgentHandoff(userTranscript: String, instruction: String, reason: String) {
+        let trimmedUserTranscript = userTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedInstruction = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedUserTranscript.isEmpty, !trimmedInstruction.isEmpty else { return }
+
+        let contextResponse = Self.agentHandoffVoiceContextResponse(instruction: trimmedInstruction)
+        conversationHistory.append((
+            userTranscript: trimmedUserTranscript,
+            assistantResponse: contextResponse
+        ))
+        compactVoiceConversationHistoryIfNeeded(reason: reason)
+        OpenClickyMessageLogStore.shared.append(
+            lane: "voice",
+            direction: "internal",
+            event: "voice.agent_handoff_context_preserved",
+            fields: [
+                "reason": reason,
+                "historyCount": conversationHistory.count,
+                "archiveSummaryLength": compactedVoiceConversationArchive?.count ?? 0,
+                "instructionPreview": Self.voiceArchiveSnippet(trimmedInstruction, limit: 180)
             ]
         )
     }
@@ -2442,7 +2470,10 @@ final class CompanionManager: ObservableObject {
         cursorOverlayState.externalSecondaryCursors.removeAll { $0.id == id }
     }
 
-    private func showVisualGuidanceOverlay(_ overlay: OpenClickyVisualGuidanceOverlay) {
+    private func showVisualGuidanceOverlay(
+        _ overlay: OpenClickyVisualGuidanceOverlay,
+        sourceCapture: CompanionScreenCapture? = nil
+    ) {
         let desktopBounds = NSScreen.screens.reduce(CGRect.null) { partial, screen in
             partial.union(screen.frame)
         }
@@ -2452,9 +2483,11 @@ final class CompanionManager: ObservableObject {
         } else {
             clampedOverlay.duration = max(clampedOverlay.duration, 20)
         }
-        if let calibrationAnchor = Self.pendingCalibrationAnchor(from: clampedOverlay) {
+        if let calibrationAnchor = Self.pendingCalibrationAnchor(from: clampedOverlay, sourceCapture: sourceCapture) {
             clampedOverlay.duration = max(clampedOverlay.duration, 120)
+            clampedOverlay.style.accentHex = "#34D399"
             pendingVisualGuidanceCalibrationAnchor = calibrationAnchor
+            sampleAutomaticVisualGuidanceCalibrationAnchor(calibrationAnchor)
         }
         guard clampedOverlay.isRenderable else { return }
         cursorOverlayState.visualGuidanceOverlays.removeAll { $0.id == clampedOverlay.id }
@@ -2478,7 +2511,8 @@ final class CompanionManager: ObservableObject {
     }
 
     private static func pendingCalibrationAnchor(
-        from overlay: OpenClickyVisualGuidanceOverlay
+        from overlay: OpenClickyVisualGuidanceOverlay,
+        sourceCapture: CompanionScreenCapture? = nil
     ) -> OpenClickyPendingVisualGuidanceCalibrationAnchor? {
         guard overlay.kind == .rectangle,
               isVisualGuidanceCalibrationCaption(overlay.style.caption),
@@ -2495,8 +2529,139 @@ final class CompanionManager: ObservableObject {
             caption: overlay.style.caption ?? "calibration anchor",
             predictedRect: rect,
             screenFrame: screenFrame,
+            screenshotWidthInPixels: sourceCapture?.screenshotWidthInPixels,
+            screenshotHeightInPixels: sourceCapture?.screenshotHeightInPixels,
+            displayNativeWidthInPixels: sourceCapture?.displayNativeWidthInPixels,
+            displayNativeHeightInPixels: sourceCapture?.displayNativeHeightInPixels,
             createdAt: Date()
         )
+    }
+
+    private func sampleAutomaticVisualGuidanceCalibrationAnchor(_ anchor: OpenClickyPendingVisualGuidanceCalibrationAnchor) {
+        guard let expectedCenter = Self.expectedVisualGuidanceCalibrationCenter(
+            for: anchor.caption,
+            predictedRect: anchor.predictedRect,
+            screenFrame: anchor.screenFrame,
+            screenshotWidthInPixels: anchor.screenshotWidthInPixels,
+            screenshotHeightInPixels: anchor.screenshotHeightInPixels
+        ) else { return }
+
+        let predictedCenter = CGPoint(
+            x: anchor.predictedRect.midX,
+            y: anchor.predictedRect.midY
+        )
+        let delta = CGSize(
+            width: expectedCenter.x - predictedCenter.x,
+            height: expectedCenter.y - predictedCenter.y
+        )
+        guard Self.isPlausibleVisualGuidanceCalibrationDelta(delta, for: anchor.screenFrame) else {
+            let maxDelta = Self.maximumVisualGuidanceCalibrationDelta(for: anchor.screenFrame)
+            OpenClickyMessageLogStore.shared.append(
+                lane: "visual_guidance",
+                direction: "incoming",
+                event: "openclicky.visual_guidance.auto_calibration_rejected",
+                fields: [
+                    "overlayID": anchor.overlayID.uuidString,
+                    "label": anchor.caption,
+                    "reason": "implausible_delta",
+                    "predictedX": Int(predictedCenter.x.rounded()),
+                    "predictedY": Int(predictedCenter.y.rounded()),
+                    "expectedX": Int(expectedCenter.x.rounded()),
+                    "expectedY": Int(expectedCenter.y.rounded()),
+                    "sampleDeltaX": Int(delta.width.rounded()),
+                    "sampleDeltaY": Int(delta.height.rounded()),
+                    "maxDeltaX": Int(maxDelta.width.rounded()),
+                    "maxDeltaY": Int(maxDelta.height.rounded()),
+                    "mapKind": "screenshot_to_display_warp_map"
+                ]
+            )
+            return
+        }
+        let calibration = Self.updatedVisualGuidanceCalibrationOffset(
+            delta: delta,
+            for: anchor.screenFrame
+        )
+
+        OpenClickyMessageLogStore.shared.append(
+            lane: "visual_guidance",
+            direction: "incoming",
+            event: "openclicky.visual_guidance.auto_calibration_sampled",
+            fields: [
+                "overlayID": anchor.overlayID.uuidString,
+                "label": anchor.caption,
+                "screenKey": calibration.screenKey,
+                "predictedX": Int(predictedCenter.x.rounded()),
+                "predictedY": Int(predictedCenter.y.rounded()),
+                "expectedX": Int(expectedCenter.x.rounded()),
+                "expectedY": Int(expectedCenter.y.rounded()),
+                "sampleDeltaX": Int(delta.width.rounded()),
+                "sampleDeltaY": Int(delta.height.rounded()),
+                "offsetX": Int(calibration.offset.width.rounded()),
+                "offsetY": Int(calibration.offset.height.rounded()),
+                "sampleCount": calibration.count,
+                "mapKind": "screenshot_to_display_warp_map",
+                "screenshotWidthInPixels": anchor.screenshotWidthInPixels ?? 0,
+                "screenshotHeightInPixels": anchor.screenshotHeightInPixels ?? 0,
+                "displayWidthInPoints": Int(anchor.screenFrame.width.rounded()),
+                "displayHeightInPoints": Int(anchor.screenFrame.height.rounded()),
+                "displayNativeWidthInPixels": anchor.displayNativeWidthInPixels ?? 0,
+                "displayNativeHeightInPixels": anchor.displayNativeHeightInPixels ?? 0
+            ]
+        )
+    }
+
+    private static func expectedVisualGuidanceCalibrationCenter(
+        for caption: String,
+        predictedRect: CGRect,
+        screenFrame: CGRect,
+        screenshotWidthInPixels: Int? = nil,
+        screenshotHeightInPixels: Int? = nil
+    ) -> CGPoint? {
+        let normalized = caption
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased()
+        // Calibration compares the model's detected anchor in the actual
+        // screenshot it saw (for example 1280x540 after downsampling a
+        // 3840x1620 display) to the expected screen-corner anchor, then
+        // converts that expected pixel back into AppKit display points.
+        let screenshotSize = CGSize(
+            width: CGFloat(screenshotWidthInPixels ?? Int(screenFrame.width.rounded())),
+            height: CGFloat(screenshotHeightInPixels ?? Int(screenFrame.height.rounded()))
+        )
+        let scaleX = screenFrame.width / max(1, screenshotSize.width)
+        let scaleY = screenFrame.height / max(1, screenshotSize.height)
+        let insetPixelX = max(18, min(64, screenshotSize.width * 0.035))
+        let insetPixelY = max(12, min(42, screenshotSize.height * 0.032))
+        let predictedCenter = CGPoint(x: predictedRect.midX, y: predictedRect.midY)
+        let predictedPixelCenter = CGPoint(
+            x: (predictedCenter.x - screenFrame.minX) / max(0.0001, scaleX),
+            y: (screenFrame.maxY - predictedCenter.y) / max(0.0001, scaleY)
+        )
+        let predictedIsTopHalf = predictedPixelCenter.y <= screenshotSize.height / 2
+
+        func displayPoint(fromScreenshotPixel pixel: CGPoint) -> CGPoint {
+            CGPoint(
+                x: screenFrame.minX + (pixel.x * scaleX),
+                y: screenFrame.maxY - (pixel.y * scaleY)
+            )
+        }
+
+        if normalized.contains("time") || normalized.contains("clock") {
+            return displayPoint(fromScreenshotPixel: CGPoint(x: screenshotSize.width - max(52, insetPixelX), y: insetPixelY))
+        }
+        if normalized.contains("trash") || normalized.contains("dustbin") || normalized.contains("bin") {
+            return displayPoint(fromScreenshotPixel: CGPoint(x: screenshotSize.width - insetPixelX, y: screenshotSize.height - insetPixelY))
+        }
+        if normalized.contains("apple") {
+            return displayPoint(fromScreenshotPixel: CGPoint(x: insetPixelX, y: insetPixelY))
+        }
+        if normalized.contains("finder") {
+            if normalized.contains("label") || normalized.contains("menu") || predictedIsTopHalf {
+                return displayPoint(fromScreenshotPixel: CGPoint(x: max(52, insetPixelX), y: insetPixelY))
+            }
+            return displayPoint(fromScreenshotPixel: CGPoint(x: insetPixelX, y: screenshotSize.height - insetPixelY))
+        }
+        return nil
     }
 
     private func handleVisualGuidanceCalibrationCursorSampleIfNeeded(from transcript: String) -> Bool {
@@ -2507,11 +2672,31 @@ final class CompanionManager: ObservableObject {
         let confirmsSample = [
             "mark it", "mark this", "highlight it", "highlight this",
             "lined up", "line up", "anchor it", "save anchor",
-            "got it", "done", "that's it", "thats it"
+            "got it", "done", "that's it", "thats it",
+            "i'm pointing", "im pointing", "pointing at it", "pointing at this",
+            "i am going to point", "can you do the same", "do the same",
+            "this one", "right here", "it's here", "its here", "here"
         ].contains { normalized.contains($0) }
         guard confirmsSample else { return false }
 
         let cursorPoint = NSEvent.mouseLocation
+        guard pendingVisualGuidanceCalibrationAnchor.screenFrame.contains(cursorPoint) else {
+            OpenClickyMessageLogStore.shared.append(
+                lane: "visual_guidance",
+                direction: "incoming",
+                event: "openclicky.visual_guidance.cursor_calibration_rejected",
+                fields: [
+                    "overlayID": pendingVisualGuidanceCalibrationAnchor.overlayID.uuidString,
+                    "label": pendingVisualGuidanceCalibrationAnchor.caption,
+                    "reason": "cursor_on_different_screen",
+                    "cursorX": Int(cursorPoint.x.rounded()),
+                    "cursorY": Int(cursorPoint.y.rounded()),
+                    "screenKey": Self.visualGuidanceCalibrationScreenKey(for: pendingVisualGuidanceCalibrationAnchor.screenFrame)
+                ]
+            )
+            self.pendingVisualGuidanceCalibrationAnchor = nil
+            return true
+        }
         let predictedCenter = CGPoint(
             x: pendingVisualGuidanceCalibrationAnchor.predictedRect.midX,
             y: pendingVisualGuidanceCalibrationAnchor.predictedRect.midY
@@ -2520,6 +2705,30 @@ final class CompanionManager: ObservableObject {
             width: cursorPoint.x - predictedCenter.x,
             height: cursorPoint.y - predictedCenter.y
         )
+        guard Self.isPlausibleVisualGuidanceCalibrationDelta(delta, for: pendingVisualGuidanceCalibrationAnchor.screenFrame) else {
+            let maxDelta = Self.maximumVisualGuidanceCalibrationDelta(for: pendingVisualGuidanceCalibrationAnchor.screenFrame)
+            OpenClickyMessageLogStore.shared.append(
+                lane: "visual_guidance",
+                direction: "incoming",
+                event: "openclicky.visual_guidance.cursor_calibration_rejected",
+                fields: [
+                    "overlayID": pendingVisualGuidanceCalibrationAnchor.overlayID.uuidString,
+                    "label": pendingVisualGuidanceCalibrationAnchor.caption,
+                    "reason": "implausible_delta",
+                    "predictedX": Int(predictedCenter.x.rounded()),
+                    "predictedY": Int(predictedCenter.y.rounded()),
+                    "cursorX": Int(cursorPoint.x.rounded()),
+                    "cursorY": Int(cursorPoint.y.rounded()),
+                    "sampleDeltaX": Int(delta.width.rounded()),
+                    "sampleDeltaY": Int(delta.height.rounded()),
+                    "maxDeltaX": Int(maxDelta.width.rounded()),
+                    "maxDeltaY": Int(maxDelta.height.rounded()),
+                    "screenKey": Self.visualGuidanceCalibrationScreenKey(for: pendingVisualGuidanceCalibrationAnchor.screenFrame)
+                ]
+            )
+            self.pendingVisualGuidanceCalibrationAnchor = nil
+            return true
+        }
         let calibration = Self.updatedVisualGuidanceCalibrationOffset(
             delta: delta,
             for: pendingVisualGuidanceCalibrationAnchor.screenFrame
@@ -4281,6 +4490,24 @@ final class CompanionManager: ObservableObject {
                     if self.routeCompletedRealtimeVoiceTranscriptIfNeeded(transcript) {
                         return true
                     }
+                    if toolName == "openclicky_use_screen_context" {
+                        let instruction = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !instruction.isEmpty else { return false }
+                        OpenClickyMessageLogStore.shared.append(
+                            lane: "voice",
+                            direction: "internal",
+                            event: "voice.realtime_bidirectional.visual_tool_route_recovered",
+                            fields: [
+                                "transcript": instruction,
+                                "toolName": toolName,
+                                "executor": "voice_response",
+                                "route": "voice.response",
+                                "requestID": self.activeRequestTiming?.requestID ?? "none"
+                            ]
+                        )
+                        self.sendTranscriptToClaudeWithScreenshot(transcript: instruction)
+                        return true
+                    }
                     guard toolName == "openclicky_start_background_agent" else {
                         return false
                     }
@@ -4638,6 +4865,12 @@ final class CompanionManager: ObservableObject {
         if handleVisualGuidanceCalibrationCursorSampleIfNeeded(from: transcript) {
             return true
         }
+        // Screen calibration is a voice visual-guidance flow, not Agent Mode.
+        // Keep it in the screenshot-aware voice lane even when the user
+        // phrases a retry as "get an agent to do a screen calibration."
+        if Self.isScreenCalibrationRequest(transcript) {
+            return false
+        }
         if handleAgentSelectionRequestIfNeeded(from: transcript, source: selectionSource) {
             return true
         }
@@ -4934,7 +5167,7 @@ final class CompanionManager: ObservableObject {
             instruction: instruction,
             acknowledgement: "i’ll handle the background part too.",
             route: "agent.hybrid_start",
-            speakAcknowledgement: true,
+            speakAcknowledgement: false,
             interruptVoiceResponse: false,
             voiceContextUserTranscript: transcript
         )
@@ -6637,6 +6870,8 @@ final class CompanionManager: ObservableObject {
                     isCursorScreen: false,
                     displayWidthInPoints: capture.screenshotWidthInPixels,
                     displayHeightInPoints: capture.screenshotHeightInPixels,
+                    displayNativeWidthInPixels: capture.screenshotWidthInPixels,
+                    displayNativeHeightInPixels: capture.screenshotHeightInPixels,
                     displayFrame: .zero,
                     screenshotWidthInPixels: capture.screenshotWidthInPixels,
                     screenshotHeightInPixels: capture.screenshotHeightInPixels
@@ -12178,7 +12413,7 @@ final class CompanionManager: ObservableObject {
         instruction: String,
         acknowledgement: String? = nil,
         route: String = "agent.start",
-        speakAcknowledgement: Bool = true,
+        speakAcknowledgement: Bool = false,
         interruptVoiceResponse: Bool = false,
         voiceContextUserTranscript: String? = nil
     ) {
@@ -12225,7 +12460,7 @@ final class CompanionManager: ObservableObject {
         instruction: String,
         acknowledgement: String? = nil,
         route: String = "agent.start",
-        speakAcknowledgement: Bool = true,
+        speakAcknowledgement: Bool = false,
         interruptVoiceResponse: Bool = false,
         voiceContextUserTranscript: String? = nil
     ) {
@@ -12316,9 +12551,9 @@ final class CompanionManager: ObservableObject {
                 reason: "agent_start"
             )
         } else {
-            rememberVoiceExchange(
+            rememberSilentAgentHandoff(
                 userTranscript: voiceContextUserTranscript,
-                assistantResponse: Self.agentHandoffVoiceContextResponse(instruction: instruction),
+                instruction: instruction,
                 reason: "agent_start_silent"
             )
         }
@@ -12671,7 +12906,6 @@ final class CompanionManager: ObservableObject {
         let session = codexAgentSessions.first(where: { $0.id == sessionID })
         let activitySummary = session?.latestActivitySummary
         let activityDisplaySummary = session?.latestActivityDisplaySummary ?? activitySummary
-        let completionSpeechSummary = Self.completionSpeechSummary(for: session, fallback: activitySummary)
         let stageLabel = session?.progressStage.label ?? (status == .starting ? "Starting" : "Working")
         let suggestedNextActions = session?.latestResponseCard?.suggestedNextActions ?? []
         let activityStatusLines = Self.agentDockActivityStatusLines(for: session, fallback: activitySummary)
@@ -12725,6 +12959,7 @@ final class CompanionManager: ObservableObject {
                 agentDockItems[itemIndex].progressStepText = displayActivity ?? activitySummary
             }
             completeAgentRequestTimingIfNeeded(sessionID: sessionID, status: "success")
+            let completionSpeechSummary = Self.completionSpeechSummary(for: session, fallback: activitySummary)
             announceAgentCompletionIfNeeded(sessionID: sessionID, outcome: "success", summary: completionSpeechSummary)
         case .failed:
             agentDockItems[itemIndex].status = .failed
@@ -12738,6 +12973,7 @@ final class CompanionManager: ObservableObject {
                     "activitySummary": activitySummary ?? ""
                 ]
             )
+            let completionSpeechSummary = Self.completionSpeechSummary(for: session, fallback: activitySummary)
             announceAgentCompletionIfNeeded(sessionID: sessionID, outcome: "failed", summary: completionSpeechSummary)
         case .stopped:
             if session?.status != .stopped {
@@ -14361,7 +14597,7 @@ final class CompanionManager: ObservableObject {
     you have a small blue triangle cursor that can fly to and point at things on screen, and temporary drawing overlays that can highlight rectangles or draw short freehand scribbles. use them only when the user is asking for guidance on the current visible screen, the target is visibly present, and the target is directly relevant to the user's current question, instruction, or next step. if the user is merely discussing OpenClicky's behavior, routing, prompts, or how highlighting should work, answer conversationally and use [POINT:none].
 
     screen calibration:
-    if the user says "calibrate the screen", "calibrate our screens", "let's calibrate", or similar, run a four-anchor calibration sequence instead of picking a random target. OpenClicky's normal cursor buddy changes into a square box around the cursor while a calibration anchor is active. ask the user to put that square on these visible anchors, one per response and in this order when present: Finder icon, Trash/Dustbin, Apple menu, then the time/clock. if one of those anchors is not visible, choose the closest stable equivalent and say what changed. draw a small rectangle around the current anchor with a label containing both the target name and "calibration anchor", for example "Finder icon calibration anchor". tell the user briefly to move the square onto that anchor and say "mark it" when it is lined up. when they mark it, OpenClicky records the correction from the cursor square and uses the four samples to anchor that screen for future POINT, RECT, and SCRIBBLE overlays.
+    if the user says "start screen calibration", "enter calibration mode", "calibrate this display", "calibrate the screen", "calibrate our screens", "let's calibrate", or similar, run an automatic calibration-and-validation sequence instead of picking a random target. first, inspect the screenshot and locate stable known anchors near the screen corners: Finder/Dock or menu Finder at the left, Trash/Dustbin at the lower right when visible, Apple menu at the upper left, and time/clock at the upper right. draw a small rectangle around the current anchor with a label containing both the target name and "calibration anchor", for example "Finder icon calibration anchor". keep the spoken wording brief: say which anchor OpenClicky is sampling automatically and which anchor is next. do not ask the user to move OpenClicky's square, move the calibration anchor, put their pointer anywhere, or say "mark it"; emitting the calibration rectangle is the sample, and OpenClicky records the screenshot-to-display warp-map sample automatically for future POINT, RECT, and SCRIBBLE overlays. after the initial anchors, continue in interactive voice validation mode: choose a real visible UI target, point or rectangle it, announce what OpenClicky thinks it selected, and ask in a concrete "THIS" form, such as "okay, is THIS the Xcode icon?", "is THIS the close button of the Xcode window?", or "is THIS the search field?". also support paired-pointing checks: the user may say "i am going to point to the Finder button, can you do the same"; in that case OpenClicky should point to its predicted Finder button too, then compare the user's real cursor/buddy point with OpenClicky's predicted point as a warp-map validation sample. build the map across the screen, not from one corner only: after one corner anchor, choose another stable target on the opposite corner or opposite side, then sample a few interior anchors between them. cover both axes deliberately — left-to-right / right-to-left for horizontal scale and top-to-bottom / bottom-to-top for vertical scale — and store the samples in the screenshot coordinate space OpenClicky actually captured at its current resolution, then map them back to display points for overlays, so the warp map can correct translation, scale, skew, and local drift. once enough horizontal and vertical samples are collected, apply that calibrated transform to future pointing regardless of what app or content is currently on screen. the user's real cursor/buddy position is the ground-truth pointer: if they say it is wrong, ask them to point at the correct item and say "this one" or "i'm pointing at it", then use that cursor position as another warp-map correction sample. if the user says no or says it is off, use the next validation target or correction turn rather than ending calibration.
 
     your default should be: point at the exact visible target only when it clearly helps answer what the user is asking now, such as a named button, visible text, current file, prompt, setting, menu, error, or UI region they are referring to. do not point at generic, nearby, decorative, stale, or merely available UI.
 
@@ -14474,7 +14710,7 @@ final class CompanionManager: ObservableObject {
         return """
 
         visual guidance calibration memory:
-        manual rectangle dragging is disabled, so calibration uses the square cursor box instead: ask the user to move the square onto the current calibration anchor and say "mark it". Existing learned coordinate calibration may still be applied. \(calibrationSummary)
+        calibration is automatic: when a calibration rectangle is emitted for a known screen anchor, OpenClicky compares that detected anchor with the expected corner position and records a screenshot-to-display warp-map sample. Do not ask the user to move OpenClicky's square, move the calibration anchor, put their pointer anywhere, or say "mark it". After anchors are sampled, continue with voice validation by selecting visible UI targets and asking concrete "THIS" confirmation questions, for example "is THIS the Xcode icon?" or "is THIS the close button?". The user's cursor/buddy location is the ground-truth pointer when they point at the correct item and say "this one" or "I'm pointing at it", adding another warp-map correction sample. Paired-pointing checks like "I am going to point to the Finder button, can you do the same" mean OpenClicky should point to its predicted target too, then compare both points. The warp-map validation should include opposite-side/corner targets plus interior anchors, not just one corner; sample horizontally and vertically in OpenClicky's captured screenshot coordinate space at its current resolution, then map back to display points so OpenClicky can correct scale, skew, and local drift; once calibrated, future pointing should use that transform regardless of the current app/content. Existing learned coordinate calibration may still be applied. \(calibrationSummary)
         """
     }
 
@@ -14509,10 +14745,27 @@ final class CompanionManager: ObservableObject {
         let defaults = UserDefaults.standard
         let countKey = visualGuidanceCalibrationDefaultsKey(for: displayFrame, suffix: "count")
         guard defaults.integer(forKey: countKey) > 0 else { return .zero }
-        return CGSize(
+        let offset = CGSize(
             width: defaults.double(forKey: visualGuidanceCalibrationDefaultsKey(for: displayFrame, suffix: "offsetX")),
             height: defaults.double(forKey: visualGuidanceCalibrationDefaultsKey(for: displayFrame, suffix: "offsetY"))
         )
+        guard isPlausibleVisualGuidanceCalibrationDelta(offset, for: displayFrame) else {
+            return .zero
+        }
+        return offset
+    }
+
+    private static func maximumVisualGuidanceCalibrationDelta(for displayFrame: CGRect) -> CGSize {
+        CGSize(
+            width: max(48, min(160, displayFrame.width * 0.08)),
+            height: max(48, min(160, displayFrame.height * 0.08))
+        )
+    }
+
+    private static func isPlausibleVisualGuidanceCalibrationDelta(_ delta: CGSize, for displayFrame: CGRect) -> Bool {
+        let maximum = maximumVisualGuidanceCalibrationDelta(for: displayFrame)
+        return abs(delta.width) <= maximum.width
+            && abs(delta.height) <= maximum.height
     }
 
     @discardableResult
@@ -14524,12 +14777,16 @@ final class CompanionManager: ObservableObject {
         let countKey = visualGuidanceCalibrationDefaultsKey(for: displayFrame, suffix: "count")
         let offsetXKey = visualGuidanceCalibrationDefaultsKey(for: displayFrame, suffix: "offsetX")
         let offsetYKey = visualGuidanceCalibrationDefaultsKey(for: displayFrame, suffix: "offsetY")
-        let oldCount = defaults.integer(forKey: countKey)
-        let newCount = oldCount + 1
-        let oldOffset = CGSize(
+        let storedCount = defaults.integer(forKey: countKey)
+        let storedOffset = CGSize(
             width: defaults.double(forKey: offsetXKey),
             height: defaults.double(forKey: offsetYKey)
         )
+        let oldCount = isPlausibleVisualGuidanceCalibrationDelta(storedOffset, for: displayFrame)
+            ? storedCount
+            : 0
+        let oldOffset = oldCount > 0 ? storedOffset : .zero
+        let newCount = oldCount + 1
         let newOffset = CGSize(
             width: ((oldOffset.width * Double(oldCount)) + delta.width) / Double(newCount),
             height: ((oldOffset.height * Double(oldCount)) + delta.height) / Double(newCount)
@@ -15178,7 +15435,8 @@ final class CompanionManager: ObservableObject {
                         self.globalVisualGuidanceOverlay(
                             fromScreenshotOverlay: visualOverlay,
                             in: targetScreenCapture
-                        )
+                        ),
+                        sourceCapture: targetScreenCapture
                     )
                     print("🎯 Visual guidance overlay: \(visualOverlay.kind.rawValue) → \"\(parseResult.elementLabel ?? "overlay")\"")
                 } else {
@@ -15526,7 +15784,11 @@ final class CompanionManager: ObservableObject {
             ?? screenCaptures.first
     }
 
-    private func globalPoint(fromScreenshotPoint point: CGPoint, in capture: CompanionScreenCapture) -> CGPoint {
+    private func globalPoint(
+        fromScreenshotPoint point: CGPoint,
+        in capture: CompanionScreenCapture,
+        applyingCalibration: Bool = true
+    ) -> CGPoint {
         let screenshotWidth = CGFloat(capture.screenshotWidthInPixels)
         let screenshotHeight = CGFloat(capture.screenshotHeightInPixels)
         let displayWidth = CGFloat(capture.displayWidthInPoints)
@@ -15535,7 +15797,9 @@ final class CompanionManager: ObservableObject {
         let clampedY = max(0, min(point.y, screenshotHeight))
         let displayLocalX = clampedX * (displayWidth / screenshotWidth)
         let displayLocalY = clampedY * (displayHeight / screenshotHeight)
-        let calibrationOffset = Self.visualGuidanceCalibrationOffset(for: capture.displayFrame)
+        let calibrationOffset = applyingCalibration
+            ? Self.visualGuidanceCalibrationOffset(for: capture.displayFrame)
+            : .zero
         return CGPoint(
             x: displayLocalX + capture.displayFrame.origin.x,
             y: (displayHeight - displayLocalY) + capture.displayFrame.origin.y
@@ -15547,9 +15811,13 @@ final class CompanionManager: ObservableObject {
         )
     }
 
-    private func globalRect(fromScreenshotRect rect: CGRect, in capture: CompanionScreenCapture) -> CGRect {
-        let origin = globalPoint(fromScreenshotPoint: rect.origin, in: capture)
-        let opposite = globalPoint(fromScreenshotPoint: CGPoint(x: rect.maxX, y: rect.maxY), in: capture)
+    private func globalRect(
+        fromScreenshotRect rect: CGRect,
+        in capture: CompanionScreenCapture,
+        applyingCalibration: Bool = true
+    ) -> CGRect {
+        let origin = globalPoint(fromScreenshotPoint: rect.origin, in: capture, applyingCalibration: applyingCalibration)
+        let opposite = globalPoint(fromScreenshotPoint: CGPoint(x: rect.maxX, y: rect.maxY), in: capture, applyingCalibration: applyingCalibration)
         return CGRect(
             x: min(origin.x, opposite.x),
             y: min(origin.y, opposite.y),
@@ -15575,8 +15843,13 @@ final class CompanionManager: ObservableObject {
             guard let rect = overlay.rect else {
                 return overlay
             }
+            let isCalibrationAnchor = Self.isVisualGuidanceCalibrationCaption(overlay.style.caption)
             return OpenClickyVisualGuidanceOverlay.rectangle(
-                rect: globalRect(fromScreenshotRect: rect.cgRect, in: capture),
+                rect: globalRect(
+                    fromScreenshotRect: rect.cgRect,
+                    in: capture,
+                    applyingCalibration: !isCalibrationAnchor
+                ),
                 accentHex: overlay.style.accentHex,
                 lineWidth: overlay.style.lineWidth,
                 fillOpacity: overlay.style.fillOpacity,
@@ -15901,7 +16174,10 @@ final class CompanionManager: ObservableObject {
 
         let explicitVisualPhrases = [
             "my screen", "the screen", "on screen", "on the screen", "this screen",
-            "calibrate the screen", "calibrate screen", "calibrate our screens", "calibrate screens",
+            "start screen calibration", "begin screen calibration", "run screen calibration",
+            "enter calibration mode", "calibration mode",
+            "calibrate the screen", "calibrate screen", "calibrate this display",
+            "calibrate our screens", "calibrate screens", "calibrate display",
             "screen calibration", "calibration anchor",
             "what am i looking", "what's on", "what is on", "what do you see",
             "look at", "take a look", "can you see", "do you see",
@@ -15958,6 +16234,21 @@ final class CompanionManager: ObservableObject {
         }
 
         return false
+    }
+
+    private static func isScreenCalibrationRequest(_ transcript: String) -> Bool {
+        let normalized = transcript
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased()
+        let commandText = SpokenText.normalizedSpokenCommandText(transcript)
+        let calibrationPhrases = [
+            "start screen calibration", "begin screen calibration", "run screen calibration",
+            "enter calibration mode", "calibration mode",
+            "calibrate the screen", "calibrate screen", "calibrate this display",
+            "calibrate our screens", "calibrate screens", "calibrate display",
+            "screen calibration", "calibration anchor"
+        ]
+        return calibrationPhrases.contains { normalized.contains($0) || commandText.contains($0) }
     }
 
     private static func isVisualGuidanceDrawingRequest(normalized: String, commandText: String) -> Bool {
@@ -17557,6 +17848,10 @@ extension CompanionManager {
         shouldAttachScreenContext(to: transcript)
     }
 
+    static func testIsScreenCalibrationRequest(_ transcript: String) -> Bool {
+        isScreenCalibrationRequest(transcript)
+    }
+
     static func testIsVisualGuidanceCalibrationCaption(_ caption: String?) -> Bool {
         isVisualGuidanceCalibrationCaption(caption)
     }
@@ -17574,6 +17869,26 @@ extension CompanionManager {
 
     static func testVisualGuidanceCalibrationOffset(for displayFrame: CGRect) -> CGSize {
         visualGuidanceCalibrationOffset(for: displayFrame)
+    }
+
+    static func testIsPlausibleVisualGuidanceCalibrationDelta(_ delta: CGSize, for displayFrame: CGRect) -> Bool {
+        isPlausibleVisualGuidanceCalibrationDelta(delta, for: displayFrame)
+    }
+
+    static func testExpectedVisualGuidanceCalibrationCenter(
+        caption: String,
+        predictedRect: CGRect,
+        screenFrame: CGRect,
+        screenshotWidthInPixels: Int? = nil,
+        screenshotHeightInPixels: Int? = nil
+    ) -> CGPoint? {
+        expectedVisualGuidanceCalibrationCenter(
+            for: caption,
+            predictedRect: predictedRect,
+            screenFrame: screenFrame,
+            screenshotWidthInPixels: screenshotWidthInPixels,
+            screenshotHeightInPixels: screenshotHeightInPixels
+        )
     }
 
     static func testParallelAgentInstructions(from instruction: String) -> [String] {

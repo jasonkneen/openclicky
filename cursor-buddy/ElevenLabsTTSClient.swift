@@ -2078,6 +2078,22 @@ final class OpenAIRealtimeSpeechClient: OpenClickyTTSClient {
         ],
         [
             "type": "function",
+            "name": "openclicky_use_screen_context",
+            "description": "Route a screen-aware voice request back to OpenClicky's app so it can take a fresh screenshot and inspect the visible screen before answering. Use this for anything about what is on screen, the current window, visible UI, screenshots, pointing, highlighting, drawing rectangles/circles/scribbles, screen calibration, layout, icons, buttons, fields, menus, pages, or visible objects. Do not answer these requests from Realtime audio alone; this tool lets the voice lane see the screen.",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "transcript": [
+                        "type": "string",
+                        "description": "The user's exact spoken request that needs OpenClicky's screenshot-aware voice path."
+                    ]
+                ],
+                "required": ["transcript"],
+                "additionalProperties": false
+            ]
+        ],
+        [
+            "type": "function",
             "name": "openclicky_start_background_agent",
             "description": "Route deeper work to OpenClicky's background Agent Mode full model. Use this for code, files, research, settings, logs, memory, builds, installs, refactors, or long-running work. Do not use this for ordinary app control; use openclicky_use_computer instead.",
             "parameters": [
@@ -2265,7 +2281,7 @@ final class OpenAIRealtimeSpeechClient: OpenClickyTTSClient {
             let instructions = [
                 systemPrompt,
                 historyText.isEmpty ? nil : "Recent conversation:\n\(historyText)",
-                "You are in OpenClicky's bidirectional Realtime voice mode. Listen to the user's live microphone audio directly and reply out loud as OpenClicky in one concise spoken answer. Do not claim you will start background work, take care of a task, or start an agent unless the app already routed the turn before you receive it. Do not mention transcription, Whisper, markdown, or [POINT:] tags."
+                "You are in OpenClicky's bidirectional Realtime voice mode. Listen to the user's live microphone audio directly and reply out loud as OpenClicky in one concise spoken answer. Do not claim you will start background work, take care of a task, or start an agent unless the app already routed the turn before you receive it. You cannot see the user's screen inside this live Realtime turn; for any request about what is on screen, the current window, visible UI, screenshots, pointing, highlighting, drawing, or screen calibration, call openclicky_use_screen_context with the exact transcript instead of answering from audio alone. Do not mention transcription, Whisper, markdown, or [POINT:] tags."
             ].compactMap { $0 }.joined(separator: "\n\n")
 
             try await sendJSON([

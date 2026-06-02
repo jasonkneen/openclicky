@@ -18,6 +18,8 @@ struct CompanionScreenCapture {
     let isCursorScreen: Bool
     let displayWidthInPoints: Int
     let displayHeightInPoints: Int
+    let displayNativeWidthInPixels: Int?
+    let displayNativeHeightInPixels: Int?
     let displayFrame: CGRect
     let screenshotWidthInPixels: Int
     let screenshotHeightInPixels: Int
@@ -131,9 +133,11 @@ enum CompanionScreenCaptureUtility {
             // Use NSScreen.frame (AppKit coordinates, bottom-left origin) so
             // displayFrame is in the same coordinate system as NSEvent.mouseLocation
             // and the overlay window's screenFrame in BlueCursorView.
-            let displayFrame = nsScreenByDisplayID[display.displayID]?.frame
+            let nsScreen = nsScreenByDisplayID[display.displayID]
+            let displayFrame = nsScreen?.frame
                 ?? CGRect(x: display.frame.origin.x, y: display.frame.origin.y,
                           width: CGFloat(display.width), height: CGFloat(display.height))
+            let backingScaleFactor = nsScreen?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
             let isCursorScreen = displayFrame.contains(mouseLocation)
 
             let filter = SCContentFilter(display: display, excludingWindows: ownAppWindows)
@@ -178,6 +182,8 @@ enum CompanionScreenCaptureUtility {
                 isCursorScreen: isCursorScreen,
                 displayWidthInPoints: Int(displayFrame.width),
                 displayHeightInPoints: Int(displayFrame.height),
+                displayNativeWidthInPixels: Int((displayFrame.width * backingScaleFactor).rounded()),
+                displayNativeHeightInPixels: Int((displayFrame.height * backingScaleFactor).rounded()),
                 displayFrame: displayFrame,
                 screenshotWidthInPixels: configuration.width,
                 screenshotHeightInPixels: configuration.height
@@ -257,6 +263,8 @@ enum CompanionScreenCaptureUtility {
             isCursorScreen: windowFrameInAppKit.contains(mouseLocation),
             displayWidthInPoints: windowWidth,
             displayHeightInPoints: windowHeight,
+            displayNativeWidthInPixels: nil,
+            displayNativeHeightInPixels: nil,
             displayFrame: windowFrameInAppKit,
             screenshotWidthInPixels: configuration.width,
             screenshotHeightInPixels: configuration.height

@@ -2136,6 +2136,7 @@ struct OpenClickyNotchPanelView: View {
     private func expandedAgentConversation(for session: CodexAgentSession) -> some View {
         let entries = agentConversationEntries(for: session)
         let activityLines = agentLiveActivityLines(for: session)
+        let isWorkActive = isAgentWorkVisiblyActive(for: session)
         return VStack(spacing: 8) {
             ScrollViewReader { proxy in
                 ScrollView(.vertical, showsIndicators: true) {
@@ -2156,26 +2157,16 @@ struct OpenClickyNotchPanelView: View {
                         }
 
                         ForEach(Array(activityLines.enumerated()), id: \.offset) { index, line in
-                            let isCurrentLiveLine = session.isTurnActiveForChatQueue
+                            let isCurrentLiveLine = isWorkActive
                                 && index == activityLines.count - 1
                                 && !isCompletedAgentActivityLine(line)
                             agentLiveActivityRow(line, isRunning: isCurrentLiveLine)
                                 .id("\(session.id.uuidString)-agent-live-activity-\(index)")
                         }
 
-                        if session.isTurnActiveForChatQueue {
-                            HStack(spacing: 7) {
-                                ProgressView()
-                                    .controlSize(.small)
-                                    .scaleEffect(0.72)
-                                Text(session.progressStage.label)
-                                    .font(appUIFont(size: max(10, subtextFontSize), weight: .heavy))
-                                    .foregroundColor(DS.Colors.textSecondary)
-                            }
-                            .padding(.horizontal, max(9, bodyFontSize * 0.75))
-                            .padding(.vertical, max(7, bodyFontSize * 0.52))
-                            .background(Capsule(style: .continuous).fill(Color.white.opacity(0.055)))
-                            .id("\(session.id.uuidString)-agent-status")
+                        if isWorkActive {
+                            agentLiveActivityRow(agentWorkActivityLabel(for: session), isRunning: true)
+                                .id("\(session.id.uuidString)-agent-status")
                         }
 
                         if session.canResumeAfterRelaunch {
@@ -2203,15 +2194,23 @@ struct OpenClickyNotchPanelView: View {
                     RoundedRectangle(cornerRadius: 15, style: .continuous)
                         .stroke(Color.white.opacity(0.08), lineWidth: 1)
                 )
+                .onAppear {
+                    scrollExpandedAgentConversationToBottom(proxy, entries: entries, session: session, animated: false)
+                }
                 .onChange(of: session.entries.count) {
-                    let targetID = entries.last?.id ?? (session.isTurnActiveForChatQueue ? "\(session.id.uuidString)-agent-status" : nil)
-                    guard let targetID else { return }
-                    withAnimation(.easeOut(duration: 0.18)) {
-                        proxy.scrollTo(targetID, anchor: .bottom)
-                    }
+                    scrollExpandedAgentConversationToBottom(proxy, entries: entries, session: session)
                     notifyPanelSizeChanged()
                 }
                 .onChange(of: session.isTurnActiveForChatQueue) {
+                    scrollExpandedAgentConversationToBottom(proxy, entries: entries, session: session)
+                    notifyPanelSizeChanged()
+                }
+                .onChange(of: session.progressStage) {
+                    scrollExpandedAgentConversationToBottom(proxy, entries: entries, session: session)
+                    notifyPanelSizeChanged()
+                }
+                .onChange(of: session.activityStatusLines) {
+                    scrollExpandedAgentConversationToBottom(proxy, entries: entries, session: session)
                     notifyPanelSizeChanged()
                 }
             }
@@ -2315,8 +2314,56 @@ struct OpenClickyNotchPanelView: View {
         .animation(.easeOut(duration: 0.16), value: isExpandedAgentDropTargeted)
     }
 
+    private func scrollExpandedAgentConversationToBottom(
+        _ proxy: ScrollViewProxy,
+        entries: [CodexTranscriptEntry],
+        session: CodexAgentSession,
+        animated: Bool = true
+    ) {
+        let targetID = isAgentWorkVisiblyActive(for: session)
+            ? "\(session.id.uuidString)-agent-status"
+            : entries.last?.id
+        guard let targetID else { return }
+        let action = { proxy.scrollTo(targetID, anchor: .bottom) }
+        if animated {
+            withAnimation(.easeOut(duration: 0.18), action)
+        } else {
+            action()
+        }
+    }
+
+    private func isAgentWorkVisiblyActive(for session: CodexAgentSession) -> Bool {
+        if session.isTurnActiveForChatQueue { return true }
+
+        switch session.progressStage {
+        case .starting, .planning, .executing, .composing:
+            return true
+        case .idle, .completed, .failed:
+            return false
+        }
+    }
+
+    private func agentWorkActivityLabel(for session: CodexAgentSession) -> String {
+        switch session.progressStage {
+        case .starting:
+            return "OpenClicky is thinking…"
+        case .planning:
+            return "OpenClicky is planning…"
+        case .executing:
+            return "OpenClicky is working…"
+        case .composing:
+            return "OpenClicky is writing…"
+        case .idle:
+            return session.isTurnActiveForChatQueue ? "OpenClicky is thinking…" : "OpenClicky is ready."
+        case .completed:
+            return "OpenClicky finished."
+        case .failed:
+            return "OpenClicky stopped."
+        }
+    }
+
     private func agentLiveActivityLines(for session: CodexAgentSession) -> [String] {
-        guard session.isTurnActiveForChatQueue else { return [] }
+        guard isAgentWorkVisiblyActive(for: session) else { return [] }
         var seen = Set<String>()
         let lines = session.activityStatusLines.reversed().compactMap { rawLine -> String? in
             let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)

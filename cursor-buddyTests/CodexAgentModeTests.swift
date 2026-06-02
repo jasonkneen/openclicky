@@ -194,6 +194,13 @@ struct CodexAgentModeTests {
         #expect(!CodexAgentSession.testIsNonFatalCodexRuntimeStderrLine("ERROR codex_core::main: process exited with error status 1"))
     }
 
+    @Test func codexMemoryWriterSetupDiagnosticIsNonFatal() throws {
+        let diagnostic = "\u{1B}[31mERROR\u{1B}[0m codex_memories_write::phase2::job: failed to claim job: error returned from database: (code: 1) no such table: jobs"
+
+        #expect(CodexAgentSession.testIsNonFatalCodexRuntimeStderrLine(diagnostic))
+        #expect(!CodexAgentSession.testIsNonFatalCodexRuntimeStderrLine("ERROR codex_core::main: process exited with error status 1"))
+    }
+
     @Test func logReviewSetupCreatesMarkdownAndJSONLFiles() throws {
         let directory = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

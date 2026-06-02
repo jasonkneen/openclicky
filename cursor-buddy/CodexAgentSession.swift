@@ -1362,6 +1362,17 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
             return true
         }
 
+        // The Codex memory writer can emit setup diagnostics on stderr while
+        // the turn keeps running normally. Do not convert that background
+        // memory-table warning into an OpenClicky agent failure; real task
+        // failure still arrives through a Codex `error`, process exit, or a
+        // failed command item.
+        if normalized.contains("codex_memories_write")
+            && normalized.contains("failed to claim job")
+            && normalized.contains("no such table: jobs") {
+            return true
+        }
+
         // Codex can emit tool-router diagnostics on stderr while the
         // turn is still alive. In the logs this showed up as
         // `write_stdin failed: stdin is closed...` after an already-ended

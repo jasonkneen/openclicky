@@ -164,9 +164,55 @@ struct OpenClickyVisualGuidanceOverlayTests {
         #expect(CompanionManager.testShouldAttachScreenContext(to: "trace around that shape"))
         #expect(CompanionManager.testShouldAttachScreenContext(to: "let's calibrate the screen"))
         #expect(CompanionManager.testShouldAttachScreenContext(to: "can we calibrate our screens"))
+        #expect(CompanionManager.testShouldAttachScreenContext(to: "start screen calibration"))
+        #expect(CompanionManager.testShouldAttachScreenContext(to: "enter calibration mode"))
+        #expect(CompanionManager.testShouldAttachScreenContext(to: "calibrate this display"))
+        #expect(CompanionManager.testShouldAttachScreenContext(to: "can you get an agent to do a screen calibration"))
+        #expect(CompanionManager.testIsScreenCalibrationRequest("start screen calibration"))
+        #expect(CompanionManager.testIsScreenCalibrationRequest("enter calibration mode"))
+        #expect(CompanionManager.testIsScreenCalibrationRequest("calibrate this display"))
+        #expect(CompanionManager.testIsScreenCalibrationRequest("can you get an agent to do a screen calibration"))
 
         #expect(!CompanionManager.testShouldAttachScreenContext(to: "draw me a cheerful mascot idea"))
         #expect(!CompanionManager.testShouldAttachScreenContext(to: "mark this task as done later"))
+    }
+
+    @Test func automaticCalibrationAnchorsMapToExpectedCorners() throws {
+        let screenFrame = CGRect(x: 100, y: 50, width: 1200, height: 800)
+
+        let apple = CompanionManager.testExpectedVisualGuidanceCalibrationCenter(
+            caption: "Apple menu calibration anchor",
+            predictedRect: CGRect(x: 120, y: 820, width: 40, height: 20),
+            screenFrame: screenFrame
+        )
+        #expect(Int((apple?.x ?? 0).rounded()) == 142)
+        #expect(Int((apple?.y ?? 0).rounded()) == 824)
+
+        let trash = CompanionManager.testExpectedVisualGuidanceCalibrationCenter(
+            caption: "Trash calibration anchor",
+            predictedRect: CGRect(x: 1230, y: 70, width: 32, height: 32),
+            screenFrame: screenFrame
+        )
+        #expect(Int((trash?.x ?? 0).rounded()) == 1258)
+        #expect(Int((trash?.y ?? 0).rounded()) == 76)
+
+        let time = CompanionManager.testExpectedVisualGuidanceCalibrationCenter(
+            caption: "time calibration anchor",
+            predictedRect: CGRect(x: 1180, y: 822, width: 80, height: 20),
+            screenFrame: screenFrame
+        )
+        #expect(Int((time?.x ?? 0).rounded()) == 1248)
+        #expect(Int((time?.y ?? 0).rounded()) == 824)
+
+        let nativeWideTime = CompanionManager.testExpectedVisualGuidanceCalibrationCenter(
+            caption: "time calibration anchor",
+            predictedRect: CGRect(x: 3680, y: 1545, width: 100, height: 24),
+            screenFrame: CGRect(x: 0, y: 0, width: 3840, height: 1620),
+            screenshotWidthInPixels: 1280,
+            screenshotHeightInPixels: 540
+        )
+        #expect(Int((nativeWideTime?.x ?? 0).rounded()) == 3684)
+        #expect(Int((nativeWideTime?.y ?? 0).rounded()) == 1568)
     }
 
     @Test func calibrationAnchorsAveragePerScreenCoordinateOffset() throws {
@@ -194,5 +240,28 @@ struct OpenClickyVisualGuidanceOverlayTests {
         )
         #expect(secondOffset == CGSize(width: 8, height: -2))
         #expect(CompanionManager.testVisualGuidanceCalibrationOffset(for: displayFrame) == CGSize(width: 8, height: -2))
+    }
+
+    @Test func calibrationRejectsRawPixelSizedPoisonOffsets() throws {
+        let displayFrame = CGRect(x: 0, y: 0, width: 3840, height: 1620)
+        CompanionManager.testResetVisualGuidanceCalibration(for: displayFrame)
+        defer { CompanionManager.testResetVisualGuidanceCalibration(for: displayFrame) }
+
+        #expect(CompanionManager.testIsPlausibleVisualGuidanceCalibrationDelta(CGSize(width: 77, height: -22), for: displayFrame))
+        #expect(!CompanionManager.testIsPlausibleVisualGuidanceCalibrationDelta(CGSize(width: 655, height: -27), for: displayFrame))
+        #expect(!CompanionManager.testIsPlausibleVisualGuidanceCalibrationDelta(CGSize(width: 3655, height: 16), for: displayFrame))
+
+        _ = CompanionManager.testUpdateVisualGuidanceCalibrationOffset(
+            delta: CGSize(width: 655, height: -27),
+            for: displayFrame
+        )
+        #expect(CompanionManager.testVisualGuidanceCalibrationOffset(for: displayFrame) == .zero)
+
+        let recoveredOffset = CompanionManager.testUpdateVisualGuidanceCalibrationOffset(
+            delta: CGSize(width: 12, height: -4),
+            for: displayFrame
+        )
+        #expect(recoveredOffset == CGSize(width: 12, height: -4))
+        #expect(CompanionManager.testVisualGuidanceCalibrationOffset(for: displayFrame) == CGSize(width: 12, height: -4))
     }
 }
