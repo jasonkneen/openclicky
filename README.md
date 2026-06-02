@@ -18,6 +18,7 @@ Clicky currently handles:
 - reports, PDFs, DOCX files, and spreadsheets
 - repo scaffolding and day-to-day dev work
 - native computer-use fallback when direct routes are not enough
+- optional yes/no Agent Mode confirmations through local Nodex AirPods head gestures
 
 ## Routing
 
@@ -111,6 +112,8 @@ scripts/test-external-control-bridge.sh
 ```
 
 The script performs Swift parse/typecheck checks, verifies the local bridge, exercises MCP descriptors, screenshot capture, captions, secondary cursors, SSE events, and confirms that primary cursor guidance uses OpenClicky's native choreography without warping the real system pointer.
+
+Optional hands-free Agent Mode confirmations through AirPods head gestures are documented in [docs/NODEX_HEAD_GESTURES.md](docs/NODEX_HEAD_GESTURES.md).
 
 ## External Control Bridge
 
