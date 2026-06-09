@@ -2349,19 +2349,37 @@ final class OpenAIRealtimeSpeechClient: OpenClickyTTSClient {
                 routeUserTranscriptBeforeAssistantResponse: routeUserTranscriptBeforeAssistantResponse,
                 routeRealtimeToolCallBeforeAssistantResponse: routeRealtimeToolCallBeforeAssistantResponse
             )
-            stopPlaybackInternal()
+            stopPlayback(for: activeBidirectionalVoiceTurn)
             return result
         } catch {
             activeBidirectionalVoiceTurn.cancel()
-            stopPlaybackInternal()
+            stopPlayback(for: activeBidirectionalVoiceTurn)
             throw error
         }
     }
 
     func cancelBidirectionalVoiceTurn() {
-        activeBidirectionalVoiceTurn?.cancel()
+        if let activeBidirectionalVoiceTurn {
+            activeBidirectionalVoiceTurn.cancel()
+            stopPlayback(for: activeBidirectionalVoiceTurn)
+        }
         activeBidirectionalVoiceTurn = nil
-        stopPlaybackInternal()
+    }
+
+    /// Stops only the given turn's output engine. The shared
+    /// `audioEngine`/`playerNode` slot may already hold the streaming TTS
+    /// engine of a response the app routed out of this turn — that engine
+    /// must keep playing, so the slot is released only if it still points
+    /// at the turn's own engine.
+    private func stopPlayback(for turn: BidirectionalVoiceTurn) {
+        ElevenLabsTTSClient.stopPlayerIfAttached(turn.playerNode)
+        turn.outputEngine.stop()
+        if playerNode === turn.playerNode {
+            playerNode = nil
+        }
+        if audioEngine === turn.outputEngine {
+            audioEngine = nil
+        }
     }
 
     private func ensureMicrophonePermission() async throws {
@@ -3475,19 +3493,37 @@ final class DeepgramVoiceAgentClient {
         self.activeTurn = nil
         do {
             let result = try await activeTurn.finish(routeUserTranscriptBeforeAssistantResponse: routeUserTranscriptBeforeAssistantResponse)
-            stopPlaybackInternal()
+            stopPlayback(for: activeTurn)
             return result
         } catch {
             activeTurn.cancel()
-            stopPlaybackInternal()
+            stopPlayback(for: activeTurn)
             throw error
         }
     }
 
     func cancelBidirectionalVoiceTurn() {
-        activeTurn?.cancel()
+        if let activeTurn {
+            activeTurn.cancel()
+            stopPlayback(for: activeTurn)
+        }
         activeTurn = nil
-        stopPlaybackInternal()
+    }
+
+    /// Stops only the given turn's output engine. The shared
+    /// `audioEngine`/`playerNode` slot may already hold the streaming TTS
+    /// engine of a response the app routed out of this turn — that engine
+    /// must keep playing, so the slot is released only if it still points
+    /// at the turn's own engine.
+    private func stopPlayback(for turn: BidirectionalVoiceTurn) {
+        ElevenLabsTTSClient.stopPlayerIfAttached(turn.playerNode)
+        turn.outputEngine.stop()
+        if playerNode === turn.playerNode {
+            playerNode = nil
+        }
+        if audioEngine === turn.outputEngine {
+            audioEngine = nil
+        }
     }
 
     private final class BidirectionalVoiceTurn {

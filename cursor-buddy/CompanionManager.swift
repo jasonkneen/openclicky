@@ -448,6 +448,17 @@ final class CompanionManager: ObservableObject {
                 wakeWordAudioDucker.restore(reason: "voice_idle")
                 scheduleWakeWordListeningResumeIfNeeded(reason: "voice_idle")
             }
+            // Cancel any existing watchdog and reschedule when entering
+            // .processing — any subsequent state change cancels it.
+            processingWatchdogTask?.cancel()
+            processingWatchdogTask = nil
+            if voiceState == .processing {
+                processingWatchdogTask = Task { [weak self] in
+                    try? await Task.sleep(nanoseconds: UInt64(Self.processingWatchdogTimeout * 1_000_000_000))
+                    guard !Task.isCancelled, let self else { return }
+                    self.recoverFromStuckProcessingStateIfNeeded()
+                }
+            }
         }
     }
     @Published private(set) var lastTranscript: String?
@@ -1298,6 +1309,13 @@ final class CompanionManager: ObservableObject {
     private var lastVoiceAgentStartSessionID: UUID?
     private static let voiceAgentStartDuplicateTTL: TimeInterval = 8
 
+    /// Guards against the realtime final-transcript callback and the
+    /// realtime tool-route callback both firing for the same utterance,
+    /// producing two near-identical requests ~1s apart.
+    private var lastRealtimeVoiceRouteFingerprint: String?
+    private var lastRealtimeVoiceRouteAt: Date?
+    private static let realtimeVoiceRouteDuplicateTTL: TimeInterval = 5
+
     // MARK: Speculative pre-fire state
     //
     // While the user is still talking, Deepgram emits interim
@@ -1365,6 +1383,9 @@ final class CompanionManager: ObservableObject {
     /// already been narrated — so we don't re-announce on every Combine republish.
     /// Stores outcome labels like "success", "failed", "cancelled".
     private var lastNarratedAgentOutcomeBySessionID: [UUID: String] = [:]
+
+    private var processingWatchdogTask: Task<Void, Never>?
+    private static let processingWatchdogTimeout: TimeInterval = 30
 
     private var shortcutTransitionCancellable: AnyCancellable?
     private var shiftDoubleTapCancellable: AnyCancellable?
@@ -1627,6 +1648,8 @@ final class CompanionManager: ObservableObject {
     private var pendingRealtimeBidirectionalFinishSource: String?
     private var realtimeBidirectionalVoiceCaptureStartedAt: Date?
     private var realtimeBidirectionalVoiceTask: Task<Void, Never>?
+    private var realtimeBidirectionalVoiceStartedAsInterrupt = false
+    private static let quickShortcutInterruptSilenceThreshold: TimeInterval = 1.25
     private var realtimeBidirectionalVoiceTurnGeneration: UInt64 = 0
 
     private static let realtimeVoiceDefaultMigrationKey = "openClickyRealtimeVoiceDefaultMigrated"
@@ -3887,10 +3910,17 @@ final class CompanionManager: ObservableObject {
 
     static func voiceResponseCompletionAudioPlaybackState(
         spokenText: String,
-        playbackFinished: Bool
+        playbackFinished: Bool,
+        audioStarted: Bool = true
     ) -> String {
         guard !spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return "empty"
+        }
+        // A TTS session whose engine was torn down still resolves finish()
+        // successfully — "finished" is only honest if audio actually
+        // reached the speaker.
+        guard audioStarted else {
+            return "never_started"
         }
         return playbackFinished ? "finished" : "interrupted"
     }
@@ -4281,7 +4311,8 @@ final class CompanionManager: ObservableObject {
             voiceState = .idle
         }
         let isPlayingResponse = audioPlaybackActive
-        if isPlayingResponse || voiceState == .processing {
+        let startedAsInterrupt = isPlayingResponse || voiceState == .processing
+        if startedAsInterrupt {
             let priorVoiceState = voiceState
             OpenClickyMessageLogStore.shared.append(
                 lane: "voice",
@@ -4308,6 +4339,7 @@ final class CompanionManager: ObservableObject {
         isRealtimeBidirectionalVoiceInputReady = false
         pendingRealtimeBidirectionalFinishSource = nil
         realtimeBidirectionalVoiceCaptureStartedAt = Date()
+        realtimeBidirectionalVoiceStartedAsInterrupt = startedAsInterrupt
         voiceState = .listening
         currentAudioPowerLevel = 0
         latestVoiceResponseCard = nil
@@ -4506,6 +4538,7 @@ final class CompanionManager: ObservableObject {
                             ]
                         )
                         self.sendTranscriptToClaudeWithScreenshot(transcript: instruction)
+                        self.recordRealtimeVoiceRouteFingerprint(Self.realtimeVoiceRouteFingerprint(instruction))
                         return true
                     }
                     guard toolName == "openclicky_start_background_agent" else {
@@ -4531,6 +4564,7 @@ final class CompanionManager: ObservableObject {
                         acknowledgement: "i’ll take care of that in the background.",
                         voiceContextUserTranscript: transcript
                     )
+                    self.recordRealtimeVoiceRouteFingerprint(Self.realtimeVoiceRouteFingerprint(instruction))
                     return true
                 }
                 let selectedVoiceResponseModel = OpenClickyModelCatalog.voiceResponseModel(withID: self.selectedModel)
@@ -4664,7 +4698,13 @@ final class CompanionManager: ObservableObject {
                 }
             } catch {
                 await MainActor.run {
-                    self?.handleBidirectionalRealtimeVoiceFailure(error, source: source, stage: "finish")
+                    self?.handleBidirectionalRealtimeVoiceFailure(
+                        error,
+                        source: source,
+                        stage: "finish",
+                        captureStartedAt: captureStartedAt,
+                        startedAsInterrupt: self?.realtimeBidirectionalVoiceStartedAsInterrupt ?? false
+                    )
                 }
             }
         }
@@ -4677,6 +4717,7 @@ final class CompanionManager: ObservableObject {
         isRealtimeBidirectionalVoiceInputReady = false
         pendingRealtimeBidirectionalFinishSource = nil
         realtimeBidirectionalVoiceCaptureStartedAt = nil
+        realtimeBidirectionalVoiceStartedAsInterrupt = false
         clearVoiceResponseCaption()
         currentAudioPowerLevel = 0
         wakeWordAudioDucker.restore(reason: "realtime_released_\(reason)")
@@ -4694,12 +4735,79 @@ final class CompanionManager: ObservableObject {
         )
     }
 
+
+    /// Fires from the processing watchdog when voiceState has been stuck
+    /// at .processing for longer than processingWatchdogTimeout seconds.
+    /// Resets UI state only — does NOT cancel in-flight tasks so a late
+    /// response can still arrive and transition to .responding normally.
+    private func recoverFromStuckProcessingStateIfNeeded() {
+        guard voiceState == .processing,
+              !isRealtimeBidirectionalVoiceCaptureActive,
+              !voiceTTSClient.isPlaying,
+              !openAIRealtimeSpeechClient.isPlaying,
+              !deepgramVoiceAgentClient.isPlaying else { return }
+        voiceState = .idle
+        currentAudioPowerLevel = 0
+        clearVoiceResponseCaption()
+        OpenClickyMessageLogStore.shared.append(
+            lane: "voice",
+            direction: "internal",
+            event: "voice.state.processing_watchdog_recovered",
+            fields: [
+                "timeoutSeconds": Int(Self.processingWatchdogTimeout),
+                "speechModel": selectedModel,
+                "inputPath": activeRealtimeInputPath
+            ]
+        )
+    }
+
+    static func shouldSilenceQuickRealtimeShortcutFailure(
+        _ error: Error,
+        source: String,
+        stage: String,
+        captureStartedAt: Date?,
+        startedAsInterrupt: Bool
+    ) -> Bool {
+        guard source == "keyboardShortcut",
+              stage == "finish",
+              startedAsInterrupt,
+              let captureStartedAt else {
+            return false
+        }
+        let errorMessage = error.localizedDescription.lowercased()
+        guard errorMessage.contains("could not detect usable microphone audio") else {
+            return false
+        }
+        return Date().timeIntervalSince(captureStartedAt) <= quickShortcutInterruptSilenceThreshold
+    }
+
     private func routeCompletedRealtimeVoiceTranscriptIfNeeded(_ transcript: String) -> Bool {
         let trimmedTranscript = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTranscript.isEmpty,
               trimmedTranscript != "Realtime voice input" else {
             return false
         }
+
+        // Suppress a duplicate routing event (final-transcript callback and
+        // tool-route callback can both fire for the same utterance ~1s apart).
+        let routeFingerprint = Self.realtimeVoiceRouteFingerprint(trimmedTranscript)
+        if let last = lastRealtimeVoiceRouteFingerprint,
+           let lastAt = lastRealtimeVoiceRouteAt,
+           Date().timeIntervalSince(lastAt) <= Self.realtimeVoiceRouteDuplicateTTL,
+           Self.isDuplicateRealtimeVoiceRouteFingerprint(routeFingerprint, last) {
+            OpenClickyMessageLogStore.shared.append(
+                lane: "voice",
+                direction: "internal",
+                event: "voice.response.duplicate_suppressed",
+                fields: [
+                    "transcript": trimmedTranscript,
+                    "ageMs": Int(Date().timeIntervalSince(lastAt) * 1000),
+                    "inputPath": activeRealtimeInputPath
+                ]
+            )
+            return true
+        }
+
         rememberMainConversationUserPrompt(trimmedTranscript, source: "realtime_final_transcript")
 
         let requestTiming = beginRequestTiming(source: "realtime_voice_final_transcript", text: trimmedTranscript)
@@ -4725,6 +4833,7 @@ final class CompanionManager: ObservableObject {
         )
 
         if submitHomeChatVoiceTranscriptIfNeeded(trimmedTranscript, source: "realtime_home_chat") {
+            recordRealtimeVoiceRouteFingerprint(routeFingerprint)
             return true
         }
 
@@ -4736,6 +4845,7 @@ final class CompanionManager: ObservableObject {
             includeQuickLocalResponses: true,
             hybridAgentStartCountsAsHandled: true
         ) {
+            recordRealtimeVoiceRouteFingerprint(routeFingerprint)
             return true
         }
 
@@ -4752,17 +4862,54 @@ final class CompanionManager: ObservableObject {
                 ]
             )
             sendTranscriptToClaudeWithScreenshot(transcript: trimmedTranscript)
+            recordRealtimeVoiceRouteFingerprint(routeFingerprint)
             return true
         }
 
         return false
     }
 
-    private func handleBidirectionalRealtimeVoiceFailure(_ error: Error, source: String, stage: String) {
+    private func recordRealtimeVoiceRouteFingerprint(_ fingerprint: String) {
+        lastRealtimeVoiceRouteFingerprint = fingerprint
+        lastRealtimeVoiceRouteAt = Date()
+    }
+
+    private func handleBidirectionalRealtimeVoiceFailure(
+        _ error: Error,
+        source: String,
+        stage: String,
+        captureStartedAt: Date? = nil,
+        startedAsInterrupt: Bool = false
+    ) {
         openAIRealtimeSpeechClient.cancelBidirectionalVoiceTurn()
         deepgramVoiceAgentClient.cancelBidirectionalVoiceTurn()
-        releaseRealtimeVoiceConversationMode(reason: "failure_\(stage)")
+        let shouldFailSilently = Self.shouldSilenceQuickRealtimeShortcutFailure(
+            error,
+            source: source,
+            stage: stage,
+            captureStartedAt: captureStartedAt,
+            startedAsInterrupt: startedAsInterrupt
+        )
+        releaseRealtimeVoiceConversationMode(reason: shouldFailSilently ? "quick_interrupt_\(stage)" : "failure_\(stage)")
         let errorMessage = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !shouldFailSilently else {
+            OpenClickyMessageLogStore.shared.append(
+                lane: "voice",
+                direction: "internal",
+                event: "voice.realtime_bidirectional.quick_interrupt_silenced",
+                fields: [
+                    "source": source,
+                    "stage": stage,
+                    "speechModel": selectedModel,
+                    "speechVoice": activeRealtimeSpeechVoiceID,
+                    "inputPath": activeRealtimeInputPath,
+                    "startedAsInterrupt": startedAsInterrupt,
+                    "captureDurationMs": Self.elapsedMilliseconds(since: captureStartedAt),
+                    "error": error.localizedDescription
+                ]
+            )
+            return
+        }
         let userFacingMessage = errorMessage.isEmpty
             ? "OpenClicky could not capture microphone audio. Check the microphone input and try again."
             : errorMessage
@@ -4860,6 +5007,9 @@ final class CompanionManager: ObservableObject {
             return true
         }
         if handleAgentStatusQuestionIfNeeded(from: transcript) {
+            return true
+        }
+        if handleClearOverlayAnnotationsRequestIfNeeded(from: transcript) {
             return true
         }
         if handleVisualGuidanceCalibrationCursorSampleIfNeeded(from: transcript) {
@@ -8946,6 +9096,97 @@ final class CompanionManager: ObservableObject {
         }
     }
 
+    // MARK: - Clear-overlays local intent
+
+    /// Returns true when the transcript is a request to clear overlay
+    /// annotations (boxes, highlights, cursor markers).
+    /// - Parameter hasActiveOverlayAnnotation: pass `hasActiveOverlayAnnotation`
+    ///   to gate pronoun-only forms ("clear those") on a live annotation.
+    static func isClearOverlayAnnotationsRequest(
+        _ transcript: String,
+        hasActiveOverlayAnnotation: Bool
+    ) -> Bool {
+        let normalized = SpokenText.normalizedSpokenCommandText(transcript)
+        guard !normalized.isEmpty else { return false }
+
+        // Reject if agent-related words appear — keep agent-cancel priority.
+        let agentWords = ["agent", "task", "job", "background", "session"]
+        if agentWords.contains(where: normalized.contains) { return false }
+
+        let clearVerbs = ["clear", "remove", "hide", "dismiss", "get rid of"]
+        let hasVerb = clearVerbs.contains(where: normalized.contains)
+        guard hasVerb else { return false }
+
+        let annotationNouns = [
+            "rectangle", "rectangles",
+            "box", "boxes",
+            "highlight", "highlights", "highlighting",
+            "overlay", "overlays",
+            "drawing", "drawings",
+            "annotation", "annotations",
+            "marker", "markers"
+        ]
+        if annotationNouns.contains(where: normalized.contains) {
+            return true
+        }
+
+        // Pronoun-only form ("clear those", "hide them") — require an active annotation.
+        let pronouns = ["those", "that", "them", "these"]
+        if pronouns.contains(where: normalized.contains) {
+            return hasActiveOverlayAnnotation
+        }
+
+        return false
+    }
+
+    private var hasActiveOverlayAnnotation: Bool {
+        detectedElementScreenLocation != nil
+            || detectedElementDisplayFrame != nil
+            || !cursorOverlayState.visualGuidanceOverlays.isEmpty
+            || !cursorOverlayState.externalSecondaryCursors.isEmpty
+    }
+
+    private func handleClearOverlayAnnotationsRequestIfNeeded(from transcript: String) -> Bool {
+        guard Self.isClearOverlayAnnotationsRequest(
+            transcript,
+            hasActiveOverlayAnnotation: hasActiveOverlayAnnotation
+        ) else { return false }
+
+        let timing = activeRequestTiming
+        let logFields: [String: Any] = [
+            "executor": "local_fast_path",
+            "executionMethod": "CompanionManager.clearOverlayAnnotations",
+            "controller": "CompanionManager",
+            "screenCaptureSkipped": true,
+            "modelSkipped": true
+        ]
+        let executionStartedAt = markRequestExecutionStarted(
+            route: "voice.clear_overlays",
+            timing: timing,
+            extra: logFields
+        )
+
+        // Clear all active overlay annotations.
+        clearDetectedElementLocation()
+        externalSecondaryCursorClearTasks.values.forEach { $0.cancel() }
+        externalSecondaryCursorClearTasks.removeAll()
+        cursorOverlayState.externalSecondaryCursors.removeAll()
+        visualGuidanceOverlayClearTasks.values.forEach { $0.cancel() }
+        visualGuidanceOverlayClearTasks.removeAll()
+        cursorOverlayState.visualGuidanceOverlays.removeAll()
+        clearVoiceResponseCaption()
+        latestVoiceResponseCard = nil
+
+        speakShortSystemResponse(
+            "cleared.",
+            route: "voice.clear_overlays",
+            timing: timing,
+            executionStartedAt: executionStartedAt,
+            extra: logFields
+        )
+        return true
+    }
+
     private func handleAgentCancellationRequestIfNeeded(from transcript: String) -> Bool {
         let trimmedTranscript = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTranscript.isEmpty else { return false }
@@ -12529,19 +12770,36 @@ final class CompanionManager: ObservableObject {
         // coder agent". Inline shortcuts (open-app / type / press /
         // open-folder) are still handled in `startExplicitAgentTaskIfRequested`
         // before we reach this function.
-        guard !Self.isRawTransportDiagnosticEvent(instruction) else {
+        var instruction = instruction
+        if Self.isRawTransportDiagnosticEvent(instruction) {
+            // A prompt that carries log evidence plus user intent is a
+            // real task ("find out why these logs..."), not transport echo
+            // — refuse only when no analysis instruction can be derived.
+            guard let logInstruction = Self.logEvidenceAnalysisInstruction(from: instruction) else {
+                OpenClickyMessageLogStore.shared.append(
+                    lane: "agent",
+                    direction: "incoming",
+                    event: "openclicky.agent_task.raw_transport_event_ignored",
+                    fields: [
+                        "source": "voice_agent_task",
+                        "instructionPreview": Self.voiceArchiveSnippet(instruction, limit: 240),
+                        "requestID": activeRequestTiming?.requestID ?? "none"
+                    ]
+                )
+                speakShortSystemResponse("that looks like an internal OpenClicky runtime event, not a task.")
+                return
+            }
             OpenClickyMessageLogStore.shared.append(
                 lane: "agent",
                 direction: "incoming",
-                event: "openclicky.agent_task.raw_transport_event_ignored",
+                event: "openclicky.agent_task.log_evidence_rescued",
                 fields: [
                     "source": "voice_agent_task",
                     "instructionPreview": Self.voiceArchiveSnippet(instruction, limit: 240),
                     "requestID": activeRequestTiming?.requestID ?? "none"
                 ]
             )
-            speakShortSystemResponse("that looks like an internal OpenClicky runtime event, not a task.")
-            return
+            instruction = logInstruction
         }
 
         let startFingerprint = Self.voiceAgentStartFingerprint(
@@ -12745,6 +13003,25 @@ final class CompanionManager: ObservableObject {
         let normalizedRoute = route
             .replacingOccurrences(of: #"\.split$"#, with: "", options: .regularExpression)
         return "\(normalizedRoute)|\(normalizedInstruction)"
+    }
+
+    /// Returns a normalized fingerprint for deduplicating realtime voice
+    /// route events: strips leading filler then fully normalizes.
+    static func realtimeVoiceRouteFingerprint(_ transcript: String) -> String {
+        SpokenText.normalizedSpokenCommandText(
+            SpokenText.normalizedCommandCandidate(from: transcript)
+        )
+    }
+
+    /// Returns true when two realtime-route fingerprints represent the same
+    /// utterance: exact match OR one is a prefix of the other (minimum 3
+    /// words in the shorter side, to avoid collapsing unrelated short commands).
+    static func isDuplicateRealtimeVoiceRouteFingerprint(_ a: String, _ b: String) -> Bool {
+        guard !a.isEmpty, !b.isEmpty else { return false }
+        if a == b { return true }
+        let (shorter, longer) = a.count <= b.count ? (a, b) : (b, a)
+        guard SpokenText.wordCount(in: shorter) >= 3 else { return false }
+        return longer.hasPrefix(shorter)
     }
 
     private func ensureCursorOverlayVisibleForAgentTask() {
@@ -13898,18 +14175,34 @@ final class CompanionManager: ObservableObject {
     func submitNewAgentTaskFromUI(_ prompt: String, source: String = "agent_new_task_prompt") -> BrowserWorkspaceAgentSessionProtocol? {
         let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPrompt.isEmpty else { return nil }
-        guard !Self.isRawTransportDiagnosticEvent(trimmedPrompt) else {
+        var taskPrompt = trimmedPrompt
+        if Self.isRawTransportDiagnosticEvent(trimmedPrompt) {
+            // Typed/pasted prompts that mix user intent with log evidence
+            // are real tasks; only refuse pure transport echo that yields
+            // no analysis instruction.
+            guard let logInstruction = Self.logEvidenceAnalysisInstruction(from: trimmedPrompt) else {
+                OpenClickyMessageLogStore.shared.append(
+                    lane: "agent",
+                    direction: "incoming",
+                    event: "openclicky.agent_task.raw_transport_event_ignored",
+                    fields: [
+                        "source": source,
+                        "instructionPreview": Self.voiceArchiveSnippet(trimmedPrompt, limit: 240)
+                    ]
+                )
+                speakShortSystemResponse("that looks like an internal OpenClicky runtime event, not a task.")
+                return nil
+            }
             OpenClickyMessageLogStore.shared.append(
                 lane: "agent",
                 direction: "incoming",
-                event: "openclicky.agent_task.raw_transport_event_ignored",
+                event: "openclicky.agent_task.log_evidence_rescued",
                 fields: [
                     "source": source,
                     "instructionPreview": Self.voiceArchiveSnippet(trimmedPrompt, limit: 240)
                 ]
             )
-            speakShortSystemResponse("that looks like an internal OpenClicky runtime event, not a task.")
-            return nil
+            taskPrompt = logInstruction
         }
 
         let timing = beginRequestTiming(source: source, text: trimmedPrompt)
@@ -13928,7 +14221,7 @@ final class CompanionManager: ObservableObject {
             ]
         )
 
-        let launchPrompt = resolvedNewAgentTaskPrompt(from: trimmedPrompt)
+        let launchPrompt = resolvedNewAgentTaskPrompt(from: taskPrompt)
 
         let session = createAndLaunchCodexAgentSession(
             title: Self.shortAgentInstructionSummary(launchPrompt),
@@ -15650,10 +15943,31 @@ final class CompanionManager: ObservableObject {
                 )
                 completionFields["spokenTextLength"] = spokenText.count
                 completionFields["pointed"] = parseResult.coordinate != nil
-                completionFields["audioPlaybackState"] = Self.voiceResponseCompletionAudioPlaybackState(
+                let audioPlaybackState = Self.voiceResponseCompletionAudioPlaybackState(
                     spokenText: spokenText,
-                    playbackFinished: true
+                    playbackFinished: true,
+                    audioStarted: didMarkAudioStarted
                 )
+                completionFields["audioPlaybackState"] = audioPlaybackState
+                if audioPlaybackState == "never_started" {
+                    OpenClickyMessageLogStore.shared.append(
+                        lane: "voice",
+                        direction: "internal",
+                        event: "voice.response.audio_never_started",
+                        fields: [
+                            "transcript": transcript,
+                            "spokenTextLength": spokenText.count,
+                            "controller": self.activeTTSControllerName,
+                            "requestID": timing?.requestID ?? "none"
+                        ]
+                    )
+                    self.latestVoiceResponseCard = ClickyResponseCard(
+                        source: .voice,
+                        rawText: spokenText,
+                        contextTitle: transcript
+                    )
+                    self.updateVoiceResponseCaption(spokenText, force: true)
+                }
                 await completeRequest(extra: completionFields)
             } catch is CancellationError {
                 // User spoke again — response was interrupted

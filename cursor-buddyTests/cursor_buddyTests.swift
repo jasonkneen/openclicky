@@ -88,6 +88,100 @@ struct cursor_buddyTests {
         )
     }
 
+    @Test func quickControlTapSilencesRealtimeNoAudioInterruptFault() async throws {
+        let noAudioError = NSError(
+            domain: "OpenClickyRealtime",
+            code: 1,
+            userInfo: [
+                NSLocalizedDescriptionKey: "OpenClicky could not detect usable microphone audio. Check the microphone input or macOS microphone permission and try again."
+            ]
+        )
+
+        #expect(
+            CompanionManager.shouldSilenceQuickRealtimeShortcutFailure(
+                noAudioError,
+                source: "keyboardShortcut",
+                stage: "finish",
+                captureStartedAt: Date().addingTimeInterval(-0.3),
+                startedAsInterrupt: true
+            )
+        )
+        #expect(
+            !CompanionManager.shouldSilenceQuickRealtimeShortcutFailure(
+                noAudioError,
+                source: "keyboardShortcut",
+                stage: "finish",
+                captureStartedAt: Date().addingTimeInterval(-2.0),
+                startedAsInterrupt: true
+            )
+        )
+        #expect(
+            !CompanionManager.shouldSilenceQuickRealtimeShortcutFailure(
+                noAudioError,
+                source: "keyboardShortcut",
+                stage: "finish",
+                captureStartedAt: Date().addingTimeInterval(-0.3),
+                startedAsInterrupt: false
+            )
+        )
+    }
+
+    @Test func clearOverlayAnnotationsIntentMatcherIsAccurate() async throws {
+        // Explicit noun forms match regardless of overlay state.
+        #expect(
+            CompanionManager.isClearOverlayAnnotationsRequest(
+                "clear those rectangles", hasActiveOverlayAnnotation: false
+            )
+        )
+        #expect(
+            CompanionManager.isClearOverlayAnnotationsRequest(
+                "hide the highlights", hasActiveOverlayAnnotation: false
+            )
+        )
+        // Pronoun-only requires an active annotation.
+        #expect(
+            !CompanionManager.isClearOverlayAnnotationsRequest(
+                "clear those", hasActiveOverlayAnnotation: false
+            )
+        )
+        #expect(
+            CompanionManager.isClearOverlayAnnotationsRequest(
+                "clear those", hasActiveOverlayAnnotation: true
+            )
+        )
+        // Agent phrasing should NOT match.
+        #expect(
+            !CompanionManager.isClearOverlayAnnotationsRequest(
+                "dismiss those agents", hasActiveOverlayAnnotation: true
+            )
+        )
+    }
+
+    @Test func realtimeVoiceRouteDedupSuppressesFilleredDuplicates() async throws {
+        // The exact logged dup pair: filler-stripped forms are prefix of each
+        // other and both >= 3 words → suppressed.
+        #expect(
+            CompanionManager.isDuplicateRealtimeVoiceRouteFingerprint(
+                CompanionManager.realtimeVoiceRouteFingerprint("Okay, you can clear those now."),
+                CompanionManager.realtimeVoiceRouteFingerprint("ok you can clear those")
+            )
+        )
+        // Distinct commands — not a dup.
+        #expect(
+            !CompanionManager.isDuplicateRealtimeVoiceRouteFingerprint(
+                CompanionManager.realtimeVoiceRouteFingerprint("open safari"),
+                CompanionManager.realtimeVoiceRouteFingerprint("close safari")
+            )
+        )
+        // Short utterances under the 3-word minimum — not a dup even if similar.
+        #expect(
+            !CompanionManager.isDuplicateRealtimeVoiceRouteFingerprint(
+                CompanionManager.realtimeVoiceRouteFingerprint("go"),
+                CompanionManager.realtimeVoiceRouteFingerprint("go now")
+            )
+        )
+    }
+
     @Test func voiceHealthChecksUseLocalFastPath() async throws {
         #expect(
             CompanionManager.quickLocalVoiceResponseText(
