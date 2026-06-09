@@ -112,6 +112,16 @@ struct OpenClickyComputerUseTests {
         #expect(CompanionManager.testWebOpenTarget(from: "Open Chrome and go to amazon.co.uk")?.browserAppName == "Google Chrome")
     }
 
+    @Test func pastedLogsDoNotBecomeReminderCountCommands() throws {
+        let pastedLogs = """
+        find out why we're having issues
+        [OpenClickyLog][2026-06-09T11:22:08Z][computer-use/incoming] native_cua.direct_request.reminder_count_detected {"route":"native_cua.reminder_count","transcript":"count tasks reminders"}
+        """
+
+        #expect(CompanionManager.testLogEvidenceAnalysisInstruction(from: pastedLogs) != nil)
+        #expect(CompanionManager.testReminderCountInstruction(from: pastedLogs) == nil)
+    }
+
     @Test func spokenPlayButtonRequestsMapToARealKey() throws {
         #expect(CompanionManager.testNativeKeyPress(from: "Press play in Spotify.")?.key == "space")
         #expect(CompanionManager.testNativeKeyPress(from: "Press the play button in Spotify.")?.key == "space")

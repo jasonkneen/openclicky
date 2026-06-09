@@ -5175,6 +5175,22 @@ final class CompanionManager: ObservableObject {
     }
 
     private func handleDirectComputerUseRequest(from transcript: String, source: String) -> Bool {
+        guard Self.logEvidenceAnalysisInstruction(from: transcript) == nil else {
+            OpenClickyMessageLogStore.shared.append(
+                lane: "computer-use",
+                direction: "internal",
+                event: "native_cua.direct_request.skipped_log_evidence",
+                fields: [
+                    "source": source,
+                    "transcriptLength": transcript.count,
+                    "executor": "agent_mode",
+                    "route": "agent.start",
+                    "reason": "pasted_log_evidence"
+                ]
+            )
+            return false
+        }
+
         if let folderRequest = folderOpenRequest(from: transcript) {
             let fingerprint = Self.directComputerUseFingerprint(kind: "folder", value: folderRequest.url.path)
             OpenClickyMessageLogStore.shared.append(
@@ -10921,6 +10937,8 @@ final class CompanionManager: ObservableObject {
     }
 
     private static func reminderAddRequest(from transcript: String) -> OpenClickyReminderAddRequest? {
+        guard logEvidenceAnalysisInstruction(from: transcript) == nil else { return nil }
+
         let candidate = SpokenText.normalizedCommandCandidate(from: transcript)
         guard !candidate.isEmpty else { return nil }
 
@@ -10963,6 +10981,8 @@ final class CompanionManager: ObservableObject {
     }
 
     private static func reminderCountRequest(from transcript: String) -> OpenClickyReminderCountRequest? {
+        guard logEvidenceAnalysisInstruction(from: transcript) == nil else { return nil }
+
         let candidate = SpokenText.normalizedCommandCandidate(from: transcript)
         guard !candidate.isEmpty else { return nil }
 
@@ -11376,6 +11396,9 @@ final class CompanionManager: ObservableObject {
         let candidate = SpokenText.normalizedAgentTaskInstruction(from: transcript)
         let normalized = SpokenText.normalizedSpokenCommandText(candidate)
         guard SpokenText.wordCount(in: normalized) >= 3 else { return nil }
+        if let logInstruction = logEvidenceAnalysisInstruction(from: candidate) {
+            return logInstruction
+        }
         guard !isRawTransportDiagnosticEvent(candidate) else { return nil }
         guard !isMetaAgentRoutingQuestion(candidate) else { return nil }
         guard !isVoiceRouteCapabilityQuestion(candidate) else { return nil }
@@ -11397,6 +11420,40 @@ final class CompanionManager: ObservableObject {
         guard !isLikelyDirectLocalOnlyRequest(candidate) else { return nil }
 
         return SpokenText.cleanedAgentTaskInstruction(candidate)
+    }
+
+    private static func logEvidenceAnalysisInstruction(from transcript: String) -> String? {
+        let candidate = SpokenText.normalizedCommandCandidate(from: transcript)
+        guard !candidate.isEmpty else { return nil }
+
+        let logEvidenceSignals = [
+            "[OpenClickyLog]",
+            #""event":"#,
+            #""lane":"#,
+            "openclicky.",
+            "native_cua.",
+            "voice.realtime",
+            "codex.rpc",
+            "messages-",
+            "Transcription: using",
+            "requestID",
+            "executionMethod",
+            "route"
+        ]
+        let hasLogEvidence = logEvidenceSignals.contains {
+            candidate.localizedCaseInsensitiveContains($0)
+        }
+        guard hasLogEvidence else { return nil }
+
+        let normalized = SpokenText.normalizedSpokenCommandText(candidate)
+        let intentPattern = #"\b(?:logs?|issue|issues|error|errors|why|fix|analyse|analyze|review|inspect|look\s+at|look\s+into|find\s+out|debug|diagnose|what\s+happened|what'?s\s+wrong|make\s+a\s+note|note\s+that)\b"#
+        let hasAnalysisIntent = normalized.range(of: intentPattern, options: .regularExpression) != nil
+
+        guard hasAnalysisIntent || candidate.count >= 500 else { return nil }
+
+        return """
+        Analyze the pasted OpenClicky logs as evidence, identify the issue, and make the smallest safe fix or durable note needed. Do not route the pasted log text as a direct local app command. Original request and log evidence: \(candidate)
+        """
     }
 
     private static func smartAgentRouteDecision(from transcript: String) -> SmartAgentRouteDecision? {
@@ -17788,6 +17845,14 @@ extension CompanionManager {
 
     static func testLocalAppOpenTarget(from transcript: String) -> String? {
         localAppOpenRequest(from: transcript)?.appName
+    }
+
+    static func testLogEvidenceAnalysisInstruction(from transcript: String) -> String? {
+        logEvidenceAnalysisInstruction(from: transcript)
+    }
+
+    static func testReminderCountInstruction(from transcript: String) -> String? {
+        reminderCountRequest(from: transcript)?.instruction
     }
 
     static func testNativeKeyPress(from transcript: String) -> (key: String, modifiers: [String])? {

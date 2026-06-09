@@ -305,6 +305,18 @@ struct CodexAgentModeTests {
         #expect(CompanionManager.implicitAgentTaskInstruction(from: genericNotification) == nil)
     }
 
+    @MainActor @Test func pastedOpenClickyLogsRouteToAgentAnalysis() throws {
+        let pastedLogs = """
+        find out why we're having issues
+        [OpenClickyLog][2026-06-09T11:22:08Z][computer-use/incoming] native_cua.direct_request.reminder_count_detected {"route":"native_cua.reminder_count","transcript":"find out why we're having issues [OpenClickyLog] openclicky.agent_task.created count reminders"}
+        """
+
+        let maybeInstruction = CompanionManager.implicitAgentTaskInstruction(from: pastedLogs)
+
+        #expect(maybeInstruction != nil)
+        #expect(maybeInstruction?.contains("Analyze the pasted OpenClicky logs as evidence") == true)
+    }
+
     @MainActor @Test func implicitAgentRoutingKeepsLongBackgroundWorkAsAgentTasks() throws {
         let maybeInstruction = CompanionManager.implicitAgentTaskInstruction(
             from: "Summarize this GitHub issue and make a plan."
