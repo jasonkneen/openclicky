@@ -84,10 +84,11 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
             listener.newConnectionHandler = { [weak self] connection in
                 self?.handleNewConnection(connection)
             }
+            let port = self.port
             listener.stateUpdateHandler = { state in
                 switch state {
                 case .ready:
-                    print("OpenClicky external control bridge listening on http://127.0.0.1:\(self.port)")
+                    print("OpenClicky external control bridge listening on http://127.0.0.1:\(port)")
                 case .failed(let error):
                     print("OpenClicky external control bridge failed: \(error)")
                 default:
