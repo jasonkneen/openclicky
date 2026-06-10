@@ -26,6 +26,8 @@ Health check before a tour if unsure:
 curl -s http://127.0.0.1:32123/health
 ```
 
+All endpoints except `/health` require the bridge token. It is available in this session's environment as `OPENCLICKY_BRIDGE_TOKEN`; send it as `Authorization: Bearer $OPENCLICKY_BRIDGE_TOKEN` (or `x-openclicky-token`). A 401 response means the token header is missing or wrong.
+
 ## Core behavior
 
 - Use `POST /cursors` for multiple simultaneous temporary markers.
@@ -53,8 +55,9 @@ Use this pattern when the user says something like:
 
 ```bash
 python3 - <<'PY'
-import json, subprocess, time
+import json, os, subprocess, time
 base = 'http://127.0.0.1:32123'
+token = os.environ.get('OPENCLICKY_BRIDGE_TOKEN', '')
 
 def current_screen():
     swift = r'''
@@ -71,6 +74,7 @@ print("{\"minX\":\(f.minX),\"minY\":\(f.minY),\"width\":\(f.width),\"height\":\(
 def post(path, payload):
     subprocess.run([
         'curl', '-sS', '--max-time', '2', '-X', 'POST', base + path,
+        '-H', 'Authorization: Bearer ' + token,
         '-H', 'Content-Type: application/json',
         '-d', json.dumps(payload)
     ], check=False)
@@ -144,6 +148,7 @@ When the user asks you to describe what is on the screen:
 
 ```bash
 curl -s -X POST http://127.0.0.1:32123/screenshot \
+  -H "Authorization: Bearer $OPENCLICKY_BRIDGE_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"focused":false}'
 ```
@@ -166,6 +171,7 @@ Multiple markers:
 
 ```bash
 curl -s -X POST http://127.0.0.1:32123/cursors \
+  -H "Authorization: Bearer $OPENCLICKY_BRIDGE_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"durationMs":4500,"cursors":[{"x":640,"y":980,"caption":"Menu","accentHex":"#60A5FA"},{"x":820,"y":820,"caption":"Editor","accentHex":"#34D399"}]}'
 ```
@@ -174,6 +180,7 @@ Primary choreography:
 
 ```bash
 curl -s -X POST http://127.0.0.1:32123/cursor \
+  -H "Authorization: Bearer $OPENCLICKY_BRIDGE_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"x":820,"y":820,"caption":"Editor","durationMs":2500}'
 ```
@@ -182,6 +189,7 @@ Speak:
 
 ```bash
 curl -s -X POST http://127.0.0.1:32123/speak \
+  -H "Authorization: Bearer $OPENCLICKY_BRIDGE_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"text":"I am marking the important parts of this area.","interrupt":true}'
 ```
@@ -189,7 +197,7 @@ curl -s -X POST http://127.0.0.1:32123/speak \
 Clear:
 
 ```bash
-curl -s -X POST http://127.0.0.1:32123/clear
+curl -s -X POST http://127.0.0.1:32123/clear -H "Authorization: Bearer $OPENCLICKY_BRIDGE_TOKEN"
 ```
 
 ## Current visual tool boundary

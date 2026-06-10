@@ -28,6 +28,8 @@ Health check:
 curl -s http://127.0.0.1:32123/health
 ```
 
+All endpoints except `/health` require the bridge token. It is available in this session's environment as `OPENCLICKY_BRIDGE_TOKEN`; send it as `Authorization: Bearer $OPENCLICKY_BRIDGE_TOKEN` (or `x-openclicky-token`). A 401 response means the token header is missing or wrong.
+
 The bridge is designed to be fast and non-invasive: commands only drive OpenClicky's proxy overlay/voice layer and do not start dictation, submit prompts, create agent sessions, or mutate the main app conversation.
 
 Important cursor model:
@@ -45,6 +47,7 @@ Use macOS/AppKit screen coordinates: origin at the bottom-left of the global des
 
 ```bash
 curl -s -X POST http://127.0.0.1:32123/cursor \
+  -H "Authorization: Bearer $OPENCLICKY_BRIDGE_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"x": 640, "y": 520, "caption": "Click here", "durationMs": 4500}'
 ```
@@ -62,6 +65,7 @@ Use this when showing multiple possible locations or comparing alternatives. The
 
 ```bash
 curl -s -X POST http://127.0.0.1:32123/cursors \
+  -H "Authorization: Bearer $OPENCLICKY_BRIDGE_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"cursors":[{"x":640,"y":520,"caption":"Option A","accentHex":"#60A5FA"},{"x":900,"y":520,"caption":"Option B","accentHex":"#34D399"}],"durationMs":4500}'
 ```
@@ -70,6 +74,7 @@ Or a single secondary cursor:
 
 ```bash
 curl -s -X POST http://127.0.0.1:32123/cursor \
+  -H "Authorization: Bearer $OPENCLICKY_BRIDGE_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"x": 640, "y": 520, "caption": "Look here", "mode": "secondary"}'
 ```
@@ -78,6 +83,7 @@ curl -s -X POST http://127.0.0.1:32123/cursor \
 
 ```bash
 curl -s -X POST http://127.0.0.1:32123/caption \
+  -H "Authorization: Bearer $OPENCLICKY_BRIDGE_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"x": 900, "y": 700, "text": "This is the setting you want", "durationMs": 5000}'
 ```
@@ -90,6 +96,7 @@ When you need to find something before showing it, request screenshots first. Th
 
 ```bash
 curl -s -X POST http://127.0.0.1:32123/screenshot \
+  -H "Authorization: Bearer $OPENCLICKY_BRIDGE_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"focused": false}'
 ```
@@ -102,6 +109,7 @@ Workflow: capture screenshot → inspect/recognize target → call `/cursor` wit
 
 ```bash
 curl -s -X POST http://127.0.0.1:32123/speak \
+  -H "Authorization: Bearer $OPENCLICKY_BRIDGE_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"text": "Click the button in the top right."}'
 ```
@@ -111,7 +119,7 @@ If OpenClicky is already speaking, this returns HTTP 409 unless `interrupt: true
 ### Clear the proxy overlay
 
 ```bash
-curl -s -X POST http://127.0.0.1:32123/clear
+curl -s -X POST http://127.0.0.1:32123/clear -H "Authorization: Bearer $OPENCLICKY_BRIDGE_TOKEN"
 ```
 
 ## MCP-style tool endpoints
@@ -119,13 +127,14 @@ curl -s -X POST http://127.0.0.1:32123/clear
 List descriptors:
 
 ```bash
-curl -s http://127.0.0.1:32123/mcp/tools
+curl -s http://127.0.0.1:32123/mcp/tools -H "Authorization: Bearer $OPENCLICKY_BRIDGE_TOKEN"
 ```
 
 If your runtime wants one generic tool-call shape, use:
 
 ```bash
 curl -s -X POST http://127.0.0.1:32123/mcp/call \
+  -H "Authorization: Bearer $OPENCLICKY_BRIDGE_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"tool":"openclicky_point","arguments":{"x":640,"y":520,"caption":"This one"}}'
 ```
@@ -144,6 +153,7 @@ For multiple coordinated tool calls in one tutorial scene, use the batch endpoin
 
 ```bash
 curl -s -X POST http://127.0.0.1:32123/mcp/calls \
+  -H "Authorization: Bearer $OPENCLICKY_BRIDGE_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"calls":[{"tool":"clear","arguments":{}},{"tool":"openclicky_point","arguments":{"x":640,"y":520,"caption":"Start here"}},{"tool":"speak","arguments":{"text":"Start with this button."}}]}'
 ```
@@ -152,6 +162,7 @@ JSON-RPC style MCP calls are also accepted:
 
 ```bash
 curl -s -X POST http://127.0.0.1:32123/mcp \
+  -H "Authorization: Bearer $OPENCLICKY_BRIDGE_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"openclicky_point","arguments":{"x":640,"y":520,"caption":"This one"}}}'
 ```
@@ -161,7 +172,7 @@ curl -s -X POST http://127.0.0.1:32123/mcp \
 For another app that wants acknowledgements:
 
 ```bash
-curl -N http://127.0.0.1:32123/events
+curl -N http://127.0.0.1:32123/events -H "Authorization: Bearer $OPENCLICKY_BRIDGE_TOKEN"
 ```
 
 ## Behavior rules
@@ -180,6 +191,7 @@ Example response flow:
 
 ```bash
 curl -s -X POST http://127.0.0.1:32123/cursor \
+  -H "Authorization: Bearer $OPENCLICKY_BRIDGE_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"x":1180,"y":760,"caption":"Use this menu", "durationMs":5000}'
 ```

@@ -122,6 +122,13 @@ http://127.0.0.1:32123
 
 The bridge is intentionally non-invasive. It drives OpenClicky's overlay, screenshots, and TTS, but does not start dictation, submit prompts, create new agent sessions, or mutate the normal OpenClicky conversation state.
 
+All endpoints except `GET /health` require a bridge token, sent as `Authorization: Bearer <token>` or `x-openclicky-token: <token>`. OpenClicky generates a random token on first launch and stores it in the macOS Keychain (service `com.jkneen.openclicky.secrets`, account `openClickyExternalControlBridgeToken`); agent sessions spawned by OpenClicky receive it as `OPENCLICKY_BRIDGE_TOKEN` in their environment. To use your own token instead, set `OPENCLICKY_BRIDGE_TOKEN` in the app's launch environment or in `~/.config/openclicky/secrets.env`. Read the generated token from a terminal with:
+
+```sh
+security find-generic-password -s com.jkneen.openclicky.secrets \
+  -a openClickyExternalControlBridgeToken -w
+```
+
 Useful endpoints:
 
 - `GET /health` checks bridge status.
@@ -142,6 +149,7 @@ Example primary pointer cue:
 
 ```sh
 curl -s -X POST http://127.0.0.1:32123/cursor \
+  -H "Authorization: Bearer $OPENCLICKY_BRIDGE_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"x":640,"y":520,"caption":"Click this menu","durationMs":4500}'
 ```
@@ -150,6 +158,7 @@ Example simultaneous multi-marker cue:
 
 ```sh
 curl -s -X POST http://127.0.0.1:32123/cursors \
+  -H "Authorization: Bearer $OPENCLICKY_BRIDGE_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"durationMs":4500,"cursors":[{"x":640,"y":520,"caption":"Editor","accentHex":"#60A5FA"},{"x":900,"y":520,"caption":"Logs","accentHex":"#F59E0B"}]}'
 ```
@@ -158,10 +167,12 @@ Example screenshot-to-pointer workflow:
 
 ```sh
 curl -s -X POST http://127.0.0.1:32123/screenshot \
+  -H "Authorization: Bearer $OPENCLICKY_BRIDGE_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"focused":false}'
 
 curl -s -X POST http://127.0.0.1:32123/cursor \
+  -H "Authorization: Bearer $OPENCLICKY_BRIDGE_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"x":1180,"y":760,"caption":"Use this button"}'
 ```
