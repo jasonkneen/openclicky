@@ -283,7 +283,10 @@ final class BuddyDictationManager: NSObject, ObservableObject {
     private var activeDictationRequestedAt: Date?
     private var activeDictationRecordingStartedAt: Date?
     private var activeTranscriptionProviderOpenStartedAt: Date?
+    /// Guarded by `preProviderAudioBufferLock`: appended from the audio tap
+    /// thread, flushed/cleared on the main actor.
     private var audioBuffersCapturedBeforeProviderReady: [AVAudioPCMBuffer] = []
+    private let preProviderAudioBufferLock = NSLock()
     private static let maximumBufferedAudioBuffersBeforeProviderReady = 360
     /// Timestamp of the last completed permission request, used to debounce
     /// rapid follow-up requests that arrive before macOS updates its cache.
@@ -678,7 +681,9 @@ final class BuddyDictationManager: NSObject, ObservableObject {
             audioEngine.stop()
         }
         removeInputTapIfNeeded()
+        preProviderAudioBufferLock.lock()
         audioBuffersCapturedBeforeProviderReady.removeAll()
+        preProviderAudioBufferLock.unlock()
         if cancelTranscriptionSession {
             activeTranscriptionSession?.cancel()
             activeTranscriptionSession = nil
@@ -745,9 +750,12 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         )
 
         self.activeTranscriptionSession = activeTranscriptionSession
-        let bufferedAudioBufferCount = audioBuffersCapturedBeforeProviderReady.count
-        audioBuffersCapturedBeforeProviderReady.forEach { activeTranscriptionSession.appendAudioBuffer($0) }
+        preProviderAudioBufferLock.lock()
+        let bufferedAudioBuffers = audioBuffersCapturedBeforeProviderReady
         audioBuffersCapturedBeforeProviderReady.removeAll()
+        preProviderAudioBufferLock.unlock()
+        let bufferedAudioBufferCount = bufferedAudioBuffers.count
+        bufferedAudioBuffers.forEach { activeTranscriptionSession.appendAudioBuffer($0) }
         print("🎙️ BuddyDictationManager: provider ready, flushed \(bufferedAudioBufferCount) buffered audio buffers")
         logDictationEvent(
             "voice.dictation.provider_ready",
@@ -781,6 +789,8 @@ final class BuddyDictationManager: NSObject, ObservableObject {
 
     private func bufferAudioUntilTranscriptionProviderReady(_ buffer: AVAudioPCMBuffer) {
         guard let copiedBuffer = copyAudioBuffer(buffer) else { return }
+        preProviderAudioBufferLock.lock()
+        defer { preProviderAudioBufferLock.unlock() }
         audioBuffersCapturedBeforeProviderReady.append(copiedBuffer)
         if audioBuffersCapturedBeforeProviderReady.count > Self.maximumBufferedAudioBuffersBeforeProviderReady {
             audioBuffersCapturedBeforeProviderReady.removeFirst(
