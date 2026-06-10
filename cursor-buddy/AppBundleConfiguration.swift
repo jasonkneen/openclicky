@@ -150,6 +150,28 @@ nonisolated enum AppBundleConfiguration {
         ) ?? localDevelopmentEnvironmentValue(forKey: "OPENCLICKY_BRIDGE_TOKEN")
     }
 
+    /// Returns the configured bridge token, generating and persisting a random
+    /// one in the Keychain on first use. The bridge stays fail-closed for
+    /// callers without the token, while OpenClicky's own agent sessions and
+    /// bundled skills receive it through their process environment.
+    @discardableResult
+    static func ensureExternalControlBridgeToken() -> String? {
+        if let existingToken = externalControlBridgeToken() {
+            return existingToken
+        }
+
+        var randomBytes = [UInt8](repeating: 0, count: 32)
+        guard SecRandomCopyBytes(kSecRandomDefault, randomBytes.count, &randomBytes) == errSecSuccess else {
+            return nil
+        }
+        let token = "oc-" + Data(randomBytes).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        persistSecret(token, defaultsKey: userExternalControlBridgeTokenDefaultsKey)
+        return externalControlBridgeToken() ?? token
+    }
+
     static func agentPlaintextProviderSyncEnabled() -> Bool {
         userDefaultsBool(forKey: userAgentPlaintextProviderSyncEnabledDefaultsKey, defaultValue: false)
     }

@@ -2154,6 +2154,9 @@ final class CompanionManager: ObservableObject {
 
     private func startExternalControlBridgeIfNeeded() {
         guard externalControlBridgeServer == nil else { return }
+        if AppBundleConfiguration.ensureExternalControlBridgeToken() == nil {
+            print("⚠️ OpenClicky: external control bridge token could not be provisioned; authenticated bridge endpoints will return 401")
+        }
         let server = OpenClickyExternalControlBridgeServer { [weak self] command in
             guard let self else {
                 return .error(503, "OpenClicky is not ready")

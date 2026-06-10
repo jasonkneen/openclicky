@@ -47,6 +47,14 @@ nonisolated final class CodexProcessManager: @unchecked Sendable {
         )
         Self.applyGogCLIEnvironment(to: &environment)
 
+        // Bundled skills (openclicky-screen-control, openclicky-screen-tour)
+        // authenticate against the local external-control bridge with this
+        // token. Without it every bridge call from an agent returns 401.
+        if environment["OPENCLICKY_BRIDGE_TOKEN"]?.isEmpty != false,
+           let bridgeToken = AppBundleConfiguration.ensureExternalControlBridgeToken() {
+            environment["OPENCLICKY_BRIDGE_TOKEN"] = bridgeToken
+        }
+
         let codexAuthFile = codexHome.appendingPathComponent("auth.json", isDirectory: false)
         let configFile = codexHome.appendingPathComponent("config.toml", isDirectory: false)
         let configText = (try? String(contentsOf: configFile, encoding: .utf8)) ?? ""
