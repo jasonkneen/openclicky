@@ -209,6 +209,15 @@ struct OpenClickySettingsView: View {
     @State private var userCodexAgentAPIKey = ""
     @State private var userAssemblyAIAPIKey = ""
     @State private var userDeepgramAPIKey = ""
+    @AppStorage("localModelBaseURL") private var localModelBaseURL = LocalModelSettingsStore.defaultBaseURLString
+    @AppStorage("localModelMaxOutputTokens") private var localModelMaxOutputTokens = 8192
+    @AppStorage("appleFoundationEnabled") private var appleFoundationEnabled = false
+    @AppStorage("clickyAgentBaseURL") private var clickyAgentBaseURL = ""
+    @State private var localModelToken = ""
+    @State private var manualLocalModelID = ""
+    @State private var discoveredLocalModels: [String] = []
+    @State private var localModelStatusMessage: String?
+    @State private var isDetectingLocalModels = false
     @AppStorage(AppBundleConfiguration.userMCPDeveloperDocsEnabledDefaultsKey) private var mcpDeveloperDocsEnabled = false
     @AppStorage(AppBundleConfiguration.userMCPComposioConnectEnabledDefaultsKey) private var mcpComposioConnectEnabled = false
     @AppStorage(AppBundleConfiguration.userMCPComputerUseEnabledDefaultsKey) private var mcpComputerUseEnabled = false
@@ -372,6 +381,7 @@ struct OpenClickySettingsView: View {
         userElevenLabsAPIKey = AppBundleConfiguration.elevenLabsAPIKey() ?? ""
         userCartesiaAPIKey = AppBundleConfiguration.cartesiaAPIKey() ?? ""
         codexAgentBaseURL = UserDefaults.standard.string(forKey: "clickyAgentBaseURL") ?? ""
+        localModelToken = LocalModelSettingsStore.token ?? ""
     }
 
     private var sidebar: some View {
@@ -905,7 +915,7 @@ struct OpenClickySettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 modelOptionGrid(
-                    options: OpenClickyModelCatalog.responseVoiceModels,
+                    options: voiceModelOptions,
                     selectedModelID: companionManager.selectedModel,
                     columns: 3,
                     select: { companionManager.setSelectedModel($0) }
@@ -944,7 +954,39 @@ struct OpenClickySettingsView: View {
                 }
             }
 
-            settingsGroup("Transcription provider") {
+            localAISettingsGroup
+
+            settingsGroup("Listening / transcription") {
+                LazyVGrid(columns: settingsOptionColumns(3), spacing: 8) {
+                    ForEach(OpenClickyVoiceActivationMode.allCases) { mode in
+                        optionButton(
+                            title: mode.label,
+                            subtitle: mode.subtitle,
+                            isSelected: companionManager.voiceActivationMode == mode,
+                            action: { companionManager.setVoiceActivationMode(mode) }
+                        )
+                    }
+                }
+                .padding(14)
+
+                valueRow(
+                    title: wakeWordManager.isListening ? "Wake word armed" : "Wake word",
+                    subtitle: companionManager.voiceActivationMode.usesWakeWord
+                        ? (wakeWordManager.isListening
+                            ? "Say “Hey Clicky” to start a voice turn. Wake detection uses on-device Apple Speech."
+                            : "Activation keys toggle the local Hey Clicky listener; always-listening mode starts it automatically.")
+                        : "Disabled while Push to talk is selected.",
+                    systemImageName: wakeWordManager.isListening ? "ear.badge.waveform" : "ear"
+                )
+
+                if let wakeWordError = wakeWordManager.lastErrorMessage,
+                   !wakeWordError.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    warningRow(
+                        title: "Wake-word listener",
+                        subtitle: wakeWordError
+                    )
+                }
+
                 if OpenClickyModelCatalog.isSpeechModelID(companionManager.selectedModel) {
                     valueRow(
                         title: "Current input path",
@@ -2362,6 +2404,172 @@ struct OpenClickySettingsView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
+    }
+
+    /// Voice model options shown in the picker: the built-in cloud models plus
+    /// any discovered local models, the Apple on-device option (when enabled and
+    /// available), and the currently-selected local model if not already listed.
+    private var voiceModelOptions: [OpenClickyModelOption] {
+        var options = OpenClickyModelCatalog.responseVoiceModels
+        options += discoveredLocalModels.map { localModelOption(forRawID: $0) }
+        if appleFoundationEnabled, AppleFoundationModelAvailability.isAvailable() {
+            options.append(
+                OpenClickyModelOption(
+                    id: OpenClickyModelCatalog.appleFoundationModelID,
+                    label: OpenClickyModelCatalog.appleFoundationLabel,
+                    provider: .appleFoundation,
+                    maxOutputTokens: 4_096
+                )
+            )
+        }
+        let selected = companionManager.selectedModel
+        if OpenClickyModelCatalog.isLocalModelID(selected),
+           !options.contains(where: { $0.id == selected }),
+           let option = OpenClickyModelCatalog.localModelOption(forID: selected) {
+            options.append(option)
+        }
+        return options
+    }
+
+    private func localModelOption(forRawID rawID: String) -> OpenClickyModelOption {
+        let namespaced = OpenClickyModelCatalog.localModelIDPrefix + rawID
+        return OpenClickyModelCatalog.localModelOption(forID: namespaced)
+            ?? OpenClickyModelOption(id: namespaced, label: rawID, provider: .localOpenAICompatible, maxOutputTokens: localModelMaxOutputTokens)
+    }
+
+    private func detectLocalModels() {
+        isDetectingLocalModels = true
+        localModelStatusMessage = nil
+        let url = LocalModelSettingsStore.baseURL
+        let token = localModelToken.isEmpty ? nil : localModelToken
+        Task {
+            do {
+                let models = try await LocalModelDiscovery.listModels(baseURL: url, apiKey: token)
+                await MainActor.run {
+                    discoveredLocalModels = models
+                    localModelStatusMessage = "Found \(models.count) model\(models.count == 1 ? "" : "s")."
+                    isDetectingLocalModels = false
+                }
+            } catch {
+                await MainActor.run {
+                    discoveredLocalModels = []
+                    localModelStatusMessage = error.localizedDescription
+                    isDetectingLocalModels = false
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var localAISettingsGroup: some View {
+        settingsGroup("Local AI") {
+            Text("Use models running on your Mac. Works with any OpenAI-compatible server (Ollama, LM Studio, MLX, llama.cpp) and Apple's on-device model. Local models are called directly and are never billed.")
+                .font(appUIFont(size: subtextFontSize, weight: .regular))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            textFieldRow(
+                title: "Server base URL",
+                subtitle: "Default is Ollama. LM Studio is usually http://localhost:1234/v1.",
+                systemImageName: "server.rack",
+                placeholder: LocalModelSettingsStore.defaultBaseURLString,
+                text: $localModelBaseURL
+            )
+
+            secureFieldRow(
+                title: "Server token (optional)",
+                subtitle: "Only needed if your local server requires authentication.",
+                systemImageName: "key",
+                placeholder: "Bearer token",
+                text: Binding(
+                    get: { localModelToken },
+                    set: { localModelToken = $0; LocalModelSettingsStore.token = $0 }
+                )
+            )
+
+            actionRow(
+                title: isDetectingLocalModels ? "Detecting…" : "Detect installed models",
+                systemImageName: "sparkle.magnifyingglass",
+                action: { detectLocalModels() }
+            )
+
+            if let message = localModelStatusMessage {
+                valueRow(title: "Discovery", subtitle: message, systemImageName: "info.circle")
+            }
+
+            if !discoveredLocalModels.isEmpty {
+                modelOptionGrid(
+                    options: discoveredLocalModels.map { localModelOption(forRawID: $0) },
+                    selectedModelID: companionManager.selectedModel,
+                    columns: 2,
+                    select: { companionManager.setSelectedModel($0) }
+                )
+            }
+
+            textFieldRow(
+                title: "Or enter a model id",
+                subtitle: "Type an exact id (e.g. qwen2.5:7b) the picker did not list.",
+                systemImageName: "character.cursor.ibeam",
+                placeholder: "model id",
+                text: $manualLocalModelID
+            )
+
+            actionRow(
+                title: "Use this model id",
+                systemImageName: "checkmark.circle",
+                action: {
+                    let trimmed = manualLocalModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty else { return }
+                    companionManager.setSelectedModel(OpenClickyModelCatalog.localModelIDPrefix + trimmed)
+                }
+            )
+
+            textFieldRow(
+                title: "Max output tokens",
+                subtitle: "Generation cap for local replies.",
+                systemImageName: "number",
+                placeholder: "8192",
+                text: Binding(
+                    get: { String(localModelMaxOutputTokens) },
+                    set: { localModelMaxOutputTokens = Int($0) ?? localModelMaxOutputTokens }
+                )
+            )
+
+            if AppleFoundationModelAvailability.isAvailable() {
+                toggleRow(
+                    title: "Apple on-device model",
+                    subtitle: "Text-only. Runs fully on this Mac with no network call.",
+                    systemImageName: "apple.logo",
+                    isOn: Binding(
+                        get: { appleFoundationEnabled },
+                        set: { appleFoundationEnabled = $0 }
+                    )
+                )
+                if appleFoundationEnabled {
+                    actionRow(
+                        title: "Use Apple on-device model",
+                        systemImageName: "checkmark.circle",
+                        action: { companionManager.setSelectedModel(OpenClickyModelCatalog.appleFoundationModelID) }
+                    )
+                }
+            } else {
+                valueRow(
+                    title: "Apple on-device model",
+                    subtitle: AppleFoundationModelAvailability.unavailableReason() ?? "Unavailable on this Mac.",
+                    systemImageName: "apple.logo"
+                )
+            }
+
+            toggleRow(
+                title: "Use local endpoint for Agent Mode",
+                subtitle: "Points Codex Agent Mode at your local server. Restart Agent sessions to apply.",
+                systemImageName: "cpu",
+                isOn: Binding(
+                    get: { !localModelBaseURL.isEmpty && clickyAgentBaseURL == localModelBaseURL },
+                    set: { clickyAgentBaseURL = $0 ? localModelBaseURL : "" }
+                )
+            )
+        }
     }
 
     private func modelOptionGrid(
