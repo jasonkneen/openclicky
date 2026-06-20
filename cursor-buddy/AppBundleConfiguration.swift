@@ -36,6 +36,7 @@ nonisolated enum AppBundleConfiguration {
     static let userAppLineSpacingDefaultsKey = "openClickyAppLineSpacing"
     static let userAppBoldTextDefaultsKey = "openClickyAppBoldTextEnabled"
     static let userCodexAgentAPIKeyDefaultsKey = "openClickyCodexAgentAPIKey"
+    static let userLocalModelTokenDefaultsKey = "openClickyLocalModelToken"
     static let userAssemblyAIAPIKeyDefaultsKey = "openClickyAssemblyAIAPIKey"
     static let userDeepgramAPIKeyDefaultsKey = "openClickyDeepgramAPIKey"
     static let userVoiceTranscriptionProviderDefaultsKey = "openClickyVoiceTranscriptionProvider"
@@ -89,6 +90,12 @@ nonisolated enum AppBundleConfiguration {
             forKey: "OpenAIAPIKey",
             environmentKeys: ["OPENAI_API_KEY"]
         ) ?? localDevelopmentEnvironmentValue(forKey: "OPENAI_API_KEY")
+    }
+
+    /// Optional bearer token for a local OpenAI-compatible server that
+    /// requires auth (most do not). Keychain-backed.
+    static func localModelToken() -> String? {
+        userDefaultsValue(forKey: userLocalModelTokenDefaultsKey)
     }
 
     static func gogKeyringPassword() -> String? {
@@ -361,6 +368,7 @@ nonisolated enum AppBundleConfiguration {
         userElevenLabsAPIKeyDefaultsKey,
         userCartesiaAPIKeyDefaultsKey,
         userCodexAgentAPIKeyDefaultsKey,
+        userLocalModelTokenDefaultsKey,
         userAssemblyAIAPIKeyDefaultsKey,
         userDeepgramAPIKeyDefaultsKey,
         userExternalControlBridgeTokenDefaultsKey

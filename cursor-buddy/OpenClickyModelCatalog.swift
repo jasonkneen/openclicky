@@ -5,6 +5,8 @@ nonisolated enum OpenClickyModelProvider: String, Equatable {
     case openAI
     case codex
     case deepgram
+    case localOpenAICompatible
+    case appleFoundation
 
     var displayName: String {
         switch self {
@@ -16,8 +18,15 @@ nonisolated enum OpenClickyModelProvider: String, Equatable {
             return "Codex"
         case .deepgram:
             return "Deepgram"
+        case .localOpenAICompatible:
+            return "Local (OpenAI-compatible)"
+        case .appleFoundation:
+            return "Apple On-Device"
         }
     }
+
+    /// True for providers that run on the user's machine (no billed cloud call).
+    var isLocal: Bool { self == .localOpenAICompatible || self == .appleFoundation }
 }
 
 nonisolated struct OpenClickyModelOption: Identifiable, Equatable {
@@ -48,6 +57,37 @@ nonisolated enum OpenClickyModelCatalog {
     /// Coding work goes here; the voice path stays on the fast model.
     static let defaultDelegationModelID = "claude-sonnet-4-6"
     static let defaultComputerUseModelID = defaultCodexActionsModelID
+
+    // MARK: - Local models
+
+    /// Fixed id for Apple's on-device Foundation model.
+    static let appleFoundationModelID = "apple-foundation"
+    static let appleFoundationLabel = "Apple On-Device"
+    /// Prefix used to namespace dynamic, user-configured local model ids
+    /// (e.g. `local:qwen2.5:7b`) so they survive persistence in the same
+    /// `selectedVoiceResponseModel` string the cloud models use.
+    static let localModelIDPrefix = "local:"
+
+    static func isLocalModelID(_ id: String) -> Bool {
+        id == appleFoundationModelID || id.hasPrefix(localModelIDPrefix)
+    }
+
+    /// Synthesizes an option for a namespaced local id; returns nil for cloud ids.
+    static func localModelOption(forID id: String) -> OpenClickyModelOption? {
+        if id == appleFoundationModelID {
+            return OpenClickyModelOption(id: id, label: appleFoundationLabel, provider: .appleFoundation, maxOutputTokens: 4_096)
+        }
+        if id.hasPrefix(localModelIDPrefix) {
+            let raw = String(id.dropFirst(localModelIDPrefix.count))
+            return OpenClickyModelOption(id: id, label: raw, provider: .localOpenAICompatible, maxOutputTokens: LocalModelSettingsStore.maxOutputTokens)
+        }
+        return nil
+    }
+
+    /// Strips the `local:` prefix to recover the raw model id the server expects.
+    static func rawLocalModelID(forID id: String) -> String {
+        id.hasPrefix(localModelIDPrefix) ? String(id.dropFirst(localModelIDPrefix.count)) : id
+    }
 
     /// Resolves the delegation model — falls back to a sensible coder
     /// when the user hasn't picked one explicitly.
@@ -107,10 +147,12 @@ nonisolated enum OpenClickyModelCatalog {
     // /v1/responses. Keep agents on real cloud providers.
 
     static func voiceResponseModel(withID modelID: String) -> OpenClickyModelOption {
-        responseVoiceModels.first { $0.id == modelID } ?? voiceResponseModels[0]
+        if let local = localModelOption(forID: modelID) { return local }
+        return responseVoiceModels.first { $0.id == modelID } ?? voiceResponseModels[0]
     }
 
     static func voiceAnalysisModel(withID modelID: String?) -> OpenClickyModelOption {
+        if let modelID, let local = localModelOption(forID: modelID) { return local }
         if let modelID,
            !isSpeechModelID(modelID),
            let match = voiceResponseModels.first(where: { $0.id == modelID }) {
@@ -149,7 +191,7 @@ nonisolated enum OpenClickyModelCatalog {
     }
 
     static func computerUseModel(withID modelID: String) -> OpenClickyModelOption {
-        computerUseModels.first { $0.id == modelID } ?? computerUseModels[0]
+        return computerUseModels.first { $0.id == modelID } ?? computerUseModels[0]
     }
 
     static func codexActionsModel(withID modelID: String) -> OpenClickyModelOption {
