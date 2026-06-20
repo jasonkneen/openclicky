@@ -70,13 +70,16 @@ struct ClickyCodexConfigTemplate: Equatable {
         ]
 
         if !ClickyCodexBackend.isDefaultOpenAIBaseURL(workerBaseURL) {
+            // Local OpenAI-compatible servers serve /chat/completions, not the
+            // proprietary Responses API; pick the wire format accordingly.
+            let wireAPI = ClickyCodexBackend.isLocalBaseURL(workerBaseURL) ? "chat" : "responses"
             lines.append(contentsOf: [
                 "",
                 "[model_providers.\(Self.customModelProviderID)]",
                 "name = \"OpenClicky\"",
                 "env_key = \"OPENAI_API_KEY\"",
                 "base_url = \"\(escape(openAICompatibleEndpoint.absoluteString))\"",
-                "wire_api = \"responses\"",
+                "wire_api = \"\(wireAPI)\"",
                 "trust_level = \"trusted\"",
                 "hide_full_access_warning = true",
                 "fast_mode = true",
@@ -237,6 +240,25 @@ enum ClickyCodexBackend {
 
     static func isOpenClickyLocalModelBaseURL(_ url: URL) -> Bool {
         normalizedBaseURL(url) == normalizedBaseURL(openClickyLocalModelBaseURL)
+    }
+
+    /// True when the endpoint is a local model server (Ollama / LM Studio /
+    /// llama.cpp / vLLM). Local servers speak `/chat/completions`, so the
+    /// generated Codex provider must use `wire_api = "chat"`, not "responses".
+    static func isLocalBaseURL(_ url: URL) -> Bool {
+        if let host = url.host?.lowercased() {
+            if host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "0.0.0.0" {
+                return true
+            }
+            if host.hasSuffix(".local") {
+                return true
+            }
+        }
+        // Common local model server ports as a fallback signal.
+        if let port = url.port, port == 11434 || port == 1234 || port == 8080 {
+            return true
+        }
+        return false
     }
 
     private static func normalizedBaseURL(_ url: URL) -> String {
