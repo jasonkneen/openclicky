@@ -3918,6 +3918,7 @@ nonisolated enum OpenClickyTTSProvider: String, CaseIterable, Identifiable {
     case cartesia = "cartesia"
     case deepgram = "deepgram"
     case microsoftEdge = "microsoft_edge"
+    case kokoro = "kokoro"
     var id: String { rawValue }
     var displayName: String {
         switch self {
@@ -3926,6 +3927,7 @@ nonisolated enum OpenClickyTTSProvider: String, CaseIterable, Identifiable {
         case .cartesia: return "Cartesia"
         case .deepgram: return "Deepgram Aura"
         case .microsoftEdge: return "Microsoft Edge"
+        case .kokoro: return "Kokoro (local)"
         }
     }
     static func resolve(_ raw: String?) -> OpenClickyTTSProvider {
@@ -4421,3 +4423,450 @@ final class DeepgramTTSClient {
 }
 
 extension DeepgramTTSClient: OpenClickyTTSClient {}
+
+// MARK: - KokoroTTSClient
+
+/// Local, OpenAI-compatible TTS playback engine (e.g. a Kokoro `mlx-audio`
+/// server). POSTs text to `{baseURL}/audio/speech` and plays the returned
+/// audio. Kokoro returns WAV PCM16 mono at 24 kHz, so the same WAV decoder
+/// the Deepgram path uses applies directly. No API key is required for a
+/// local server, but an optional bearer token is supported.
+@MainActor
+final class KokoroTTSClient {
+    private var baseURLString: String
+    private var apiKey: String?
+    /// Carries the Kokoro voice identifier (e.g. `af_heart`). Named `voiceID`
+    /// to match the `OpenClickyTTSClient` protocol surface.
+    private(set) var voiceID: String
+    private let session: URLSession
+
+    private var audioEngine: AVAudioEngine?
+    private var playerNode: AVAudioPlayerNode?
+    private var streamingTask: Task<Void, Error>?
+    private weak var activeStreamingSession: StreamingTTSSession?
+
+    /// Kokoro emits 24 kHz PCM16 mono — matches the Deepgram rate.
+    nonisolated static let streamSampleRate: Double = 24_000
+    private static let chunkSampleCount = 2_048
+    nonisolated private static let ttsModelName = "kokoro"
+
+    fileprivate static func makeStreamFormat() -> AVAudioFormat? {
+        AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: streamSampleRate,
+            channels: 1,
+            interleaved: false
+        )
+    }
+
+    init(baseURLString: String, voiceID: String, apiKey: String? = nil) {
+        self.baseURLString = baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.voiceID = voiceID.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.apiKey = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = 30
+        configuration.timeoutIntervalForResource = 120
+        configuration.httpMaximumConnectionsPerHost = 6
+        self.session = URLSession(configuration: configuration)
+    }
+
+    /// Protocol conformance: updates the optional token and voice. Base URL
+    /// is updated separately via `updateBaseURL(_:)`.
+    func updateConfiguration(apiKey: String?, voiceID: String) {
+        self.apiKey = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.voiceID = voiceID.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func updateBaseURL(_ baseURLString: String) {
+        self.baseURLString = baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func warmUpConnection() {
+        guard let url = Self.speechURL(baseURLString: baseURLString) else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "HEAD"
+        request.timeoutInterval = 5
+        session.dataTask(with: request) { _, _, _ in }.resume()
+    }
+
+    var isPlaying: Bool {
+        guard let playerNode, playerNode.engine != nil else { return false }
+        return playerNode.isPlaying
+    }
+
+    func stopPlayback() {
+        activeStreamingSession?.cancel()
+        activeStreamingSession = nil
+        stopPlaybackInternal()
+    }
+
+    private func stopPlaybackInternal() {
+        streamingTask?.cancel()
+        streamingTask = nil
+        if let playerNode {
+            ElevenLabsTTSClient.stopPlayerIfAttached(playerNode)
+        }
+        playerNode = nil
+        audioEngine?.stop()
+        audioEngine = nil
+    }
+
+    // MARK: One-shot streaming
+
+    func speakText(
+        _ text: String,
+        waitUntilFinished: Bool = true,
+        onPlaybackStarted: (() -> Void)? = nil
+    ) async throws {
+        guard let url = Self.speechURL(baseURLString: baseURLString) else {
+            throw Self.makeError(-101, "Kokoro server base URL is not configured")
+        }
+
+        stopPlaybackInternal()
+        let engine = AVAudioEngine()
+        let player = AVAudioPlayerNode()
+        guard let streamFormat = Self.makeStreamFormat() else {
+            throw Self.makeError(-102, "Could not build PCM stream format")
+        }
+        engine.attach(player)
+        engine.connect(player, to: engine.mainMixerNode, format: streamFormat)
+        do { try engine.start() } catch {
+            throw Self.makeError(-103, "Audio engine failed to start: \(error.localizedDescription)")
+        }
+        self.audioEngine = engine
+        self.playerNode = player
+
+        let request = Self.makeRequest(url: url, apiKey: apiKey, voice: voiceID, text: text)
+        let (asyncBytes, response): (URLSession.AsyncBytes, URLResponse)
+        do {
+            (asyncBytes, response) = try await session.bytes(for: request)
+        } catch is CancellationError {
+            stopPlaybackInternal()
+            throw CancellationError()
+        } catch {
+            stopPlaybackInternal()
+            if Self.isExpectedCancellation(error) { throw CancellationError() }
+            throw Self.makeError(-104, "Kokoro request failed: \(error.localizedDescription). Is the Kokoro server running?")
+        }
+        guard let http = response as? HTTPURLResponse else {
+            stopPlaybackInternal()
+            throw Self.makeError(-105, "Kokoro returned an invalid response")
+        }
+        guard (200...299).contains(http.statusCode) else {
+            var body = Data()
+            do {
+                for try await byte in asyncBytes {
+                    body.append(byte)
+                    if body.count > 4096 { break }
+                }
+            } catch {}
+            stopPlaybackInternal()
+            let bodyText = String(data: body, encoding: .utf8) ?? "Unknown error"
+            throw Self.makeError(http.statusCode, "Kokoro API error \(http.statusCode): \(bodyText.prefix(500))")
+        }
+
+        let playerRef = player
+        let engineRef = engine
+        let streamFormatRef = streamFormat
+        var didFireStartCallback = false
+        var pendingByte: UInt8?
+        var sampleAccumulator: [Int16] = []
+        var scheduledFrameCount: AVAudioFramePosition = 0
+        sampleAccumulator.reserveCapacity(Self.chunkSampleCount)
+        // Kokoro returns a complete WAV; strip the header before scheduling.
+        var headerBuffer: [UInt8] = []
+        headerBuffer.reserveCapacity(64)
+        var pastHeader = false
+        var dataBytesRemaining: Int = .max
+
+        let task = Task { [weak self] in
+            do {
+                for try await byte in asyncBytes {
+                    try Task.checkCancellation()
+                    if !pastHeader {
+                        if Self.advanceWAVHeader(byte: byte, headerBuffer: &headerBuffer, pastHeader: &pastHeader, pendingByte: &pendingByte, dataBytesRemaining: &dataBytesRemaining, samples: &sampleAccumulator) {
+                            // header still consuming
+                        }
+                        continue
+                    }
+                    if dataBytesRemaining == 0 { break }
+                    if let lo = pendingByte {
+                        sampleAccumulator.append(Int16(bitPattern: UInt16(lo) | (UInt16(byte) << 8)))
+                        pendingByte = nil
+                    } else {
+                        pendingByte = byte
+                    }
+                    if dataBytesRemaining != .max { dataBytesRemaining -= 1 }
+
+                    if sampleAccumulator.count >= Self.chunkSampleCount {
+                        let chunk = sampleAccumulator
+                        sampleAccumulator.removeAll(keepingCapacity: true)
+                        let frames = await MainActor.run { () -> AVAudioFramePosition in
+                            let f = ElevenLabsTTSClient.scheduleSamples(chunk, on: playerRef, format: streamFormatRef)
+                            if f > 0 && !didFireStartCallback {
+                                didFireStartCallback = true
+                                onPlaybackStarted?()
+                            }
+                            return f
+                        }
+                        scheduledFrameCount += frames
+                    }
+                }
+                if !sampleAccumulator.isEmpty {
+                    let tail = sampleAccumulator
+                    let frames = await MainActor.run { () -> AVAudioFramePosition in
+                        let f = ElevenLabsTTSClient.scheduleSamples(tail, on: playerRef, format: streamFormatRef)
+                        if f > 0 && !didFireStartCallback {
+                            didFireStartCallback = true
+                            onPlaybackStarted?()
+                        }
+                        return f
+                    }
+                    scheduledFrameCount += frames
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                if Self.isExpectedCancellation(error) { throw CancellationError() }
+                throw error
+            }
+            await ElevenLabsTTSClient.waitForPlaybackToDrain(
+                playerRef,
+                scheduledFrameCount: scheduledFrameCount,
+                sampleRate: Self.streamSampleRate
+            )
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                if self.audioEngine === engineRef {
+                    self.audioEngine?.stop()
+                    self.audioEngine = nil
+                    self.playerNode = nil
+                }
+            }
+        }
+        self.streamingTask = task
+        if waitUntilFinished {
+            do { try await task.value }
+            catch is CancellationError { stopPlaybackInternal(); throw CancellationError() }
+            catch { stopPlaybackInternal(); throw error }
+        }
+    }
+
+    // MARK: Sentence-pipelined streaming
+
+    func beginStreamingResponse(onPlaybackStarted: @escaping @MainActor () -> Void) -> StreamingTTSSession {
+        stopPlaybackInternal()
+        let engine = AVAudioEngine()
+        let player = AVAudioPlayerNode()
+        guard let streamFormat = Self.makeStreamFormat() else {
+            return StreamingTTSSession(
+                fetchSamples: { [weak self] text in
+                    guard let self else { throw CancellationError() }
+                    return try await self.fetchSentenceSamples(text)
+                },
+                playerNode: nil,
+                format: nil,
+                sampleRate: Self.streamSampleRate,
+                onPlaybackStarted: onPlaybackStarted
+            )
+        }
+        engine.attach(player)
+        engine.connect(player, to: engine.mainMixerNode, format: streamFormat)
+        do { try engine.start() } catch {
+            print("⚠️ AVAudioEngine failed to start Kokoro streaming session: \(error)")
+            return StreamingTTSSession(
+                fetchSamples: { [weak self] text in
+                    guard let self else { throw CancellationError() }
+                    return try await self.fetchSentenceSamples(text)
+                },
+                playerNode: nil,
+                format: nil,
+                sampleRate: Self.streamSampleRate,
+                onPlaybackStarted: onPlaybackStarted
+            )
+        }
+        self.audioEngine = engine
+        self.playerNode = player
+        let session = StreamingTTSSession(
+            fetchSamples: { [weak self] text in
+                guard let self else { throw CancellationError() }
+                return try await self.fetchSentenceSamples(text)
+            },
+            playerNode: player,
+            format: streamFormat,
+            sampleRate: Self.streamSampleRate,
+            onPlaybackStarted: onPlaybackStarted
+        )
+        self.activeStreamingSession = session
+        return session
+    }
+
+    func fetchSentenceSamples(_ text: String) async throws -> [Int16] {
+        guard let url = Self.speechURL(baseURLString: baseURLString) else {
+            throw Self.makeError(-11, "Kokoro server base URL not configured")
+        }
+        let request = Self.makeRequest(url: url, apiKey: apiKey, voice: voiceID, text: text)
+        let urlSession = self.session
+        return try await Self.decodePCMSamples(request: request, session: urlSession)
+    }
+
+    /// Feeds one WAV byte while still inside the header; returns true while
+    /// the header is being consumed. Mirrors the Deepgram WAV scan: walks
+    /// chunks until the "data" tag, carrying over any PCM already buffered.
+    nonisolated private static func advanceWAVHeader(
+        byte: UInt8,
+        headerBuffer: inout [UInt8],
+        pastHeader: inout Bool,
+        pendingByte: inout UInt8?,
+        dataBytesRemaining: inout Int,
+        samples: inout [Int16]
+    ) -> Bool {
+        headerBuffer.append(byte)
+        if headerBuffer.count == 12 {
+            let isRIFF = headerBuffer[0] == 0x52 && headerBuffer[1] == 0x49
+                        && headerBuffer[2] == 0x46 && headerBuffer[3] == 0x46
+            let isWAVE = headerBuffer[8] == 0x57 && headerBuffer[9] == 0x41
+                        && headerBuffer[10] == 0x56 && headerBuffer[11] == 0x45
+            if !(isRIFF && isWAVE) {
+                for b in headerBuffer {
+                    if let lo = pendingByte {
+                        samples.append(Int16(bitPattern: UInt16(lo) | (UInt16(b) << 8)))
+                        pendingByte = nil
+                    } else {
+                        pendingByte = b
+                    }
+                }
+                pastHeader = true
+                headerBuffer.removeAll()
+                return true
+            }
+        }
+        if headerBuffer.count >= 16 && !pastHeader {
+            var index = 12
+            while index + 8 <= headerBuffer.count {
+                let chunkID = String(bytes: headerBuffer[index..<index+4], encoding: .ascii) ?? ""
+                let chunkSize = Int(headerBuffer[index+4])
+                    | (Int(headerBuffer[index+5]) << 8)
+                    | (Int(headerBuffer[index+6]) << 16)
+                    | (Int(headerBuffer[index+7]) << 24)
+                if chunkID == "data" {
+                    let pcmStart = index + 8
+                    if headerBuffer.count > pcmStart {
+                        for b in headerBuffer[pcmStart...] {
+                            if let lo = pendingByte {
+                                samples.append(Int16(bitPattern: UInt16(lo) | (UInt16(b) << 8)))
+                                pendingByte = nil
+                            } else {
+                                pendingByte = b
+                            }
+                        }
+                        let consumedFromData = headerBuffer.count - pcmStart
+                        dataBytesRemaining = max(0, chunkSize - consumedFromData)
+                    } else {
+                        dataBytesRemaining = chunkSize
+                    }
+                    pastHeader = true
+                    headerBuffer.removeAll()
+                    break
+                }
+                let nextIndex = index + 8 + chunkSize
+                let padded = chunkSize % 2 == 1 ? nextIndex + 1 : nextIndex
+                if padded > headerBuffer.count { break }
+                index = padded
+            }
+        }
+        return true
+    }
+
+    nonisolated private static func decodePCMSamples(
+        request: URLRequest,
+        session: URLSession
+    ) async throws -> [Int16] {
+        let (asyncBytes, response) = try await session.bytes(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            var body = Data()
+            do {
+                for try await byte in asyncBytes {
+                    body.append(byte)
+                    if body.count > 4096 { break }
+                }
+            } catch {}
+            let bodyText = String(data: body, encoding: .utf8) ?? ""
+            throw NSError(
+                domain: "KokoroTTS",
+                code: (response as? HTTPURLResponse)?.statusCode ?? -12,
+                userInfo: [NSLocalizedDescriptionKey: "Kokoro HTTP error \((response as? HTTPURLResponse)?.statusCode ?? 0): \(bodyText.prefix(500))"]
+            )
+        }
+
+        var samples: [Int16] = []
+        samples.reserveCapacity(8_192)
+        var headerBuffer: [UInt8] = []
+        headerBuffer.reserveCapacity(64)
+        var pastHeader = false
+        var pendingByte: UInt8?
+        var dataBytesRemaining: Int = .max
+
+        for try await byte in asyncBytes {
+            try Task.checkCancellation()
+            if !pastHeader {
+                _ = advanceWAVHeader(byte: byte, headerBuffer: &headerBuffer, pastHeader: &pastHeader, pendingByte: &pendingByte, dataBytesRemaining: &dataBytesRemaining, samples: &samples)
+                continue
+            }
+            if dataBytesRemaining == 0 { break }
+            if let lo = pendingByte {
+                samples.append(Int16(bitPattern: UInt16(lo) | (UInt16(byte) << 8)))
+                pendingByte = nil
+            } else {
+                pendingByte = byte
+            }
+            if dataBytesRemaining != .max { dataBytesRemaining -= 1 }
+        }
+        return samples
+    }
+
+    // MARK: Request building
+
+    /// Builds `{baseURL}/audio/speech` from a base like
+    /// `http://127.0.0.1:56873/v1` (trailing slashes tolerated).
+    nonisolated private static func speechURL(baseURLString: String) -> URL? {
+        var trimmed = baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
+        while trimmed.hasSuffix("/") { trimmed.removeLast() }
+        guard !trimmed.isEmpty else { return nil }
+        return URL(string: trimmed + "/audio/speech")
+    }
+
+    nonisolated private static func makeRequest(url: URL, apiKey: String?, voice: String, text: String) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("audio/wav", forHTTPHeaderField: "Accept")
+        if let apiKey, !apiKey.isEmpty {
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        }
+        let body: [String: Any] = [
+            "model": ttsModelName,
+            "input": text,
+            "voice": voice.isEmpty ? "af_heart" : voice,
+            "response_format": "wav"
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        return request
+    }
+
+    nonisolated private static func makeError(_ code: Int, _ message: String) -> NSError {
+        NSError(domain: "KokoroTTS", code: code, userInfo: [NSLocalizedDescriptionKey: message])
+    }
+
+    nonisolated private static func isExpectedCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        let ns = error as NSError
+        if ns.domain == NSURLErrorDomain && ns.code == NSURLErrorCancelled { return true }
+        if ns.domain == NSCocoaErrorDomain && ns.code == NSUserCancelledError { return true }
+        let desc = String(describing: error).lowercased()
+        return desc == "cancellationerror()" || desc.contains("cancelled") || desc.contains("canceled")
+    }
+}
+
+extension KokoroTTSClient: OpenClickyTTSClient {}

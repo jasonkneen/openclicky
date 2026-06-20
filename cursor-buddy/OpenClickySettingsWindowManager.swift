@@ -213,6 +213,8 @@ struct OpenClickySettingsView: View {
     @AppStorage("localModelMaxOutputTokens") private var localModelMaxOutputTokens = 8192
     @AppStorage("appleFoundationEnabled") private var appleFoundationEnabled = false
     @AppStorage("clickyAgentBaseURL") private var clickyAgentBaseURL = ""
+    @AppStorage("openClickyKokoroBaseURL") private var userKokoroBaseURL = "http://127.0.0.1:56873/v1"
+    @AppStorage("openClickyKokoroVoice") private var userKokoroVoice = "af_heart"
     @State private var localModelToken = ""
     @State private var manualLocalModelID = ""
     @State private var discoveredLocalModels: [String] = []
@@ -1113,6 +1115,31 @@ struct OpenClickySettingsView: View {
                         text: Binding(
                             get: { userMicrosoftEdgeVoiceID },
                             set: { userMicrosoftEdgeVoiceID = $0; companionManager.setMicrosoftEdgeVoiceID($0) }
+                        )
+                    )
+                case .kokoro:
+                    Text("Kokoro runs locally on your Mac. Point OpenClicky at your OpenAI-compatible TTS server (e.g. an mlx-audio Kokoro server). No API key needed.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
+                    textFieldRow(
+                        title: "Kokoro server base URL",
+                        subtitle: "OpenAI-compatible endpoint; /audio/speech is appended.",
+                        systemImageName: "server.rack",
+                        placeholder: "http://127.0.0.1:56873/v1",
+                        text: Binding(
+                            get: { userKokoroBaseURL },
+                            set: { userKokoroBaseURL = $0; companionManager.setKokoroBaseURL($0) }
+                        )
+                    )
+                    textFieldRow(
+                        title: "Kokoro voice",
+                        subtitle: "Voice identifier, e.g. af_heart, af_bella, am_michael.",
+                        systemImageName: "person.wave.2",
+                        placeholder: "af_heart",
+                        text: Binding(
+                            get: { userKokoroVoice },
+                            set: { userKokoroVoice = $0; companionManager.setKokoroVoice($0) }
                         )
                     )
                 }

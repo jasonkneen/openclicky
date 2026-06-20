@@ -37,6 +37,8 @@ nonisolated enum AppBundleConfiguration {
     static let userAppBoldTextDefaultsKey = "openClickyAppBoldTextEnabled"
     static let userCodexAgentAPIKeyDefaultsKey = "openClickyCodexAgentAPIKey"
     static let userLocalModelTokenDefaultsKey = "openClickyLocalModelToken"
+    static let userKokoroBaseURLDefaultsKey = "openClickyKokoroBaseURL"
+    static let userKokoroVoiceDefaultsKey = "openClickyKokoroVoice"
     static let userAssemblyAIAPIKeyDefaultsKey = "openClickyAssemblyAIAPIKey"
     static let userDeepgramAPIKeyDefaultsKey = "openClickyDeepgramAPIKey"
     static let userVoiceTranscriptionProviderDefaultsKey = "openClickyVoiceTranscriptionProvider"
@@ -96,6 +98,15 @@ nonisolated enum AppBundleConfiguration {
     /// requires auth (most do not). Keychain-backed.
     static func localModelToken() -> String? {
         userDefaultsValue(forKey: userLocalModelTokenDefaultsKey)
+    }
+
+    /// Base URL of a local OpenAI-compatible TTS server (Kokoro / mlx-audio).
+    static func kokoroBaseURL() -> String {
+        userDefaultsValue(forKey: userKokoroBaseURLDefaultsKey) ?? "http://127.0.0.1:56873/v1"
+    }
+
+    static func kokoroVoiceID() -> String {
+        userDefaultsValue(forKey: userKokoroVoiceDefaultsKey) ?? "af_heart"
     }
 
     static func gogKeyringPassword() -> String? {

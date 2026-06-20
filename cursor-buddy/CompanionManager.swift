@@ -782,6 +782,13 @@ final class CompanionManager: ObservableObject {
         )
     }()
 
+    private lazy var kokoroTTSClient: KokoroTTSClient = {
+        return KokoroTTSClient(
+            baseURLString: AppBundleConfiguration.kokoroBaseURL(),
+            voiceID: AppBundleConfiguration.kokoroVoiceID()
+        )
+    }()
+
     private lazy var openAIRealtimeSpeechClient: OpenAIRealtimeSpeechClient = {
         return OpenAIRealtimeSpeechClient(
             apiKey: AppBundleConfiguration.openAIAPIKey(),
@@ -832,6 +839,7 @@ final class CompanionManager: ObservableObject {
         case .cartesia:   return cartesiaTTSClient
         case .deepgram:   return activeDeepgramTTSClient
         case .microsoftEdge: return microsoftEdgeTTSClient
+        case .kokoro: return kokoroTTSClient
         }
     }
 
@@ -845,6 +853,7 @@ final class CompanionManager: ObservableObject {
         case .cartesia:   return "CartesiaTTSClient"
         case .deepgram:   return "DeepgramTTSClient"
         case .microsoftEdge: return "MicrosoftEdgeTTSClient"
+        case .kokoro: return "KokoroTTSClient"
         }
     }
 
@@ -855,6 +864,7 @@ final class CompanionManager: ObservableObject {
         case .cartesia:   return "CartesiaTTSClient.speakText"
         case .deepgram:   return "DeepgramTTSClient.speakText"
         case .microsoftEdge: return "MicrosoftEdgeTTSClient.speakText"
+        case .kokoro: return "KokoroTTSClient.speakText"
         }
     }
 
@@ -865,6 +875,7 @@ final class CompanionManager: ObservableObject {
         case .cartesia:   return "CartesiaTTSClient.beginStreamingResponse"
         case .deepgram:   return "DeepgramTTSClient.beginStreamingResponse"
         case .microsoftEdge: return "MicrosoftEdgeTTSClient.beginStreamingResponse"
+        case .kokoro: return "KokoroTTSClient.beginStreamingResponse"
         }
     }
 
@@ -897,6 +908,29 @@ final class CompanionManager: ObservableObject {
         )
         if selectedTTSProvider == .microsoftEdge {
             FillerPhraseLibrary.shared.prepare(client: microsoftEdgeTTSClient)
+        }
+    }
+
+    func setKokoroBaseURL(_ baseURL: String) {
+        let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            UserDefaults.standard.removeObject(forKey: AppBundleConfiguration.userKokoroBaseURLDefaultsKey)
+        } else {
+            UserDefaults.standard.set(trimmed, forKey: AppBundleConfiguration.userKokoroBaseURLDefaultsKey)
+        }
+        kokoroTTSClient.updateBaseURL(AppBundleConfiguration.kokoroBaseURL())
+    }
+
+    func setKokoroVoice(_ voice: String) {
+        let trimmed = voice.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            UserDefaults.standard.removeObject(forKey: AppBundleConfiguration.userKokoroVoiceDefaultsKey)
+        } else {
+            UserDefaults.standard.set(trimmed, forKey: AppBundleConfiguration.userKokoroVoiceDefaultsKey)
+        }
+        kokoroTTSClient.updateConfiguration(apiKey: nil, voiceID: AppBundleConfiguration.kokoroVoiceID())
+        if selectedTTSProvider == .kokoro {
+            FillerPhraseLibrary.shared.prepare(client: kokoroTTSClient)
         }
     }
 
@@ -17030,7 +17064,7 @@ final class CompanionManager: ObservableObject {
         // cached opener only when the user has asked a real multi-word
         // question or investigation. Short acknowledgements stay crisp.
         switch ttsProvider {
-        case .cartesia, .elevenLabs, .microsoftEdge, .deepgram:
+        case .cartesia, .elevenLabs, .microsoftEdge, .deepgram, .kokoro:
             return wordCount >= 6
         case .openAIRealtime:
             return false
