@@ -224,6 +224,7 @@ private enum OpenClickyComputerUsePointingResolver: String {
     case anthropicAPI = "anthropic_api"
     case codexCLI = "codex_cli"
     case openAIResponses = "openai_responses"
+    case localVision = "local_vision"
     case unsupported = "unsupported"
 }
 
@@ -1781,6 +1782,9 @@ final class CompanionManager: ObservableObject {
             }
         case .deepgram:
             deepgramVoiceAgentClient.warmUpConnection()
+        case .localOpenAICompatible, .appleFoundation:
+            // Local clients are constructed per request; nothing to warm up.
+            break
         }
     }
 
@@ -1814,6 +1818,10 @@ final class CompanionManager: ObservableObject {
                 voiceID: AppBundleConfiguration.deepgramTTSVoice(),
                 thinkModel: AppBundleConfiguration.deepgramVoiceAgentThinkModel()
             )
+        case .localOpenAICompatible, .appleFoundation:
+            // The local analyze paths build their own client per call from
+            // LocalModelSettingsStore; no shared client to configure here.
+            break
         }
     }
 
@@ -2250,6 +2258,9 @@ final class CompanionManager: ObservableObject {
             if selectedVoiceResponseModel.provider == .codex || AppBundleConfiguration.openAIAPIKey() == nil {
                 codexVoiceSession.warmUp(systemPrompt: currentVoiceResponseSystemPrompt())
             }
+        case .localOpenAICompatible, .appleFoundation:
+            // Local clients are constructed per request; nothing to warm up.
+            break
         }
         // Force-init the active TTS provider and prime its TLS
         // handshake. The first sentence's TTS request would otherwise
@@ -4191,6 +4202,16 @@ final class CompanionManager: ObservableObject {
             fields["transport"] = "codex_app_server_stdio"
             fields["streamingMethod"] = "codex_app_server_agentMessage_delta"
             fields["apiKeyFallback"] = AppBundleConfiguration.openAIAPIKey() != nil
+        case .localOpenAICompatible:
+            fields["executionMethod"] = "LocalChatCompletionsAPI.streamResponse"
+            fields["authMode"] = "local_openai_compatible_direct"
+            fields["transport"] = "chat_completions_sse"
+            fields["streamingMethod"] = "URLSession.bytes"
+        case .appleFoundation:
+            fields["executionMethod"] = "AppleFoundationModelClient.streamResponse"
+            fields["authMode"] = "on_device_foundation_models"
+            fields["transport"] = "foundation_models_session"
+            fields["streamingMethod"] = "LanguageModelSession.streamResponse"
         }
 
         return fields
@@ -16739,7 +16760,73 @@ final class CompanionManager: ObservableObject {
                 userPrompt: userPrompt,
                 onTextChunk: onTextChunk
             )
+        case .localOpenAICompatible:
+            // Local providers are DIRECT by design: there is no paid cloud
+            // call to protect, so no app-server-first ordering applies. An
+            // explicit local selection must never fall back to a billed model.
+            return try await analyzeLocalChatResponse(
+                images: images,
+                modelOption: selectedVoiceResponseModel,
+                systemPrompt: systemPrompt,
+                conversationHistory: conversationHistory,
+                userPrompt: userPrompt,
+                onTextChunk: onTextChunk
+            )
+        case .appleFoundation:
+            return try await analyzeAppleFoundationResponse(
+                images: images,
+                systemPrompt: systemPrompt,
+                conversationHistory: conversationHistory,
+                userPrompt: userPrompt,
+                onTextChunk: onTextChunk
+            )
         }
+    }
+
+    private func analyzeLocalChatResponse(
+        images: [(data: Data, label: String)],
+        modelOption: OpenClickyModelOption,
+        systemPrompt: String,
+        conversationHistory: [(userPlaceholder: String, assistantResponse: String)],
+        userPrompt: String,
+        onTextChunk: @MainActor @Sendable @escaping (String) -> Void
+    ) async throws -> String {
+        let api = LocalChatCompletionsAPI(
+            baseURL: LocalModelSettingsStore.baseURL,
+            apiKey: LocalModelSettingsStore.token,
+            model: OpenClickyModelCatalog.rawLocalModelID(forID: modelOption.id),
+            maxOutputTokens: modelOption.maxOutputTokens
+        )
+        return try await api.streamResponse(
+            systemPrompt: systemPrompt,
+            history: conversationHistory,
+            userPrompt: userPrompt,
+            images: images,
+            onTextChunk: onTextChunk
+        )
+    }
+
+    private func analyzeAppleFoundationResponse(
+        images: [(data: Data, label: String)],
+        systemPrompt: String,
+        conversationHistory: [(userPlaceholder: String, assistantResponse: String)],
+        userPrompt: String,
+        onTextChunk: @MainActor @Sendable @escaping (String) -> Void
+    ) async throws -> String {
+        let client = AppleFoundationModelClient()
+        var result = try await client.streamResponse(
+            systemPrompt: systemPrompt,
+            history: conversationHistory,
+            userPrompt: userPrompt,
+            onTextChunk: onTextChunk
+        )
+        if !images.isEmpty {
+            // The on-device model is text-only; tell the user its screen blindness once.
+            let note = "\n\n(Note: the on-device model can't see your screen.)"
+            await MainActor.run { onTextChunk(note) }
+            result += note
+        }
+        return result
     }
 
     private func analyzeClaudeResponse(
@@ -17195,6 +17282,22 @@ final class CompanionManager: ObservableObject {
             )
             onTextChunk(text)
             return text
+        case .localVision:
+            // Local vision model returns the same [POINT:x,y] text contract;
+            // downstream parsing handles the tag.
+            let api = LocalChatCompletionsAPI(
+                baseURL: LocalModelSettingsStore.baseURL,
+                apiKey: LocalModelSettingsStore.token,
+                model: OpenClickyModelCatalog.rawLocalModelID(forID: selectedPointingModel.id),
+                maxOutputTokens: selectedPointingModel.maxOutputTokens
+            )
+            return try await api.streamResponse(
+                systemPrompt: systemPrompt,
+                history: [],
+                userPrompt: userPrompt,
+                images: [image],
+                onTextChunk: onTextChunk
+            )
         case .unsupported:
             throw NSError(
                 domain: "OpenClickyComputerUsePointing",
@@ -17227,7 +17330,9 @@ final class CompanionManager: ObservableObject {
             return .codexCLI
         case .openAI:
             return .openAIResponses
-        case .deepgram:
+        case .localOpenAICompatible:
+            return .localVision
+        case .appleFoundation, .deepgram:
             return .unsupported
         }
     }
@@ -17271,7 +17376,20 @@ final class CompanionManager: ObservableObject {
                 displayWidthInPoints: targetScreenCapture.displayWidthInPoints,
                 displayHeightInPoints: targetScreenCapture.displayHeightInPoints
             )
-        case .openAI, .deepgram:
+        case .localOpenAICompatible:
+            let detector = LocalElementLocationDetector(
+                baseURL: LocalModelSettingsStore.baseURL,
+                apiKey: LocalModelSettingsStore.token,
+                model: OpenClickyModelCatalog.rawLocalModelID(forID: selectedPointingModel.id)
+            )
+            displayLocalLocation = await detector.detectElementLocation(
+                screenshotData: targetScreenCapture.imageData,
+                userQuestion: userQuestion,
+                displayWidthInPoints: targetScreenCapture.displayWidthInPoints,
+                displayHeightInPoints: targetScreenCapture.displayHeightInPoints
+            )
+        case .openAI, .appleFoundation, .deepgram:
+            // No vision pointing for these on this proactive path.
             return
         }
 
