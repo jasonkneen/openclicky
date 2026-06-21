@@ -25,6 +25,7 @@ final class OpenClickyParakeetTranscriptionProvider: BuddyTranscriptionProvider 
 
     let displayName = "Parakeet"
     let requiresSpeechRecognitionPermission = false
+    let shouldStartAudioCaptureBeforeProviderReady = false
 
     var isConfigured: Bool {
         OpenClickyLocalSpeechModelManager.shared.isAppleSilicon
@@ -68,7 +69,7 @@ final class OpenClickyParakeetTranscriptionProvider: BuddyTranscriptionProvider 
     }
 }
 
-private final class OpenClickyParakeetLoadedModel: @unchecked Sendable {
+private nonisolated final class OpenClickyParakeetLoadedModel: @unchecked Sendable {
     let manager: AsrManager
 
     init(manager: AsrManager) {
@@ -106,12 +107,12 @@ private actor OpenClickyParakeetModelStore {
     }
 }
 
-private enum OpenClickyParakeetCacheOnlyModelLoader {
-    private static let configuration: MLModelConfiguration = {
+private nonisolated enum OpenClickyParakeetCacheOnlyModelLoader {
+    private static var configuration: MLModelConfiguration {
         let configuration = MLModelConfiguration()
         configuration.computeUnits = .cpuAndNeuralEngine
         return configuration
-    }()
+    }
 
     static func loadModels(
         from cacheDirectory: URL,

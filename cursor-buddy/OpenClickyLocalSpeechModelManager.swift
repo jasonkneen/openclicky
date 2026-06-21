@@ -9,7 +9,7 @@ import Combine
 @preconcurrency import FluidAudio
 import Foundation
 
-enum OpenClickyLocalSpeechModelVersion: String, CaseIterable, Identifiable, Sendable {
+nonisolated enum OpenClickyLocalSpeechModelVersion: String, CaseIterable, Identifiable, Sendable {
     case v3
     case v2
 
@@ -212,7 +212,7 @@ final class OpenClickyLocalSpeechModelManager: ObservableObject {
     }
 }
 
-enum OpenClickyLocalSpeechModelCache {
+nonisolated enum OpenClickyLocalSpeechModelCache {
     static func cacheDirectory(for version: OpenClickyLocalSpeechModelVersion) -> URL {
         AsrModels.defaultCacheDirectory(for: version.fluidAudioVersion)
     }
