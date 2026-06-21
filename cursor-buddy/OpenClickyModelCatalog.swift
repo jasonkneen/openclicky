@@ -100,7 +100,7 @@ nonisolated enum OpenClickyModelCatalog {
         OpenClickyModelOption(id: "gpt-5.3-codex", label: "GPT-5.3 Codex", provider: .openAI, maxOutputTokens: 128_000),
         OpenClickyModelOption(id: "gpt-5.2-codex", label: "GPT-5.2 Codex", provider: .openAI, maxOutputTokens: 128_000),
         OpenClickyModelOption(id: "gpt-5.2", label: "GPT-5.2", provider: .openAI, maxOutputTokens: 128_000)
-    ]
+    ] + OpenClickyLocalModelCatalog.agentModeModelOptions
 
     static func voiceResponseModel(withID modelID: String) -> OpenClickyModelOption {
         responseVoiceModels.first { $0.id == modelID } ?? voiceResponseModels[0]

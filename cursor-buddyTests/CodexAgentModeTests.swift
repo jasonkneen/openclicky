@@ -71,6 +71,24 @@ struct CodexAgentModeTests {
         #expect(rendered.contains("multi_agent = true"))
     }
 
+    @Test func codexConfigUsesResponsesWireAPIForOpenClickyLocalEndpoint() throws {
+        // Codex removed support for `wire_api = "chat"` (Feb 2026); custom providers
+        // must declare `responses` or the whole config.toml fails to load.
+        let template = ClickyCodexConfigTemplate(
+            model: "openclicky-local-mlx-community-llama-3.2-3b-instruct-4bit",
+            reasoningEffort: "medium",
+            workerBaseURL: ClickyCodexBackend.openClickyLocalModelBaseURL,
+            includeOpenAIDeveloperDocsMCP: false
+        )
+
+        let rendered = template.render()
+
+        #expect(rendered.contains("model_provider = \"openclicky\""))
+        #expect(rendered.contains("base_url = \"http://127.0.0.1:32124/v1\""))
+        #expect(rendered.contains("wire_api = \"responses\""))
+        #expect(!rendered.contains("wire_api = \"chat\""))
+    }
+
     @Test func codexConfigRendersExistingCuaDriverMCPServerWhenAvailable() throws {
         let template = ClickyCodexConfigTemplate(
             model: "gpt-5.5",
@@ -438,6 +456,29 @@ struct CodexAgentModeTests {
         )
 
         #expect(chunks == ["OpenClicky checks the comma, then waits for the full stop."])
+    }
+
+    @Test func microsoftEdgeBinaryTTSFrameSkipsLengthPrefixBeforeHeaders() throws {
+        let header = """
+        X-RequestId:edge-test\r
+        Content-Type:audio/mpeg\r
+        X-StreamId:stream-test\r
+        Path:audio\r
+
+        """
+        let payload = Data([0x49, 0x44, 0x33, 0x04, 0x00])
+        let headerData = Data(header.utf8)
+        var frame = Data([
+            UInt8((headerData.count >> 8) & 0xff),
+            UInt8(headerData.count & 0xff)
+        ])
+        frame.append(headerData)
+        frame.append(payload)
+
+        let parsed = MicrosoftEdgeTTSClient.testParseMicrosoftEdgeBinaryMessage(frame)
+
+        #expect(parsed.path == "audio")
+        #expect(parsed.payload == payload)
     }
 
     @MainActor @Test func streamingTTSUsesDefensiveCutForVeryLongUnpunctuatedSentence() throws {

@@ -63,6 +63,7 @@ protocol BuddyStreamingTranscriptionSession: AnyObject {
 protocol BuddyTranscriptionProvider {
     var displayName: String { get }
     var requiresSpeechRecognitionPermission: Bool { get }
+    var shouldStartAudioCaptureBeforeProviderReady: Bool { get }
     var isConfigured: Bool { get }
     var unavailableExplanation: String? { get }
 
@@ -72,6 +73,10 @@ protocol BuddyTranscriptionProvider {
         onFinalTranscriptReady: @escaping (String) -> Void,
         onError: @escaping (Error) -> Void
     ) async throws -> any BuddyStreamingTranscriptionSession
+}
+
+extension BuddyTranscriptionProvider {
+    var shouldStartAudioCaptureBeforeProviderReady: Bool { true }
 }
 
 enum BuddyTranscriptionProviderFactory {

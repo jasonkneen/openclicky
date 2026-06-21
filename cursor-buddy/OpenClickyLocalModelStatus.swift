@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 
 enum OpenClickyLocalModelBundleRequirement: String, CaseIterable, Equatable, Sendable {
@@ -70,16 +71,14 @@ struct OpenClickyLocalModelRuntimeReadiness: Equatable, Sendable {
     let nextImplementationSteps: [String]
 
     static let current = OpenClickyLocalModelRuntimeReadiness(
-        canSelectInstalledModelsInAgentMode: false,
+        canSelectInstalledModelsInAgentMode: true,
         blockers: [
-            "OpenClicky does not bundle a vMLX/MLX inference runtime.",
-            "OpenClicky does not launch or supervise a local OpenAI-compatible model server.",
-            "ClickyCodexConfigTemplate can point Codex at a custom OpenAI-compatible endpoint, but no local endpoint/model binding is wired for installed MLX bundles yet."
+            "The local endpoint requires Python's mlx_lm.server module to be available.",
+            "A selected local bundle must be fully installed before OpenClicky can launch it."
         ],
         nextImplementationSteps: [
-            "Add a runtime bridge that can discover, launch, health-check, and stop a local OpenAI-compatible vMLX/MLX server.",
-            "Map an installed bundle path to that server's model identifier and expose only health-checked models in OpenClicky's selectable Agent Mode model catalog.",
-            "Update Codex config generation to route local selections to the local server endpoint with a truthful failure state when the server is unavailable."
+            "Add richer health telemetry for the OpenClicky-managed local endpoint.",
+            "Expose model-specific launch logs in the settings row when the runtime fails."
         ]
     )
 }
@@ -87,6 +86,132 @@ struct OpenClickyLocalModelRuntimeReadiness: Equatable, Sendable {
 struct OpenClickyLocalModelRemoteFile: Equatable, Sendable {
     let path: String
     let size: Int64
+}
+
+struct OpenClickyLocalInferenceRuntimeState: Equatable {
+    enum Phase: Equatable {
+        case stopped
+        case starting
+        case running(modelID: String)
+        case failed(String)
+    }
+
+    var phase: Phase = .stopped
+    var message: String = "OpenClicky local endpoint is stopped."
+    var endpoint: URL = ClickyCodexBackend.openClickyLocalModelBaseURL
+}
+
+@MainActor
+final class OpenClickyLocalInferenceRuntimeManager: ObservableObject {
+    static let shared = OpenClickyLocalInferenceRuntimeManager()
+
+    @Published private(set) var state = OpenClickyLocalInferenceRuntimeState()
+
+    private var process: Process?
+    private let fileManager: FileManager
+    private let logURL: URL
+
+    init(fileManager: FileManager = .default) {
+        self.fileManager = fileManager
+        let logsDirectory = fileManager.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Logs", isDirectory: true)
+            .appendingPathComponent("OpenClicky", isDirectory: true)
+        self.logURL = logsDirectory.appendingPathComponent("openclicky-local-inference.log")
+    }
+
+    func start(model: OpenClickyLocalModel) {
+        let status = OpenClickyLocalModelStore.status(for: model, fileManager: fileManager)
+        guard status.state.isInstalled else {
+            state = OpenClickyLocalInferenceRuntimeState(
+                phase: .failed("Install \(model.name) before starting the local endpoint."),
+                message: "Install \(model.name) before starting the OpenClicky local endpoint.",
+                endpoint: ClickyCodexBackend.openClickyLocalModelBaseURL
+            )
+            return
+        }
+
+        if process?.isRunning == true {
+            if case let .running(modelID) = state.phase, modelID == model.agentModeModelID {
+                return
+            }
+        }
+
+        stop()
+
+        do {
+            try fileManager.createDirectory(
+                at: logURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            if !fileManager.fileExists(atPath: logURL.path) {
+                fileManager.createFile(atPath: logURL.path, contents: nil)
+            }
+
+            let handle = try FileHandle(forWritingTo: logURL)
+            try handle.seekToEnd()
+
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.arguments = [
+                "python3",
+                "-m",
+                "mlx_lm",
+                "server",
+                "--model", model.localDirectory.path,
+                "--host", "127.0.0.1",
+                "--port", "\(OpenClickyLocalInferenceRuntimeManager.port)",
+                "--use-default-chat-template"
+            ]
+            process.standardOutput = handle
+            process.standardError = handle
+            process.terminationHandler = { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self, self.process === process else { return }
+                    self.process = nil
+                    self.state = OpenClickyLocalInferenceRuntimeState(
+                        phase: .stopped,
+                        message: "OpenClicky local endpoint stopped. See \(self.logURL.path).",
+                        endpoint: ClickyCodexBackend.openClickyLocalModelBaseURL
+                    )
+                }
+                try? handle.close()
+            }
+
+            state = OpenClickyLocalInferenceRuntimeState(
+                phase: .starting,
+                message: "Starting OpenClicky local endpoint for \(model.name)…",
+                endpoint: ClickyCodexBackend.openClickyLocalModelBaseURL
+            )
+            try process.run()
+            self.process = process
+            state = OpenClickyLocalInferenceRuntimeState(
+                phase: .running(modelID: model.agentModeModelID),
+                message: "OpenClicky local endpoint is running \(model.name) at \(ClickyCodexConfigTemplate(workerBaseURL: ClickyCodexBackend.openClickyLocalModelBaseURL).openAICompatibleEndpoint.absoluteString).",
+                endpoint: ClickyCodexBackend.openClickyLocalModelBaseURL
+            )
+        } catch {
+            state = OpenClickyLocalInferenceRuntimeState(
+                phase: .failed(error.localizedDescription),
+                message: "Could not start OpenClicky local endpoint: \(error.localizedDescription)",
+                endpoint: ClickyCodexBackend.openClickyLocalModelBaseURL
+            )
+        }
+    }
+
+    func stop() {
+        guard let process else {
+            state = OpenClickyLocalInferenceRuntimeState()
+            return
+        }
+        if process.isRunning {
+            process.terminate()
+        }
+        self.process = nil
+        state = OpenClickyLocalInferenceRuntimeState()
+    }
+
+    private static let port = 32124
 }
 
 enum OpenClickyLocalModelStore {

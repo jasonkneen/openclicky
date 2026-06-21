@@ -720,11 +720,19 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         tearDownAudioCapture(cancelTranscriptionSession: true)
         refreshAutomaticTranscriptionProviderIfNeeded()
 
-        try startAudioCaptureBeforeProviderReady()
+        let shouldStartAudioCaptureBeforeProviderReady = transcriptionProvider.shouldStartAudioCaptureBeforeProviderReady
+        if shouldStartAudioCaptureBeforeProviderReady {
+            try startAudioCaptureBeforeProviderReady()
+        }
 
         print("BuddyDictationManager: opening transcription provider \(transcriptionProvider.displayName)")
         activeTranscriptionProviderOpenStartedAt = Date()
-        logDictationEvent("voice.dictation.provider_opening")
+        logDictationEvent(
+            "voice.dictation.provider_opening",
+            fields: [
+                "preProviderAudioBufferingEnabled": shouldStartAudioCaptureBeforeProviderReady
+            ]
+        )
 
         let activeTranscriptionSession = try await transcriptionProvider.startStreamingSession(
             keyterms: buildTranscriptionKeyterms(),
@@ -771,6 +779,9 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         )
 
         self.activeTranscriptionSession = activeTranscriptionSession
+        if !shouldStartAudioCaptureBeforeProviderReady {
+            try startAudioCaptureBeforeProviderReady()
+        }
         let bufferedAudioBufferCount = audioBuffersCapturedBeforeProviderReady.count
         audioBuffersCapturedBeforeProviderReady.forEach { activeTranscriptionSession.appendAudioBuffer($0) }
         audioBuffersCapturedBeforeProviderReady.removeAll()
@@ -780,7 +791,8 @@ final class BuddyDictationManager: NSObject, ObservableObject {
             fields: [
                 "providerOpenDurationMs": Self.elapsedMilliseconds(since: activeTranscriptionProviderOpenStartedAt),
                 "bufferedAudioBufferCount": bufferedAudioBufferCount,
-                "audioEngineAlreadyRunning": audioEngine.isRunning
+                "audioEngineAlreadyRunning": audioEngine.isRunning,
+                "preProviderAudioBufferingEnabled": shouldStartAudioCaptureBeforeProviderReady
             ]
         )
     }

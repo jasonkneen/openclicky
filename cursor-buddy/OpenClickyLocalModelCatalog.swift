@@ -79,6 +79,26 @@ struct OpenClickyLocalModel: Identifiable, Equatable, Sendable {
         OpenClickyLocalModelStore.localDirectory(for: id)
     }
 
+    nonisolated var agentModeModelID: String {
+        let slug = name.lowercased()
+            .map { character -> String in
+                character.isLetter || character.isNumber ? String(character) : "-"
+            }
+            .joined()
+            .split(separator: "-")
+            .joined(separator: "-")
+        return "openclicky-local-\(slug)"
+    }
+
+    nonisolated var agentModeOption: OpenClickyModelOption {
+        OpenClickyModelOption(
+            id: agentModeModelID,
+            label: "OpenClicky Local \(name)",
+            provider: .codex,
+            maxOutputTokens: 16_384
+        )
+    }
+
     var formattedEstimatedDownloadSize: String? {
         guard let estimatedDownloadBytes else { return nil }
         return ByteCountFormatter.string(fromByteCount: estimatedDownloadBytes, countStyle: .file)
@@ -86,10 +106,20 @@ struct OpenClickyLocalModel: Identifiable, Equatable, Sendable {
 }
 
 enum OpenClickyLocalModelCatalog {
-    /// Installable bundles sourced from Osaurus' MLX/vMLX catalog. Keeping
-    /// this catalog separate from OpenClicky's selectable model catalog avoids
-    /// promising local Agent Mode inference before the runtime server exists.
+    /// Installable MLX bundles managed by OpenClicky. The source repository is
+    /// just the download location; endpoint launch, model selection, and Codex
+    /// provider wiring belong to OpenClicky.
     static let models: [OpenClickyLocalModel] = [
+        OpenClickyLocalModel(
+            id: "mlx-community/Llama-3.2-3B-Instruct-4bit",
+            name: "Llama 3.2 3B Instruct 4-bit",
+            description: "Small general-purpose MLX chat bundle for OpenClicky's local endpoint.",
+            useCase: .general,
+            modelType: "llama",
+            estimatedDownloadBytes: 2_400_000_000,
+            minimumRecommendedMemoryGB: 8,
+            isRecommended: true
+        ),
         OpenClickyLocalModel(
             id: "OsaurusAI/gemma-4-E2B-it-qat-MXFP4",
             name: "Gemma 4 E2B QAT MXFP4",
@@ -153,5 +183,9 @@ enum OpenClickyLocalModelCatalog {
 
     static var recommendedModels: [OpenClickyLocalModel] {
         models.filter(\.isRecommended)
+    }
+
+    nonisolated static var agentModeModelOptions: [OpenClickyModelOption] {
+        models.map(\.agentModeOption)
     }
 }

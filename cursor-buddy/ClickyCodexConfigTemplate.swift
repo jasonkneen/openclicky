@@ -183,6 +183,7 @@ nonisolated enum CuaDriverMCPConfiguration {
 
 enum ClickyCodexBackend {
     static let defaultOpenAIBaseURL = URL(string: "https://api.openai.com/v1")!
+    static let openClickyLocalModelBaseURL = URL(string: "http://127.0.0.1:32124")!
 
     static func configuredWorkerBaseURL() -> URL {
         if let raw = ProcessInfo.processInfo.environment["CLICKY_AGENT_BASE_URL"],
@@ -215,6 +216,10 @@ enum ClickyCodexBackend {
 
     static func isDefaultOpenAIBaseURL(_ url: URL) -> Bool {
         normalizedBaseURL(url) == normalizedBaseURL(defaultOpenAIBaseURL)
+    }
+
+    static func isOpenClickyLocalModelBaseURL(_ url: URL) -> Bool {
+        normalizedBaseURL(url) == normalizedBaseURL(openClickyLocalModelBaseURL)
     }
 
     private static func normalizedBaseURL(_ url: URL) -> String {

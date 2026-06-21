@@ -183,6 +183,7 @@ struct OpenClickySettingsView: View {
     @StateObject private var openPetsCatalog = OpenPetsCatalogStore()
     @StateObject private var localSpeechModelManager = OpenClickyLocalSpeechModelManager.shared
     @StateObject private var localModelDownloadService = OpenClickyLocalModelDownloadService.shared
+    @StateObject private var localInferenceRuntime = OpenClickyLocalInferenceRuntimeManager.shared
     @AppStorage(ClickyAccentTheme.userDefaultsKey) private var selectedAccentThemeID = ClickyAccentTheme.blue.rawValue
     @AppStorage(ClickyCursorAvatarStyle.userDefaultsKey) private var avatarStyleRawValue = ClickyCursorAvatarStyle.default.storageValue
     @State private var userAnthropicAPIKey = ""
@@ -775,7 +776,7 @@ struct OpenClickySettingsView: View {
         let selectedVersion = localSpeechModelManager.selectedVersion
         switch localSpeechModelManager.state(for: selectedVersion) {
         case .ready:
-            actionRow(title: "Use Parakeet for local listening", systemImageName: "waveform.badge.mic") {
+            actionRow(title: "Use Parakeet for local listening input", systemImageName: "waveform.badge.mic") {
                 companionManager.setVoiceTranscriptionProvider(BuddyTranscriptionProviderID.parakeet.rawValue)
             }
         case .downloading:
@@ -828,7 +829,7 @@ struct OpenClickySettingsView: View {
                 localSpeechModelManager.cancelDownload(selectedVersion)
             }
         case .ready:
-            actionRow(title: "Use Parakeet for local listening", systemImageName: "waveform.badge.mic") {
+            actionRow(title: "Use Parakeet for local listening input", systemImageName: "waveform.badge.mic") {
                 companionManager.setVoiceTranscriptionProvider(BuddyTranscriptionProviderID.parakeet.rawValue)
             }
         case .notDownloaded, .failed:
@@ -1083,10 +1084,16 @@ struct OpenClickySettingsView: View {
     }
 
     private var openAIRealtimeVoicePicker: some View {
-        Picker("Realtime voice", selection: openAIRealtimeVoiceSelection) {
-            ForEach(Self.openAIRealtimeVoiceIDs, id: \.self) { voiceID in
-                Text(voiceID.capitalized).tag(voiceID)
+        VStack(alignment: .leading, spacing: 6) {
+            Picker("Realtime voice", selection: openAIRealtimeVoiceSelection) {
+                ForEach(Self.openAIRealtimeVoiceIDs, id: \.self) { voiceID in
+                    Text(voiceID.capitalized).tag(voiceID)
+                }
             }
+            Text("Parakeet is local listening/transcription only, so it is not available as an outgoing text-to-speech voice.")
+                .font(appUIFont(size: subtextFontSize, weight: .regular))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .pickerStyle(.menu)
         .padding(.horizontal, 14)
@@ -1248,9 +1255,10 @@ struct OpenClickySettingsView: View {
     private var superAdvancedPanel: some View {
         VStack(alignment: .leading, spacing: 14) {
             settingsGroup("Local inference runtime") {
-                warningRow(
-                    title: "Runtime server required",
-                    subtitle: "OpenClicky can install MLX model bundles into a local cache, but it does not yet launch a vMLX/MLX server. Selectable local Agent Mode inference requires a health-checked OpenAI-compatible endpoint."
+                valueRow(
+                    title: "OpenClicky local endpoint",
+                    subtitle: localInferenceRuntime.state.message,
+                    systemImageName: "server.rack"
                 )
 
                 valueRow(
@@ -1291,7 +1299,7 @@ struct OpenClickySettingsView: View {
 
             valueRow(
                 title: "Inference runtime",
-                subtitle: "Installed bundles are cache-ready. Selectable local Agent Mode inference still requires an OpenAI-compatible MLX/vMLX server endpoint above.",
+                subtitle: "Installed bundles can be launched by OpenClicky at \(ClickyCodexConfigTemplate(workerBaseURL: ClickyCodexBackend.openClickyLocalModelBaseURL).openAICompatibleEndpoint.absoluteString). Use the model row action to start the endpoint and sync Agent Mode.",
                 systemImageName: "server.rack"
             )
 
@@ -1377,7 +1385,7 @@ struct OpenClickySettingsView: View {
         if let memory = model.minimumRecommendedMemoryGB {
             parts.append("\(memory) GB RAM recommended")
         }
-        parts.append(model.id)
+        parts.append("OpenClicky model \(model.agentModeModelID)")
         return parts.joined(separator: " - ")
     }
 
@@ -1398,16 +1406,30 @@ struct OpenClickySettingsView: View {
             }
             .buttonStyle(.bordered)
         case .completed where status.state.isInstalled:
-            Button("Show") {
-                NSWorkspace.shared.activateFileViewerSelecting([status.localDirectory])
-            }
-            .buttonStyle(.bordered)
-        default:
-            if status.state.isInstalled {
+            HStack(spacing: 8) {
+                Button("Use") {
+                    useLocalModelInAgentMode(model)
+                }
+                .buttonStyle(.borderedProminent)
+
                 Button("Show") {
                     NSWorkspace.shared.activateFileViewerSelecting([status.localDirectory])
                 }
                 .buttonStyle(.bordered)
+            }
+        default:
+            if status.state.isInstalled {
+                HStack(spacing: 8) {
+                    Button("Use") {
+                        useLocalModelInAgentMode(model)
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button("Show") {
+                        NSWorkspace.shared.activateFileViewerSelecting([status.localDirectory])
+                    }
+                    .buttonStyle(.bordered)
+                }
             } else {
                 Button("Download") {
                     localModelDownloadService.download(model)
@@ -1968,6 +1990,13 @@ struct OpenClickySettingsView: View {
         } catch {
             codexConfigSyncMessage = "Could not sync provider config: \(error.localizedDescription)"
         }
+    }
+
+    private func useLocalModelInAgentMode(_ model: OpenClickyLocalModel) {
+        session.setModel(model.agentModeModelID)
+        codexAgentBaseURL = ClickyCodexBackend.openClickyLocalModelBaseURL.absoluteString
+        localInferenceRuntime.start(model: model)
+        syncCodexProviderSettings()
     }
 
     private func syncCodexMCPSettings() {

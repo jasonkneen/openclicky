@@ -1920,12 +1920,19 @@ final class MicrosoftEdgeTTSClient: OpenClickyTTSClient {
     nonisolated private static func parseBinaryMessage(_ data: Data) -> (path: String?, payload: Data) {
         guard data.count >= 2 else { return (nil, Data()) }
         let headerLength = (Int(data[data.startIndex]) << 8) | Int(data[data.index(after: data.startIndex)])
-        guard headerLength > 0, headerLength <= data.count else { return (nil, Data()) }
-        let headerData = data.prefix(headerLength)
-        let payloadStart = min(data.count, headerLength + 2)
-        let payload = data.suffix(from: payloadStart)
+        let headerStart = data.index(data.startIndex, offsetBy: 2)
+        guard headerLength > 0,
+              let headerEnd = data.index(headerStart, offsetBy: headerLength, limitedBy: data.endIndex) else {
+            return (nil, Data())
+        }
+        let headerData = data[headerStart..<headerEnd]
+        let payload = data.suffix(from: headerEnd)
         let headerText = String(data: headerData, encoding: .utf8) ?? ""
         return (pathFromHeaders(headerText), payload)
+    }
+
+    nonisolated static func testParseMicrosoftEdgeBinaryMessage(_ data: Data) -> (path: String?, payload: Data) {
+        parseBinaryMessage(data)
     }
 
     nonisolated private static func pathFromHeaders(_ headerText: String) -> String? {
