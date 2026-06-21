@@ -2,18 +2,30 @@
 
 Status: living backlog, created from the local Osaurus checkout at
 `/Users/jkneen/Documents/GitHub/osaurus`. Updated after the local OpenClicky
-intake commit `e577021` (`chore: track OpenClicky intake updates`).
+intake commits `e577021` (`chore: track OpenClicky intake updates`) and
+`b6dac1b` (`docs: plan local voice and settings intake`).
 
 Important source constraints:
 
-- The local Osaurus checkout is currently behind `origin/main` by 52 commits, so every
-  observation here is from the local tree, not a refreshed remote.
-- OpenClicky was clean and one commit ahead of `origin/main` before this document
-  update. Keep new intake work local until the user explicitly asks to push.
+- Refreshed after `git fetch --prune origin` in both repositories on 2026-06-21.
+  OpenClicky is clean and two local commits ahead of `origin/main`; neither
+  `e577021` nor `b6dac1b` is present on a remote branch.
+- The Osaurus checkout is clean and no longer behind upstream. Its local `main`
+  is two commits ahead of `origin/main`: local HEAD `73e38916` (`Merge branch
+  'main' of https://github.com/osaurus-ai/osaurus`) on top of `3a87480d`
+  (`Fixes`), with `origin/main` at `3a11a687` (`Repin vmlx-swift: L2 disk-cache
+  orphan-row + solo seed-boundary fix (#1619)`).
+- Keep new OpenClicky intake work local until the user explicitly asks to push.
 - Keep the OpenClicky product shape: menu-bar companion, notch/panel UI, cursor
   overlay, Agent Mode dashboard, local keys, and OpenClicky visual language.
 - Do not import Osaurus's management-app shell. Import behavior, data models, and
   rendering techniques only where they improve OpenClicky.
+
+Refresh note: the current Osaurus tree still supports the same high-value intake:
+FluidAudio/Parakeet local STT, local MLX/vMLX model catalog and downloads,
+Runtime Lab-style inference controls, richer chat/tool rendering, and optional
+hosted endpoint routing. The updated source state removes the old stale-checkout
+caveat; it does not change the OpenClicky direction.
 
 ## Active Intake Principles
 
@@ -61,6 +73,10 @@ Important source constraints:
   system: curated top picks, Hugging Face-compatible repo import, disk-space
   preflight, pause/resume, file-size completion checks, external HF/LM Studio
   discovery, and nonblocking grid refresh.
+- Current local Osaurus catalog evidence includes a newer top-pick spine around
+  LFM2.5, Gemma 4 QAT/MXFP variants, DiffusionGemma, and Qwen 3.6 MTP entries.
+  Treat those IDs as Osaurus-local catalog evidence only until OpenClicky validates
+  availability from its own catalog or official sources.
 - Onboarding: `OnboardingConfigureAIView.swift` has the useful pattern of an
   opinionated default local pick plus a hidden "more options" disclosure. Its
   local checkout defaults the lead card to hosted Osaurus, but OpenClicky should
