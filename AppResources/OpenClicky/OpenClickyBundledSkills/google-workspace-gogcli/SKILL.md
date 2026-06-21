@@ -167,6 +167,8 @@ gog slides --help
 
 Prefer exporting/downloading to a temporary path for inspection. Do not overwrite user files unless explicitly requested.
 
+For Docs/Sheets/Slides writes, do not trust a successful command exit alone. Re-read, export, or list the changed item and confirm the intended title/body, sheet range, row/column shape, slide count, or representative cell/content is present before reporting completion. When replacing sheet content that may be shorter than the previous contents, clear the old range first when `gog` exposes that command, or write to a fresh tab/file.
+
 ### Contacts / People / Tasks / Chat
 
 ```bash

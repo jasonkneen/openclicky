@@ -25,6 +25,12 @@ Google Workspace is powered by OpenClicky's Composio integrations, but it is not
 5. For document/spreadsheet artifacts, combine Composio reads/writes with internal `doc`, `spreadsheet`, and `clicky-artifacts`.
 6. For email drafting or send requests, route through `clicky-email-assistant` after reading the thread/context.
 
+## Google Workspace Write Verification
+- Follow the exact schema returned by the current connector for writes. Do not assume snake_case, camelCase, or shorter aliases are interchangeable.
+- For Google Docs writes, a successful create response can still mean a title-only document. After any Docs write, verify with a document read-back tool and confirm the intended body is non-empty and present before saying it was written.
+- For Google Sheets value writes, send a rectangular two-dimensional values array to the exact range. When replacing content that may be shorter than the old sheet contents, clear the old range first or write to a fresh sheet/tab.
+- After any Sheets write, verify with a values read-back and confirm the expected headers, row count, column count, and at least one representative cell.
+
 ## Fallbacks
 - If the `composio` MCP server is not attached, explain which specific Google app needs to be connected in OpenClicky Settings -> Integrations. Offer voice/in-app guidance through that setup, but do not offer to connect it yourself and do not use Computer Use to operate OpenClicky's own Settings/Integrations flow. Offer visible Gmail/Docs/Sheets/Drive browser control only for the original Google app task when the user explicitly wants that route or approves the fallback.
 - If a specific Google Workspace tool is unavailable, say which capability is missing and do not silently switch to browser automation. Visible browser control is a separate, less clean route; use it only for explicit UI requests or after the user accepts that fallback.

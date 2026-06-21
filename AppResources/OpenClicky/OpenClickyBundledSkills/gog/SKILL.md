@@ -98,6 +98,7 @@ Default to read-only behavior. If the user asks to send email:
 3. Require explicit approval of that exact draft.
 4. Only then send if the account already has Gmail send permission.
 5. If send permission is missing, stop and say OpenClicky's Google connection needs Gmail send permission in Settings. Do not run OAuth from the agent.
+6. Never report Gmail send success from exit code or a generic success boolean alone. Confirm the returned message/thread id, or read back the sent message when the command exposes enough information.
 
 Keep `GOG_GMAIL_NO_SEND=1` as the default guard where it is set. Bypass it only for one exact approved send command:
 
@@ -109,7 +110,7 @@ env -u GOG_GMAIL_NO_SEND gog --json gmail send --account "$GOG_ACCOUNT" --to "re
 
 Do not send email, create/update/delete Drive files, change calendar events, share Drive files, post Chat messages, modify contacts, or change Workspace admin state unless the user explicitly asks. For writes, summarize the target account and intended mutation first unless the user already gave a concrete command.
 
-After writes, verify by re-reading or listing the changed item when possible.
+After writes, verify by re-reading, exporting, or listing the changed item when possible. For Docs, confirm the intended body is present, not just that a title exists. For Sheets, confirm headers, row count, column count, and at least one representative cell. When replacing content that may be shorter than the old sheet contents, clear the old range first when `gog` exposes that command, or write to a fresh tab/file.
 
 ## Fallbacks
 

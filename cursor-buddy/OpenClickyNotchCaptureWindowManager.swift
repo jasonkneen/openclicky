@@ -19,18 +19,19 @@ private final class OpenClickyNotchCapturePanel: NSPanel {
 
 enum OpenClickyWindowLevels {
     /// The compact notch/dynamic-island status surface sits above normal apps
-    /// and the macOS menu/status bar. Matching `.statusBar` exactly lets
-    /// AppKit reorder the external fallback pill under the menu bar when
-    /// displays/spaces settle, which makes it appear to vanish and reappear.
-    static let statusSurface = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
+    /// and Space/full-screen surfaces. The external no-notch pill is a normal
+    /// fallback NSPanel rather than DynamicNotchKit's physical-notch surface,
+    /// so status-bar-adjacent levels can be re-stacked behind app/menu-bar
+    /// windows when displays or Spaces settle.
+    static let statusSurface = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 1)
 
     /// The main OpenClicky panel must sit above the status surface so hovering
     /// the dynamic island cannot visually cut into the panel's side chrome.
-    static let mainPanel = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 2)
+    static let mainPanel = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 2)
 
     /// First-party dialogs and document windows float one step above the main
     /// panel so they never tuck underneath when launched from OpenClicky.
-    static let panelDialog = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 3)
+    static let panelDialog = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 3)
 
     static func applyPanelDialogLevel(to window: NSWindow?) {
         window?.level = panelDialog
@@ -615,6 +616,7 @@ final class OpenClickyNotchCaptureWindowManager {
 
     private func showPanel(activating: Bool, width: CGFloat, height: CGFloat) {
         resizeAndReposition(width: width, height: height)
+        panel?.level = OpenClickyWindowLevels.statusSurface
         if activating {
             NSApp.activate(ignoringOtherApps: true)
             panel?.makeKeyAndOrderFront(nil)
@@ -627,6 +629,12 @@ final class OpenClickyNotchCaptureWindowManager {
     private func showFallbackStatusPanel(width: CGFloat, height: CGFloat) {
         hideDynamicNotchKitStatusSurface()
         showPanel(activating: false, width: width, height: height)
+    }
+
+    private func refreshFallbackStatusPanelOrderingIfNeeded() {
+        guard !isUsingDynamicNotchKitStatusSurface, let panel, panel.isVisible else { return }
+        panel.level = OpenClickyWindowLevels.statusSurface
+        panel.orderFrontRegardless()
     }
 
     private func showMainPanelWindow(activating: Bool, width: CGFloat, height: CGFloat) {
@@ -1182,6 +1190,7 @@ final class OpenClickyNotchCaptureWindowManager {
             stopCollapsedHoverProbe()
             return
         }
+        refreshFallbackStatusPanelOrderingIfNeeded()
         let mouseLocation = NSEvent.mouseLocation
         guard let hoveredScreen = NSScreen.screens.first(where: { Self.notchHoverRegion(on: $0).contains(mouseLocation) }) else { return }
 
@@ -2047,9 +2056,12 @@ private final class OpenClickyNotchCaptureRootView: NSView {
 
     override func mouseEntered(with event: NSEvent) {
         guard mode == .collapsed || mode == .voice else { return }
-        guard let screen = window?.screen, OpenClickyNotchCaptureWindowManager.hasPhysicalNotch(on: screen) else { return }
         let localPoint = convert(event.locationInWindow, from: nil)
-        guard shellView.frame.contains(localPoint) else { return }
+        if let screen = window?.screen, OpenClickyNotchCaptureWindowManager.hasPhysicalNotch(on: screen) {
+            guard shellView.frame.contains(localPoint) else { return }
+        } else {
+            guard bounds.contains(localPoint) || shellView.frame.contains(localPoint) else { return }
+        }
         expand?()
     }
 

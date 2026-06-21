@@ -107,7 +107,9 @@ nonisolated enum OpenClickyModelCatalog {
     }
 
     static func voiceAnalysisModel(withID modelID: String?) -> OpenClickyModelOption {
-        if let modelID, let match = voiceResponseModels.first(where: { $0.id == modelID }) {
+        if let modelID,
+           !isSpeechModelID(modelID),
+           let match = voiceResponseModels.first(where: { $0.id == modelID }) {
             return match
         }
         if let match = voiceResponseModels.first(where: { $0.id == defaultVoiceAnalysisModelID }) {

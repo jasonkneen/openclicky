@@ -16410,42 +16410,51 @@ final class CompanionManager: ObservableObject {
         onTextChunk: @MainActor @Sendable @escaping (String) -> Void
     ) async throws -> String {
         let modelOption = OpenClickyModelCatalog.voiceAnalysisModel(withID: model)
-        if AppBundleConfiguration.openAIAPIKey() != nil {
+        if !OpenClickyModelCatalog.isSpeechModelID(modelOption.id) {
             do {
-                openAIAPI.model = modelOption.id
-                openAIAPI.maxOutputTokens = modelOption.maxOutputTokens
-                let (text, _) = try await openAIAPI.analyzeImageStreaming(
+                return try await analyzeCodexVoiceResponse(
                     images: images,
+                    model: modelOption.id,
                     systemPrompt: systemPrompt,
                     conversationHistory: conversationHistory,
                     userPrompt: userPrompt,
                     onTextChunk: onTextChunk
                 )
-                return text
             } catch {
+                guard AppBundleConfiguration.openAIAPIKey() != nil else { throw error }
                 OpenClickyMessageLogStore.shared.append(
                     lane: "voice",
                     direction: "error",
                     event: "voice.response_fallback",
                     fields: [
-                        "from": "openai_api_key",
-                        "to": "codex_voice_session",
+                        "from": "codex_voice_session",
+                        "to": "openai_api_key",
                         "model": modelOption.id,
-                        "codexFallbackModel": OpenClickyModelCatalog.codexVoiceSessionModel(withID: modelOption.id).id,
+                        "codexModel": OpenClickyModelCatalog.codexVoiceSessionModel(withID: modelOption.id).id,
                         "error": error.localizedDescription
                     ]
                 )
             }
         }
 
-        return try await analyzeCodexVoiceResponse(
+        guard AppBundleConfiguration.openAIAPIKey() != nil else {
+            throw NSError(
+                domain: "OpenAIAPI",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "OpenAI is not configured for this voice analysis request."]
+            )
+        }
+
+        openAIAPI.model = modelOption.id
+        openAIAPI.maxOutputTokens = modelOption.maxOutputTokens
+        let (text, _) = try await openAIAPI.analyzeImageStreaming(
             images: images,
-            model: modelOption.id,
             systemPrompt: systemPrompt,
             conversationHistory: conversationHistory,
             userPrompt: userPrompt,
             onTextChunk: onTextChunk
         )
+        return text
     }
 
     private func analyzeCodexVoiceResponse(

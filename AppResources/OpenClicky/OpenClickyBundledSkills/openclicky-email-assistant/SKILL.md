@@ -27,13 +27,19 @@ Act as a careful communication operator. Draft first, show the target, and requi
 ## Primary Path
 1. For prose in the user's voice, read the relevant `read-wiki` preference note when available.
 2. Identify account/app, recipient, thread/context, and desired tone.
-3. Use `google-workspace-gogcli` through Composio first for Gmail and Google contacts when the integration is attached.
+3. Use `google-workspace-gogcli` / `gog` first for Gmail and Google contacts when the local connector is installed and authenticated.
 4. Use other connectors only when the runtime actually exposes them.
 5. Produce a draft with subject, recipients, body, and any attachment paths.
-6. For Gmail sends, draft first. If the user explicitly approves sending and Composio reports missing send permission, stop and tell the user OpenClicky's Gmail connection needs send permission in Settings -> Integrations; do not run OAuth from the agent.
+6. For Gmail sends, draft first. If the user explicitly approves sending and `gog` reports missing send permission, stop and tell the user OpenClicky's Google connection needs Gmail send permission in Settings -> Google; do not run OAuth from the agent.
+
+## Gmail Drafts And Sends
+- If a Gmail draft/send tool shape is unknown or ambiguous, inspect the exact tool schema or installed `gog` help once and use the returned key names. Do not infer aliases for recipient, body, subject, thread, draft, account, or attachment fields.
+- For Gmail drafts, verify the stored draft after creation with the available draft read/list tool and confirm the intended recipient, subject, and body are present.
+- For approved sends, prefer sending the already-approved stored draft when the connector supports it. Use a direct send command only when the exact recipients, subject, body, account, and attachments were approved.
+- Never report a Gmail draft/send as done from a generic success boolean alone. Confirm the draft fields, send result message/thread id, or a sent-message read-back; otherwise report uncertainty.
 
 ## Fallbacks
-- If no connector is available, use pasted/visible content directly when the user supplied it. For mailbox/account work, explain that the cleaner path is OpenClicky Settings -> Integrations, tell the user to connect/reconnect the named mail app there, and offer voice/in-app guidance through setup; do not offer to connect it yourself and do not use Computer Use to operate OpenClicky's own Settings/Integrations flow. Offer Cua/Computer Use as a visible app/browser fallback for the original mail task, and proceed autonomously only when the user explicitly asked for visible UI or the target has no shipped connector route.
+- If no connector is available, use pasted/visible content directly when the user supplied it. For mailbox/account work, explain that the cleaner path is OpenClicky Settings -> Google or the relevant app integration setup, tell the user to connect/reconnect the named mail app there, and offer voice/in-app guidance through setup; do not offer to connect it yourself and do not use Computer Use to operate OpenClicky's own Settings setup flow. Offer Cua/Computer Use as a visible app/browser fallback for the original mail task, and proceed autonomously only when the user explicitly asked for visible UI or the target has no shipped connector route.
 - If Gmail auth, upgraded send permission, or a send path is missing, tell the user what is missing and do not pretend the message was sent. Do not keep retrying integration commands while auth or send permission is missing.
 - If a contact list is in CSV/XLSX/Sheets, use `spreadsheet` or `google-workspace-gogcli` to inspect it before drafting.
 - For outreach sequences, produce staged drafts and a tracking table rather than blasting messages.
