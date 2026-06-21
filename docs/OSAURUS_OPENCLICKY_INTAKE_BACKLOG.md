@@ -1,14 +1,15 @@
 # Osaurus to OpenClicky Intake Backlog
 
 Status: living backlog, created from the local Osaurus checkout at
-`/Users/jkneen/Documents/GitHub/osaurus`.
+`/Users/jkneen/Documents/GitHub/osaurus`. Updated after the local OpenClicky
+intake commit `e577021` (`chore: track OpenClicky intake updates`).
 
 Important source constraints:
 
 - The local Osaurus checkout is currently behind `origin/main` by 52 commits, so every
   observation here is from the local tree, not a refreshed remote.
-- OpenClicky has a dirty worktree from prior Clicky skill migration work. Do not bulk
-  overwrite existing OpenClicky resources.
+- OpenClicky was clean and one commit ahead of `origin/main` before this document
+  update. Keep new intake work local until the user explicitly asks to push.
 - Keep the OpenClicky product shape: menu-bar companion, notch/panel UI, cursor
   overlay, Agent Mode dashboard, local keys, and OpenClicky visual language.
 - Do not import Osaurus's management-app shell. Import behavior, data models, and
@@ -24,6 +25,8 @@ Important source constraints:
 4. Favor small vertical slices that can be verified with `swiftc -parse` on touched
    Swift files.
 5. Treat Osaurus speculative decoding as research-only until there is runtime proof.
+6. Keep first-run settings simple: local voice/model defaults first, provider keys
+   second, runtime/inference tuning behind an explicit power-user surface.
 
 ## Priority 0: Fix Before Expanding
 
@@ -45,7 +48,135 @@ Important source constraints:
 - [ ] Move any expensive Codex runtime/home preparation off the main actor before
   larger Agent HUD rendering work.
 
-## Priority 1: Connectivity Intake
+## Priority 1: Local Voice, Model Install, and Settings Simplification
+
+### Osaurus Evidence To Adapt
+
+- Local STT: `docs/VOICE_INPUT.md`, `SpeechModelManager.swift`,
+  `SpeechService.swift`, and `VADService.swift` use FluidAudio with Parakeet TDT
+  v3/v2 models, local VAD, off-main model probing, and a keep-alive audio engine
+  path for fast handoff.
+- Local model install: `ModelManager.swift`, `ModelDownloadService.swift`,
+  `MLXModel.swift`, and `ModelDownloadView.swift` provide a real catalog/download
+  system: curated top picks, Hugging Face-compatible repo import, disk-space
+  preflight, pause/resume, file-size completion checks, external HF/LM Studio
+  discovery, and nonblocking grid refresh.
+- Onboarding: `OnboardingConfigureAIView.swift` has the useful pattern of an
+  opinionated default local pick plus a hidden "more options" disclosure. Its
+  local checkout defaults the lead card to hosted Osaurus, but OpenClicky should
+  invert that hierarchy.
+- Advanced runtime settings: `ServerSettingsTabContent.swift` groups connection,
+  sampling, batching, cache, memory safety, decode performance, speculative/MTP,
+  multimodal, tools, residency, power, and request-limit controls behind a
+  sidebar with validation and an anchored save/reset bar.
+
+### OpenClicky Anchors
+
+- `BuddyTranscriptionProvider.swift` is the correct insertion point for local
+  Parakeet/FluidAudio STT. The existing Apple Speech provider already uses
+  on-device recognition when supported, and cloud STT providers remain optional.
+- `BuddyDictationManager.swift` already captures audio before provider readiness,
+  uses a 256-frame input tap, buffers early audio, and logs provider-open timing.
+  Keep that latency shape.
+- `OpenAIRealtimeSpeechClient` and `DeepgramVoiceAgentClient` are separate
+  speech-to-speech paths. Do not collapse them into normal STT + TTS settings.
+- `OpenClickySettingsWindowManager.swift` currently mixes everyday voice choices,
+  provider keys, captions, pre-fire, and playback controls in one Voice section.
+  That needs layering, not more rows.
+- `CodexHomeManager.swift` already links default Codex auth and writes Codex config
+  with ChatGPT auth preferred unless an OpenAI key is configured. `ClaudeAgentSDKAPI`
+  already detects the local `claude` executable. Onboarding should surface these
+  as detected local accelerators.
+
+### Target First-Run Experience
+
+- Default install:
+  - Request only the permissions needed for the chosen flow.
+  - Show "Detected Claude Code" when `claude` is available and "Detected Codex"
+    when Codex auth/config can be prepared.
+  - Default to local voice: download the recommended Parakeet model, select it,
+    and test the mic in-place.
+  - Default to a recommended local model only after validating current model IDs
+    from the local catalog or official source. Do not ship hardcoded 2026 model
+    identifiers without verification.
+  - Keep a "Use GPT Realtime instead" upgrade path visible for users who configure
+    OpenAI and want the lowest end-to-end spoken latency.
+- Basic settings:
+  - Voice on/off, input mode, current local STT model, local model status,
+    permission status, response voice, and captions.
+  - No API-key text fields in the basic view.
+- Advanced settings:
+  - OpenAI/Codex, Anthropic, Deepgram, ElevenLabs, Cartesia, AssemblyAI, custom
+    OpenAI-compatible endpoints, remote MCP/provider connections, and Agent Mode
+    working directory/model.
+- Runtime Lab:
+  - Sampling defaults, context/cache policy, model residency, memory safety,
+    batching/concurrency, decode performance, MTP/speculative decoding, power, and
+    diagnostics.
+  - Hide until an explicit "Show Runtime Lab" toggle or similar power-user entry.
+
+### Implementation Queue
+
+- [ ] Add `OpenClickyLocalSpeechModelManager`.
+  - Model states: not downloaded, downloading(progress/metrics), ready, failed.
+  - Start with Parakeet TDT v3 as recommended and v2 as English-focused alternate,
+    matching Osaurus's FluidAudio model split.
+  - Probe model cache off the main actor and avoid launch-time filesystem walks.
+- [ ] Add a `ParakeetTranscriptionProvider` behind `BuddyTranscriptionProvider`.
+  - Use the existing dictation manager's early audio buffering.
+  - Preserve `requiresSpeechRecognitionPermission = false` if FluidAudio only needs
+    microphone permission.
+  - Reuse Osaurus's VAD sensitivity ideas, but keep OpenClicky's settings copy and
+    visual style.
+- [ ] Add local voice setup to onboarding.
+  - Single requirement row for microphone permission.
+  - Single requirement row for local STT model download.
+  - Test microphone button with live transcript before completion.
+- [ ] Add a local model installer/catalog for OpenClicky.
+  - Start with a small curated catalog, hardware-fit badge, storage preflight,
+    pause/resume, delete, and "show in Finder".
+  - Use Application Support/OpenClicky-managed storage by default.
+  - Optionally discover HF/LM Studio caches read-only later; never mutate external
+    cache folders without explicit user action.
+- [ ] Add first-run local brain selection.
+  - Pick the smallest comfortable recommended local model, not the biggest model
+    that merely fits.
+  - Pin the selected local model to default voice/agent routing after download.
+  - If Claude Code or Codex is detected, show them as ready local accelerators and
+    auto-configure existing OpenClicky runtime files.
+- [ ] Split Settings into Basic, Advanced, and Runtime Lab.
+  - Basic should be viable for nontechnical users.
+  - Advanced owns keys/services.
+  - Runtime Lab owns model/inference internals and should include validation,
+    save/reset, and restart-required cues.
+
+### Latency Guardrails
+
+- Keep GPT Realtime as a direct speech-to-speech fast path when selected. It is
+  intentionally not the same route as local STT + text model + TTS.
+- Keep OpenClicky's audio capture-before-provider-ready behavior. Local STT must
+  plug into that, not add a cold provider-start gap after the user starts talking.
+- Preload the selected local STT model after onboarding and keep the audio engine
+  warm during VAD-to-chat handoff where safe.
+- Warm Claude Agent SDK and Codex app-server sessions opportunistically, but never
+  block the UI waiting for them.
+- Track at least: mic press to recording start, provider-open duration, first
+  partial transcript, final transcript, first model token, first audio playback.
+- Do not claim local model voice is as fast as GPT Realtime until we have measured
+  first-audio latency on the same OpenClicky path.
+
+### Speculative Scope
+
+- OpenClicky's current "speculative pre-fire" is a voice UX optimization: start a
+  likely response while speech is still stable. Keep it named and surfaced
+  separately from model-level speculative decoding.
+- Osaurus's `MTPSection.swift` is useful UI reference for native MTP controls, but
+  `docs/MODEL_COMPATIBILITY_RESEARCH.md` still treats DFlash speculative decoding
+  as design/proof work with no draft-model contract. OpenClicky should not expose
+  DFlash-style controls until the runtime proves target/draft acceptance,
+  cancellation, cache rollback, and token/sec benefit.
+
+## Priority 2: Connectivity Intake
 
 - [ ] Add an OpenClicky Connect layer for remote MCP providers.
   - Osaurus references: `docs/REMOTE_MCP_PROVIDERS.md`,
@@ -67,7 +198,7 @@ Important source constraints:
   - Candidate intents: Ask OpenClicky, Run OpenClicky Agent, Capture Screen Context,
     Speak With OpenClicky.
 
-## Priority 2: Automation, Memory, and Agents
+## Priority 3: Automation, Memory, and Agents
 
 - [ ] Upgrade OpenClicky automations with Osaurus schedule semantics.
   - OpenClicky anchor: `OpenClickyAutomationStore.swift`.
@@ -87,7 +218,7 @@ Important source constraints:
   - Start with one next-run slot and a small notes/table store before exposing full
     database tooling.
 
-## Priority 3: Chat Rendering and Interaction Intake
+## Priority 4: Chat Rendering and Interaction Intake
 
 OpenClicky should keep its visual style, but Osaurus has useful rendering mechanics.
 
@@ -106,8 +237,11 @@ OpenClicky should keep its visual style, but Osaurus has useful rendering mechan
     and compact notch presentation.
 - [ ] Evaluate adding `Highlightr` for syntax highlighting.
   - Osaurus uses `https://github.com/raspu/Highlightr` from `2.3.0`.
-  - OpenClicky currently has no dedicated syntax/diff-rendering dependency found
-    in the local project search.
+  - OpenClicky already has a first-party `Packages/OpenClickyMarkdown` package. It
+    renders OpenClicky-owned Markdown documents and fenced code blocks, but it is
+    not yet a streaming chat renderer or syntax highlighter.
+  - First task is to extend/reuse `OpenClickyMarkdown` for chat blocks before
+    adding another dependency.
   - Start with code blocks only. Do not add a broad editor dependency unless the HUD
     needs editing.
 - [ ] Add first-class tool interaction rows.
@@ -145,7 +279,7 @@ OpenClicky should keep its visual style, but Osaurus has useful rendering mechan
   - Start smaller in SwiftUI unless long sessions prove the current HUD needs
     AppKit table reuse.
 
-## Priority 4: Hosted Endpoints and Privacy
+## Priority 5: Hosted Endpoints and Privacy
 
 - [ ] Optional hosted endpoint/router intake.
   - Osaurus reference: `docs/OSAURUS_ROUTER.md`.
@@ -176,10 +310,16 @@ OpenClicky should keep its visual style, but Osaurus has useful rendering mechan
 
 ## Immediate Next Implementation Queue
 
-1. Add an OpenClicky runtime discovery file writer.
-2. Add a small OpenClicky message-block model for the Agent HUD.
-3. Add markdown/code block rendering behind the current OpenClicky HUD style.
-4. Add richer tool-call rows and artifact cards.
-5. Add App Intents over the existing OpenClicky bridge.
-6. Add remote MCP provider connection settings.
-7. Upgrade automations and memory.
+1. Add local voice/model onboarding scaffolding and detection cards for Claude Code
+   and Codex.
+2. Add `OpenClickyLocalSpeechModelManager` and a Parakeet transcription provider.
+3. Add a small local model catalog/download manager with storage preflight.
+4. Split Settings into Basic, Advanced, and Runtime Lab.
+5. Add an OpenClicky runtime discovery file writer.
+6. Add a small OpenClicky message-block model for the Agent HUD.
+7. Extend `Packages/OpenClickyMarkdown` for HUD chat/code rendering behind the
+   current OpenClicky style.
+8. Add richer tool-call rows and artifact cards.
+9. Add App Intents over the existing OpenClicky bridge.
+10. Add remote MCP provider connection settings.
+11. Upgrade automations and memory.
