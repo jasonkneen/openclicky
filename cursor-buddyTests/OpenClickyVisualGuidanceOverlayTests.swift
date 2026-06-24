@@ -70,6 +70,56 @@ struct OpenClickyVisualGuidanceOverlayTests {
         #expect(capabilityIDs.contains("visual_guidance.rectangle"))
     }
 
+    @Test func bridgeDescriptorsExposeNativeComputerUseTools() throws {
+        let toolNames = OpenClickyExternalControlBridgeServer.testMCPToolDescriptors.compactMap { descriptor in
+            descriptor["name"] as? String
+        }
+
+        for expectedTool in [
+            "openclicky_native_status",
+            "openclicky_native_apps",
+            "openclicky_native_windows",
+            "openclicky_native_focused_window",
+            "openclicky_native_capture_window",
+            "openclicky_native_type_text",
+            "openclicky_native_press_key",
+            "openclicky_workflow",
+            "openclicky_click",
+            "screenshot",
+            "speak",
+            "notify",
+            "clear",
+        ] {
+            #expect(toolNames.contains(expectedTool), "Missing tool descriptor: \(expectedTool)")
+        }
+    }
+
+    @Test func bridgeExposesUTCPManualForNativeToolsAndWorkflow() throws {
+        let manual = OpenClickyExternalControlBridgeServer.testUTCPManual(port: 32123)
+        #expect(manual["manual_version"] as? String == "1.0.0")
+        #expect(manual["utcp_version"] as? String == "1.1.0")
+
+        let auth = try #require(manual["auth"] as? [String: Any])
+        #expect(auth["auth_type"] as? String == "api_key")
+        #expect(auth["var_name"] as? String == "Authorization")
+
+        let tools = try #require(manual["tools"] as? [[String: Any]])
+        let toolNames = tools.compactMap { $0["name"] as? String }
+        #expect(toolNames.contains("openclicky_native_type_text"))
+        #expect(toolNames.contains("openclicky_native_press_key"))
+        #expect(toolNames.contains("openclicky_workflow"))
+
+        let typeText = try #require(tools.first { $0["name"] as? String == "openclicky_native_type_text" })
+        let typeTemplate = try #require(typeText["tool_call_template"] as? [String: Any])
+        #expect(typeTemplate["call_template_type"] as? String == "http")
+        #expect(typeTemplate["http_method"] as? String == "POST")
+        #expect((typeTemplate["url"] as? String)?.hasSuffix("/utcp/tools/openclicky_native_type_text") == true)
+
+        let workflow = try #require(tools.first { $0["name"] as? String == "openclicky_workflow" })
+        let workflowTemplate = try #require(workflow["tool_call_template"] as? [String: Any])
+        #expect((workflowTemplate["url"] as? String)?.hasSuffix("/utcp/workflow") == true)
+    }
+
     @Test func bridgeGatesVisualDrawingToolExposureWhenDisabled() throws {
         UserDefaults.standard.set(false, forKey: AppBundleConfiguration.userVisualDrawingOverlayToolsEnabledDefaultsKey)
         defer { UserDefaults.standard.removeObject(forKey: AppBundleConfiguration.userVisualDrawingOverlayToolsEnabledDefaultsKey) }
@@ -120,6 +170,50 @@ struct OpenClickyVisualGuidanceOverlayTests {
             #expect(overlay.style.fillOpacity == 0.25)
         } else {
             Issue.record("Expected rectangle overlay command")
+        }
+    }
+
+    @Test func bridgeParsesNativeComputerUseToolCalls() throws {
+        let typeText = OpenClickyExternalControlBridgeServer.testCommand(from: [
+            "tool": "openclicky_native_type_text",
+            "arguments": ["text": "hello", "delayMs": 25],
+        ])
+        if case .nativeTypeText(let text, let delayMilliseconds) = typeText {
+            #expect(text == "hello")
+            #expect(delayMilliseconds == 25)
+        } else {
+            Issue.record("Expected native type text command")
+        }
+
+        let pressKey = OpenClickyExternalControlBridgeServer.testCommand(from: [
+            "tool": "native_press_key",
+            "arguments": ["key": "k", "modifiers": ["command", "shift"]],
+        ])
+        if case .nativePressKey(let key, let modifiers) = pressKey {
+            #expect(key == "k")
+            #expect(modifiers == ["command", "shift"])
+        } else {
+            Issue.record("Expected native press key command")
+        }
+
+        let workflow = OpenClickyExternalControlBridgeServer.testCommand(from: [
+            "tool": "openclicky_workflow",
+            "arguments": [
+                "steps": [
+                    ["tool": "openclicky_native_status", "arguments": [:]],
+                    ["tool": "openclicky_native_press_key", "arguments": ["key": "escape"], "delayMs": 25],
+                ],
+                "stopOnError": true,
+            ],
+        ])
+        if case .workflow(let steps, let stopOnError) = workflow {
+            #expect(steps.count == 2)
+            #expect(steps[0].name == "openclicky_native_status")
+            #expect(steps[1].name == "openclicky_native_press_key")
+            #expect(steps[1].delay == 0.025)
+            #expect(stopOnError)
+        } else {
+            Issue.record("Expected workflow command")
         }
     }
 

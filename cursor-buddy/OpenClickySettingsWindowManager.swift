@@ -21,10 +21,12 @@ final class OpenClickySettingsWindowManager {
 
         NSApp.activate(ignoringOtherApps: true)
         bringSettingsWindowToFront(settingsWindow, shouldCenter: true, targetScreen: targetScreen)
+        companionManager.applyDockIconPreference()
 
         DispatchQueue.main.async { [weak self, weak settingsWindow] in
             guard let self, let settingsWindow else { return }
             self.bringSettingsWindowToFront(settingsWindow, shouldCenter: false, targetScreen: targetScreen)
+            companionManager.applyDockIconPreference()
         }
     }
 
@@ -174,6 +176,193 @@ private enum OpenClickySettingsValidationError: Error {
     case invalidAgentBaseURL
 }
 
+private extension NSView {
+    @discardableResult
+    func openClickyForwardScrollWheelToEnclosingScrollView(_ event: NSEvent) -> Bool {
+        var candidate = superview
+        while let view = candidate {
+            if let scrollView = view as? NSScrollView {
+                scrollView.scrollWheel(with: event)
+                return true
+            }
+            candidate = view.superview
+        }
+        return false
+    }
+}
+
+private final class OpenClickySettingsScrollWheelForwarder {
+    private weak var view: NSView?
+    private var monitor: Any?
+
+    init(view: NSView) {
+        self.view = view
+    }
+
+    deinit {
+        invalidate()
+    }
+
+    func updateWindowAttachment() {
+        guard view?.window != nil else {
+            invalidate()
+            return
+        }
+
+        guard monitor == nil else { return }
+
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            guard let self else { return event }
+            return self.forwardScrollIfNeeded(event) ? nil : event
+        }
+    }
+
+    func invalidate() {
+        guard let monitor else { return }
+        NSEvent.removeMonitor(monitor)
+        self.monitor = nil
+    }
+
+    private func forwardScrollIfNeeded(_ event: NSEvent) -> Bool {
+        guard
+            event.scrollingDeltaX != 0 || event.scrollingDeltaY != 0,
+            let view,
+            let window = view.window,
+            event.window === window,
+            !view.isHidden
+        else {
+            return false
+        }
+
+        let pointInView = view.convert(event.locationInWindow, from: nil)
+        guard view.bounds.insetBy(dx: -2, dy: -2).contains(pointInView) else {
+            return false
+        }
+
+        return view.openClickyForwardScrollWheelToEnclosingScrollView(event)
+    }
+}
+
+private final class OpenClickySettingsWheelTextField: NSTextField {
+    private lazy var scrollWheelForwarder = OpenClickySettingsScrollWheelForwarder(view: self)
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        scrollWheelForwarder.updateWindowAttachment()
+    }
+
+    deinit {
+        scrollWheelForwarder.invalidate()
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        if openClickyForwardScrollWheelToEnclosingScrollView(event) { return }
+        super.scrollWheel(with: event)
+    }
+}
+
+private final class OpenClickySettingsWheelSecureTextField: NSSecureTextField {
+    private lazy var scrollWheelForwarder = OpenClickySettingsScrollWheelForwarder(view: self)
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        scrollWheelForwarder.updateWindowAttachment()
+    }
+
+    deinit {
+        scrollWheelForwarder.invalidate()
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        if openClickyForwardScrollWheelToEnclosingScrollView(event) { return }
+        super.scrollWheel(with: event)
+    }
+}
+
+private final class OpenClickySettingsTextFieldCoordinator: NSObject, NSTextFieldDelegate {
+    var text: Binding<String>
+
+    init(text: Binding<String>) {
+        self.text = text
+    }
+
+    func controlTextDidChange(_ notification: Notification) {
+        guard let textField = notification.object as? NSTextField else { return }
+        text.wrappedValue = textField.stringValue
+    }
+}
+
+private struct OpenClickySettingsTextInput: NSViewRepresentable {
+    let placeholder: String
+    @Binding var text: String
+    let fontSize: CGFloat
+
+    func makeCoordinator() -> OpenClickySettingsTextFieldCoordinator {
+        OpenClickySettingsTextFieldCoordinator(text: $text)
+    }
+
+    func makeNSView(context: Context) -> OpenClickySettingsWheelTextField {
+        let textField = OpenClickySettingsWheelTextField()
+        configure(textField, context: context)
+        return textField
+    }
+
+    func updateNSView(_ textField: OpenClickySettingsWheelTextField, context: Context) {
+        context.coordinator.text = $text
+        configure(textField, context: context)
+    }
+
+    private func configure(_ textField: NSTextField, context: Context) {
+        if textField.stringValue != text {
+            textField.stringValue = text
+        }
+        textField.placeholderString = placeholder
+        textField.delegate = context.coordinator
+        textField.font = NSFont.systemFont(ofSize: fontSize)
+        textField.bezelStyle = .roundedBezel
+        textField.isBordered = true
+        textField.drawsBackground = true
+        textField.lineBreakMode = .byTruncatingMiddle
+        textField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        textField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    }
+}
+
+private struct OpenClickySettingsSecureInput: NSViewRepresentable {
+    let placeholder: String
+    @Binding var text: String
+    let fontSize: CGFloat
+
+    func makeCoordinator() -> OpenClickySettingsTextFieldCoordinator {
+        OpenClickySettingsTextFieldCoordinator(text: $text)
+    }
+
+    func makeNSView(context: Context) -> OpenClickySettingsWheelSecureTextField {
+        let textField = OpenClickySettingsWheelSecureTextField()
+        configure(textField, context: context)
+        return textField
+    }
+
+    func updateNSView(_ textField: OpenClickySettingsWheelSecureTextField, context: Context) {
+        context.coordinator.text = $text
+        configure(textField, context: context)
+    }
+
+    private func configure(_ textField: NSSecureTextField, context: Context) {
+        if textField.stringValue != text {
+            textField.stringValue = text
+        }
+        textField.placeholderString = placeholder
+        textField.delegate = context.coordinator
+        textField.font = NSFont.systemFont(ofSize: fontSize)
+        textField.bezelStyle = .roundedBezel
+        textField.isBordered = true
+        textField.drawsBackground = true
+        textField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        textField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    }
+}
+
 struct OpenClickySettingsView: View {
     @ObservedObject var companionManager: CompanionManager
     @ObservedObject private var wakeWordManager: OpenClickyWakeWordManager
@@ -209,6 +398,25 @@ struct OpenClickySettingsView: View {
     @State private var userCodexAgentAPIKey = ""
     @State private var userAssemblyAIAPIKey = ""
     @State private var userDeepgramAPIKey = ""
+    @AppStorage(AppBundleConfiguration.userCloudflareAIGatewayEnabledDefaultsKey) private var cloudflareAIGatewayEnabled = AppBundleConfiguration.cloudflareAIGatewayEnabled()
+    @AppStorage(AppBundleConfiguration.userCloudflareAIGatewayAccountIDDefaultsKey) private var cloudflareAIGatewayAccountID = AppBundleConfiguration.cloudflareAIGatewayAccountID() ?? ""
+    @AppStorage(AppBundleConfiguration.userCloudflareAIGatewayIDDefaultsKey) private var cloudflareAIGatewayID = AppBundleConfiguration.cloudflareAIGatewayID()
+    @State private var cloudflareAIGatewayToken = ""
+    @AppStorage(AppBundleConfiguration.userCloudflareAIGatewayTextRouteDefaultsKey) private var cloudflareAIGatewayTextRoute = AppBundleConfiguration.cloudflareAIGatewayTextRoute()
+    @AppStorage(AppBundleConfiguration.userCloudflareAIGatewayTranscriptionRouteDefaultsKey) private var cloudflareAIGatewayTranscriptionRoute = AppBundleConfiguration.cloudflareAIGatewayTranscriptionRoute()
+    @AppStorage(AppBundleConfiguration.userCloudflareAIGatewayZeroDataRetentionDefaultsKey) private var cloudflareAIGatewayZeroDataRetention = AppBundleConfiguration.cloudflareAIGatewayZeroDataRetentionEnabled()
+    @AppStorage(AppBundleConfiguration.userVoicePushToTalkShortcutDefaultsKey) private var voicePushToTalkShortcutRawValue = BuddyPushToTalkShortcut.ShortcutOption.commandOption.rawValue
+    @AppStorage("localModelBaseURL") private var localModelBaseURL = LocalModelSettingsStore.defaultBaseURLString
+    @AppStorage("localModelMaxOutputTokens") private var localModelMaxOutputTokens = 8192
+    @AppStorage("appleFoundationEnabled") private var appleFoundationEnabled = false
+    @AppStorage("clickyAgentBaseURL") private var clickyAgentBaseURL = ""
+    @AppStorage("openClickyKokoroBaseURL") private var userKokoroBaseURL = "http://127.0.0.1:56873/v1"
+    @AppStorage("openClickyKokoroVoice") private var userKokoroVoice = "af_heart"
+    @State private var localModelToken = ""
+    @State private var manualLocalModelID = ""
+    @State private var discoveredLocalModels: [String] = []
+    @State private var localModelStatusMessage: String?
+    @State private var isDetectingLocalModels = false
     @AppStorage(AppBundleConfiguration.userMCPDeveloperDocsEnabledDefaultsKey) private var mcpDeveloperDocsEnabled = false
     @AppStorage(AppBundleConfiguration.userMCPComposioConnectEnabledDefaultsKey) private var mcpComposioConnectEnabled = false
     @AppStorage(AppBundleConfiguration.userMCPComputerUseEnabledDefaultsKey) private var mcpComputerUseEnabled = false
@@ -235,6 +443,9 @@ struct OpenClickySettingsView: View {
         "coral", "echo", "sage", "shimmer", "verse"
     ]
     private static let notificationSettingsURL = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension")!
+    private static let settingsGroupCornerRadius: CGFloat = 12
+    private static let settingsCardCornerRadius: CGFloat = 10
+    private static let settingsControlCornerRadius: CGFloat = 8
 
     init(companionManager: CompanionManager) {
         self.companionManager = companionManager
@@ -372,6 +583,8 @@ struct OpenClickySettingsView: View {
         userElevenLabsAPIKey = AppBundleConfiguration.elevenLabsAPIKey() ?? ""
         userCartesiaAPIKey = AppBundleConfiguration.cartesiaAPIKey() ?? ""
         codexAgentBaseURL = UserDefaults.standard.string(forKey: "clickyAgentBaseURL") ?? ""
+        cloudflareAIGatewayToken = AppBundleConfiguration.cloudflareAIGatewayToken() ?? ""
+        localModelToken = LocalModelSettingsStore.token ?? ""
     }
 
     private var sidebar: some View {
@@ -449,7 +662,9 @@ struct OpenClickySettingsView: View {
     }
 
     private var liquidGlassPreview: some View {
-        ZStack {
+        let previewShape = RoundedRectangle(cornerRadius: Self.settingsCardCornerRadius, style: .continuous)
+
+        return ZStack {
             LinearGradient(
                 colors: [
                     DS.Colors.accent.opacity(0.34),
@@ -461,10 +676,10 @@ struct OpenClickySettingsView: View {
             )
             .blur(radius: 0.4 + glassFrosting * 2.4)
 
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            previewShape
                 .fill((DS.Colors.isDarkMode ? Color.black : Color.white).opacity(glassOpacity * 0.18))
 
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            previewShape
                 .stroke(Color.white.opacity(0.10 + glassFrosting * 0.30), lineWidth: 1)
 
             HStack(spacing: 10) {
@@ -482,13 +697,13 @@ struct OpenClickySettingsView: View {
             .padding(14)
         }
         .frame(height: 78)
+        .clipShape(previewShape)
         .glassEffect(
             .regular.tint(DS.Colors.accent.opacity(0.04 + glassOpacity * 0.04 + glassFrosting * 0.10)),
-            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+            in: previewShape
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            previewShape.stroke(Color.primary.opacity(0.08), lineWidth: 1)
         )
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
@@ -649,6 +864,16 @@ struct OpenClickySettingsView: View {
                     isOn: Binding(
                         get: { companionManager.isClickyCursorEnabled },
                         set: { companionManager.setClickyCursorEnabled($0) }
+                    )
+                )
+
+                toggleRow(
+                    title: "Hide Dock icon",
+                    subtitle: "Keeps OpenClicky as a menu-bar app. Turn this off to show it in the Dock and app switcher.",
+                    systemImageName: "dock.rectangle",
+                    isOn: Binding(
+                        get: { companionManager.isDockIconHidden },
+                        set: { companionManager.setDockIconHidden($0) }
                     )
                 )
 
@@ -905,7 +1130,7 @@ struct OpenClickySettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 modelOptionGrid(
-                    options: OpenClickyModelCatalog.responseVoiceModels,
+                    options: voiceModelOptions,
                     selectedModelID: companionManager.selectedModel,
                     columns: 3,
                     select: { companionManager.setSelectedModel($0) }
@@ -942,9 +1167,67 @@ struct OpenClickySettingsView: View {
                         )
                     )
                 }
+
+                if OpenClickyModelCatalog.voiceResponseModel(withID: companionManager.selectedModel).provider == .cartesia {
+                    Text(cartesiaVoiceAgentStatusText)
+                        .font(appUIFont(size: subtextFontSize, weight: .regular))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
-            settingsGroup("Transcription provider") {
+            localAISettingsGroup
+
+            settingsGroup("Listening / transcription") {
+                LazyVGrid(columns: settingsOptionColumns(3), spacing: 8) {
+                    ForEach(OpenClickyVoiceActivationMode.allCases) { mode in
+                        optionButton(
+                            title: mode.label,
+                            subtitle: mode.subtitle,
+                            isSelected: companionManager.voiceActivationMode == mode,
+                            action: { companionManager.setVoiceActivationMode(mode) }
+                        )
+                    }
+                }
+                .padding(14)
+
+                valueRow(
+                    title: "Push-to-talk shortcut",
+                    subtitle: "Hold \(selectedPushToTalkShortcut.displayText) to speak to Clicky.",
+                    systemImageName: "keyboard"
+                )
+
+                LazyVGrid(columns: settingsOptionColumns(2), spacing: 8) {
+                    ForEach(BuddyPushToTalkShortcut.ShortcutOption.allCases) { shortcut in
+                        optionButton(
+                            title: shortcut.displayText,
+                            subtitle: shortcut.subtitle,
+                            isSelected: selectedPushToTalkShortcut == shortcut,
+                            action: { voicePushToTalkShortcutRawValue = shortcut.rawValue }
+                        )
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.bottom, 14)
+
+                valueRow(
+                    title: wakeWordManager.isListening ? "Wake word armed" : "Wake word",
+                    subtitle: companionManager.voiceActivationMode.usesWakeWord
+                        ? (wakeWordManager.isListening
+                            ? "Say “Hey Clicky” to start a voice turn. Wake detection uses on-device Apple Speech."
+                            : "Activation keys toggle the local Hey Clicky listener; always-listening mode starts it automatically.")
+                        : "Disabled while Push to talk is selected.",
+                    systemImageName: wakeWordManager.isListening ? "ear.badge.waveform" : "ear"
+                )
+
+                if let wakeWordError = wakeWordManager.lastErrorMessage,
+                   !wakeWordError.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    warningRow(
+                        title: "Wake-word listener",
+                        subtitle: wakeWordError
+                    )
+                }
+
                 if OpenClickyModelCatalog.isSpeechModelID(companionManager.selectedModel) {
                     valueRow(
                         title: "Current input path",
@@ -1073,6 +1356,31 @@ struct OpenClickySettingsView: View {
                             set: { userMicrosoftEdgeVoiceID = $0; companionManager.setMicrosoftEdgeVoiceID($0) }
                         )
                     )
+                case .kokoro:
+                    Text("Kokoro runs locally on your Mac. Point OpenClicky at your OpenAI-compatible TTS server (e.g. an mlx-audio Kokoro server). No API key needed.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
+                    textFieldRow(
+                        title: "Kokoro server base URL",
+                        subtitle: "OpenAI-compatible endpoint; /audio/speech is appended.",
+                        systemImageName: "server.rack",
+                        placeholder: "http://127.0.0.1:56873/v1",
+                        text: Binding(
+                            get: { userKokoroBaseURL },
+                            set: { userKokoroBaseURL = $0; companionManager.setKokoroBaseURL($0) }
+                        )
+                    )
+                    textFieldRow(
+                        title: "Kokoro voice",
+                        subtitle: "Voice identifier, e.g. af_heart, af_bella, am_michael.",
+                        systemImageName: "person.wave.2",
+                        placeholder: "af_heart",
+                        text: Binding(
+                            get: { userKokoroVoice },
+                            set: { userKokoroVoice = $0; companionManager.setKokoroVoice($0) }
+                        )
+                    )
                 }
             }
         }
@@ -1144,6 +1452,106 @@ struct OpenClickySettingsView: View {
     private var advancedProvidersPanel: some View {
         VStack(alignment: .leading, spacing: 14) {
             advancedVoiceProviderPanel
+
+            settingsGroup("Cloudflare AI Gateway") {
+                toggleRow(
+                    title: "Route model calls through Gateway",
+                    subtitle: "Uses Cloudflare AI Gateway dynamic routes for compatible voice text, vision, and transcription requests.",
+                    systemImageName: "point.3.connected.trianglepath.dotted",
+                    isOn: Binding(
+                        get: { cloudflareAIGatewayEnabled },
+                        set: {
+                            cloudflareAIGatewayEnabled = $0
+                            companionManager.setCloudflareAIGatewayEnabled($0)
+                        }
+                    )
+                )
+
+                textFieldRow(
+                    title: "Account ID",
+                    subtitle: "Cloudflare account ID. Environment fallback: CF_ACCOUNT_ID or CLOUDFLARE_ACCOUNT_ID.",
+                    systemImageName: "building.2",
+                    placeholder: "account id",
+                    text: Binding(
+                        get: { cloudflareAIGatewayAccountID },
+                        set: {
+                            cloudflareAIGatewayAccountID = $0
+                            companionManager.setCloudflareAIGatewayAccountID($0)
+                        }
+                    )
+                )
+
+                textFieldRow(
+                    title: "Gateway ID",
+                    subtitle: "Defaults to x for this account.",
+                    systemImageName: "switch.2",
+                    placeholder: CloudflareAIGatewayRoute.defaultGatewayID,
+                    text: Binding(
+                        get: { cloudflareAIGatewayID },
+                        set: {
+                            cloudflareAIGatewayID = $0
+                            companionManager.setCloudflareAIGatewayID($0)
+                        }
+                    )
+                )
+
+                secureFieldRow(
+                    title: "Gateway token",
+                    subtitle: "Sent as cf-aig-authorization. Environment fallback: CF_AIG_TOKEN or AI_GATEWAY_TOKEN.",
+                    systemImageName: "key",
+                    placeholder: "Cloudflare AI Gateway token",
+                    text: Binding(
+                        get: { cloudflareAIGatewayToken },
+                        set: {
+                            cloudflareAIGatewayToken = $0
+                            companionManager.setCloudflareAIGatewayToken($0)
+                        }
+                    )
+                )
+
+                textFieldRow(
+                    title: "Text route",
+                    subtitle: "Dynamic route used for chat, response voice text, and vision prompts.",
+                    systemImageName: "text.bubble",
+                    placeholder: CloudflareAIGatewayRoute.textGeneration,
+                    text: Binding(
+                        get: { cloudflareAIGatewayTextRoute },
+                        set: {
+                            cloudflareAIGatewayTextRoute = $0
+                            companionManager.setCloudflareAIGatewayTextRoute($0)
+                        }
+                    )
+                )
+
+                textFieldRow(
+                    title: "Speech-to-text route",
+                    subtitle: "Dynamic route used by the Cloudflare transcription provider.",
+                    systemImageName: "waveform.badge.mic",
+                    placeholder: CloudflareAIGatewayRoute.transcription,
+                    text: Binding(
+                        get: { cloudflareAIGatewayTranscriptionRoute },
+                        set: {
+                            cloudflareAIGatewayTranscriptionRoute = $0
+                            companionManager.setCloudflareAIGatewayTranscriptionRoute($0)
+                        }
+                    )
+                )
+
+                toggleRow(
+                    title: "Zero data retention header",
+                    subtitle: "Sends cf-aig-zdr: true with gateway requests.",
+                    systemImageName: "lock.shield",
+                    isOn: $cloudflareAIGatewayZeroDataRetention
+                )
+
+                valueRow(
+                    title: CloudflareAIGatewayConfiguration.current.isConfigured ? "Gateway ready" : "Gateway needs configuration",
+                    subtitle: CloudflareAIGatewayConfiguration.current.isConfigured
+                        ? "Compatible routes will use \(AppBundleConfiguration.cloudflareAIGatewayTextRoute())."
+                        : "Add an account ID and token, or provide CF_ACCOUNT_ID and CF_AIG_TOKEN in the environment.",
+                    systemImageName: CloudflareAIGatewayConfiguration.current.isConfigured ? "checkmark.seal" : "exclamationmark.triangle"
+                )
+            }
 
             settingsGroup("OpenAI and Claude") {
                 secureFieldRow(
@@ -1502,12 +1910,12 @@ struct OpenClickySettingsView: View {
                 permissionRow(
                     title: "Microphone",
                     isGranted: companionManager.hasMicrophonePermission,
-                    settingsURL: URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!
+                    settingsURL: OpenClickyMacPrivacyPermissionProbe.microphoneSettingsURL
                 )
                 permissionRow(
                     title: "Camera",
                     isGranted: companionManager.hasCameraPermission,
-                    settingsURL: URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera")!
+                    settingsURL: OpenClickyMacPrivacyPermissionProbe.cameraSettingsURL
                 )
                 permissionRow(
                     title: "Full Disk Access",
@@ -1573,6 +1981,12 @@ struct OpenClickySettingsView: View {
                 actionRow(title: "Refresh permission status", systemImageName: "checklist") {
                     companionManager.refreshAllPermissions()
                 }
+                actionRow(title: "Request Screen Content access", systemImageName: "eye") {
+                    companionManager.requestScreenContentPermission()
+                }
+                actionRow(title: "Request Camera access", systemImageName: "camera.badge.ellipsis") {
+                    companionManager.requestCameraPermission()
+                }
                 actionRow(title: "Open Accessibility settings", systemImageName: "hand.raised") {
                     NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
                 }
@@ -1580,10 +1994,10 @@ struct OpenClickySettingsView: View {
                     NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
                 }
                 actionRow(title: "Open Microphone settings", systemImageName: "mic") {
-                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
+                    NSWorkspace.shared.open(OpenClickyMacPrivacyPermissionProbe.microphoneSettingsURL)
                 }
                 actionRow(title: "Open Camera settings", systemImageName: "camera") {
-                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera")!)
+                    companionManager.requestCameraPermission(openSettingsAfterRequest: true)
                 }
                 actionRow(title: "Open Full Disk Access settings", systemImageName: "externaldrive.badge.checkmark") {
                     companionManager.openFullDiskAccessSettings()
@@ -1755,7 +2169,7 @@ struct OpenClickySettingsView: View {
 
                 toggleRow(
                     title: "OpenClicky computer-use MCP",
-                    subtitle: "Optional. Exposes the local cuaDriver bridge to new agents when installed.",
+                    subtitle: "Optional. Exposes OpenClicky's local native control tools to new agents.",
                     systemImageName: "cursorarrow.motionlines",
                     isOn: Binding(
                         get: { mcpComputerUseEnabled },
@@ -2007,6 +2421,21 @@ struct OpenClickySettingsView: View {
         syncCodexProviderSettings()
     }
 
+    private var cartesiaVoiceAgentStatusText: String {
+        let gateway = CloudflareAIGatewayConfiguration.current
+        if gateway.isEnabled && gateway.isConfigured {
+            return "Cartesia Voice Agent currently uses Cloudflare AI Gateway for the think stage and Cartesia for playback. Native Cartesia agent streaming requires a deployed agent ID and a dedicated audio WebSocket transport."
+        }
+        if gateway.isEnabled {
+            return "Cartesia Voice Agent is selected, but Cloudflare AI Gateway is missing account ID, gateway ID, or token. Complete Gateway setup, or choose a normal response model with Cartesia playback."
+        }
+        return "Cartesia Voice Agent is not active while Cloudflare AI Gateway is off. Choose a normal response model with Cartesia playback, or enable Gateway for the current hybrid Cartesia route."
+    }
+
+    private var selectedPushToTalkShortcut: BuddyPushToTalkShortcut.ShortcutOption {
+        BuddyPushToTalkShortcut.ShortcutOption(rawValue: voicePushToTalkShortcutRawValue) ?? .commandOption
+    }
+
     private func syncCodexMCPSettings() {
         do {
             let configFile = try settingsCodexHomeManager().writeCodexConfigFromSettings()
@@ -2095,7 +2524,9 @@ struct OpenClickySettingsView: View {
     }
 
     private func settingsGroup<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        let groupShape = RoundedRectangle(cornerRadius: Self.settingsGroupCornerRadius, style: .continuous)
+
+        return VStack(alignment: .leading, spacing: 12) {
             Text(title)
                 .font(appUIFont(size: bodyFontSize, weight: .semibold))
                 .foregroundColor(.secondary)
@@ -2103,16 +2534,14 @@ struct OpenClickySettingsView: View {
                 content()
             }
             .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color(nsColor: .windowBackgroundColor).opacity(0.025))
+                groupShape.fill(Color(nsColor: .windowBackgroundColor).opacity(0.025))
             )
             .glassEffect(
                 .regular.tint(DS.Colors.accent.opacity(0.035)),
-                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                in: groupShape
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                groupShape.stroke(Color.primary.opacity(0.08), lineWidth: 1)
             )
         }
     }
@@ -2162,11 +2591,11 @@ struct OpenClickySettingsView: View {
         .padding(12)
         .frame(maxWidth: .infinity, minHeight: 74, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
+            RoundedRectangle(cornerRadius: Self.settingsCardCornerRadius, style: .continuous)
                 .fill(Color(nsColor: .windowBackgroundColor))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
+            RoundedRectangle(cornerRadius: Self.settingsCardCornerRadius, style: .continuous)
                 .stroke(Color.accentColor.opacity(0.18), lineWidth: 1)
         )
     }
@@ -2235,9 +2664,12 @@ struct OpenClickySettingsView: View {
     ) -> some View {
         editableFieldRow(title: title, subtitle: subtitle, systemImageName: systemImageName) {
             HStack(spacing: 8) {
-                TextField(placeholder, text: text)
-                    .textFieldStyle(.roundedBorder)
-                    .font(appUIFont(size: max(11, bodyFontSize - 1), weight: .regular))
+                OpenClickySettingsTextInput(
+                    placeholder: placeholder,
+                    text: text,
+                    fontSize: max(11, bodyFontSize - 1)
+                )
+                .frame(minHeight: 22)
                 if let openPath {
                     settingsPathOpenButton(openPath())
                 }
@@ -2247,9 +2679,12 @@ struct OpenClickySettingsView: View {
 
     private func secureFieldRow(title: String, subtitle: String, systemImageName: String, placeholder: String, text: Binding<String>) -> some View {
         editableFieldRow(title: title, subtitle: subtitle, systemImageName: systemImageName) {
-            SecureField(placeholder, text: text)
-                .textFieldStyle(.roundedBorder)
-                .font(appUIFont(size: max(11, bodyFontSize - 1), weight: .regular))
+            OpenClickySettingsSecureInput(
+                placeholder: placeholder,
+                text: text,
+                fontSize: max(11, bodyFontSize - 1)
+            )
+            .frame(minHeight: 22)
         }
     }
 
@@ -2364,6 +2799,172 @@ struct OpenClickySettingsView: View {
         .padding(.vertical, 11)
     }
 
+    /// Voice model options shown in the picker: the built-in cloud models plus
+    /// any discovered local models, the Apple on-device option (when enabled and
+    /// available), and the currently-selected local model if not already listed.
+    private var voiceModelOptions: [OpenClickyModelOption] {
+        var options = OpenClickyModelCatalog.responseVoiceModels
+        options += discoveredLocalModels.map { localModelOption(forRawID: $0) }
+        if appleFoundationEnabled, AppleFoundationModelAvailability.isAvailable() {
+            options.append(
+                OpenClickyModelOption(
+                    id: OpenClickyModelCatalog.appleFoundationModelID,
+                    label: OpenClickyModelCatalog.appleFoundationLabel,
+                    provider: .appleFoundation,
+                    maxOutputTokens: 4_096
+                )
+            )
+        }
+        let selected = companionManager.selectedModel
+        if OpenClickyModelCatalog.isLocalModelID(selected),
+           !options.contains(where: { $0.id == selected }),
+           let option = OpenClickyModelCatalog.localModelOption(forID: selected) {
+            options.append(option)
+        }
+        return options
+    }
+
+    private func localModelOption(forRawID rawID: String) -> OpenClickyModelOption {
+        let namespaced = OpenClickyModelCatalog.localModelIDPrefix + rawID
+        return OpenClickyModelCatalog.localModelOption(forID: namespaced)
+            ?? OpenClickyModelOption(id: namespaced, label: rawID, provider: .localOpenAICompatible, maxOutputTokens: localModelMaxOutputTokens)
+    }
+
+    private func detectLocalModels() {
+        isDetectingLocalModels = true
+        localModelStatusMessage = nil
+        let url = LocalModelSettingsStore.baseURL
+        let token = localModelToken.isEmpty ? nil : localModelToken
+        Task {
+            do {
+                let models = try await LocalModelDiscovery.listModels(baseURL: url, apiKey: token)
+                await MainActor.run {
+                    discoveredLocalModels = models
+                    localModelStatusMessage = "Found \(models.count) model\(models.count == 1 ? "" : "s")."
+                    isDetectingLocalModels = false
+                }
+            } catch {
+                await MainActor.run {
+                    discoveredLocalModels = []
+                    localModelStatusMessage = error.localizedDescription
+                    isDetectingLocalModels = false
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var localAISettingsGroup: some View {
+        settingsGroup("Local AI") {
+            Text("Use models running on your Mac. Works with any OpenAI-compatible server (Ollama, LM Studio, MLX, llama.cpp) and Apple's on-device model. Local models are called directly and are never billed.")
+                .font(appUIFont(size: subtextFontSize, weight: .regular))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            textFieldRow(
+                title: "Server base URL",
+                subtitle: "Default is Ollama. LM Studio is usually http://localhost:1234/v1.",
+                systemImageName: "server.rack",
+                placeholder: LocalModelSettingsStore.defaultBaseURLString,
+                text: $localModelBaseURL
+            )
+
+            secureFieldRow(
+                title: "Server token (optional)",
+                subtitle: "Only needed if your local server requires authentication.",
+                systemImageName: "key",
+                placeholder: "Bearer token",
+                text: Binding(
+                    get: { localModelToken },
+                    set: { localModelToken = $0; LocalModelSettingsStore.token = $0 }
+                )
+            )
+
+            actionRow(
+                title: isDetectingLocalModels ? "Detecting…" : "Detect installed models",
+                systemImageName: "sparkle.magnifyingglass",
+                action: { detectLocalModels() }
+            )
+
+            if let message = localModelStatusMessage {
+                valueRow(title: "Discovery", subtitle: message, systemImageName: "info.circle")
+            }
+
+            if !discoveredLocalModels.isEmpty {
+                modelOptionGrid(
+                    options: discoveredLocalModels.map { localModelOption(forRawID: $0) },
+                    selectedModelID: companionManager.selectedModel,
+                    columns: 2,
+                    select: { companionManager.setSelectedModel($0) }
+                )
+            }
+
+            textFieldRow(
+                title: "Or enter a model id",
+                subtitle: "Type an exact id (e.g. qwen2.5:7b) the picker did not list.",
+                systemImageName: "character.cursor.ibeam",
+                placeholder: "model id",
+                text: $manualLocalModelID
+            )
+
+            actionRow(
+                title: "Use this model id",
+                systemImageName: "checkmark.circle",
+                action: {
+                    let trimmed = manualLocalModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty else { return }
+                    companionManager.setSelectedModel(OpenClickyModelCatalog.localModelIDPrefix + trimmed)
+                }
+            )
+
+            textFieldRow(
+                title: "Max output tokens",
+                subtitle: "Generation cap for local replies.",
+                systemImageName: "number",
+                placeholder: "8192",
+                text: Binding(
+                    get: { String(localModelMaxOutputTokens) },
+                    set: { localModelMaxOutputTokens = Int($0) ?? localModelMaxOutputTokens }
+                )
+            )
+
+            if AppleFoundationModelAvailability.isAvailable() {
+                toggleRow(
+                    title: "Apple on-device model",
+                    subtitle: "Text-only. Runs fully on this Mac with no network call.",
+                    systemImageName: "apple.logo",
+                    isOn: Binding(
+                        get: { appleFoundationEnabled },
+                        set: { appleFoundationEnabled = $0 }
+                    )
+                )
+                if appleFoundationEnabled {
+                    actionRow(
+                        title: "Use Apple on-device model",
+                        systemImageName: "checkmark.circle",
+                        action: { companionManager.setSelectedModel(OpenClickyModelCatalog.appleFoundationModelID) }
+                    )
+                }
+            } else {
+                valueRow(
+                    title: "Apple on-device model",
+                    subtitle: AppleFoundationModelAvailability.unavailableReason() ?? "Unavailable on this Mac.",
+                    systemImageName: "apple.logo"
+                )
+            }
+
+            toggleRow(
+                title: "Use local endpoint for Agent Mode",
+                subtitle: "Points Codex Agent Mode at your local server. Restart Agent sessions to apply.",
+                systemImageName: "cpu",
+                isOn: Binding(
+                    get: { !localModelBaseURL.isEmpty && clickyAgentBaseURL == localModelBaseURL },
+                    set: { clickyAgentBaseURL = $0 ? localModelBaseURL : "" }
+                )
+            )
+        }
+    }
+
     private func modelOptionGrid(
         options: [OpenClickyModelOption],
         selectedModelID: String,
@@ -2405,11 +3006,11 @@ struct OpenClickySettingsView: View {
             .padding(10)
             .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: Self.settingsCardCornerRadius, style: .continuous)
                     .fill(isSelected ? Color.accentColor.opacity(0.14) : Color(nsColor: .windowBackgroundColor))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: Self.settingsCardCornerRadius, style: .continuous)
                     .stroke(isSelected ? Color.accentColor.opacity(0.55) : Color.primary.opacity(0.08), lineWidth: 1)
             )
         }
@@ -2443,11 +3044,11 @@ struct OpenClickySettingsView: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)
             .background(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                RoundedRectangle(cornerRadius: Self.settingsCardCornerRadius, style: .continuous)
                     .fill(isSelected ? accentTheme.cursorColor.opacity(0.12) : Color(nsColor: .windowBackgroundColor))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                RoundedRectangle(cornerRadius: Self.settingsCardCornerRadius, style: .continuous)
                     .stroke(isSelected ? accentTheme.cursorColor.opacity(0.8) : Color.primary.opacity(0.08), lineWidth: 1)
             )
         }
@@ -2464,7 +3065,7 @@ struct OpenClickySettingsView: View {
         } label: {
             VStack(spacing: 8) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    RoundedRectangle(cornerRadius: Self.settingsControlCornerRadius, style: .continuous)
                         .fill(isSelected ? accent.opacity(0.16) : Color.primary.opacity(0.045))
                         .frame(width: 46, height: 46)
 
@@ -2492,11 +3093,11 @@ struct OpenClickySettingsView: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)
             .background(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                RoundedRectangle(cornerRadius: Self.settingsCardCornerRadius, style: .continuous)
                     .fill(isSelected ? accent.opacity(0.12) : Color(nsColor: .windowBackgroundColor))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                RoundedRectangle(cornerRadius: Self.settingsCardCornerRadius, style: .continuous)
                     .stroke(isSelected ? accent.opacity(0.8) : Color.primary.opacity(0.08), lineWidth: 1)
             )
         }
@@ -2513,7 +3114,7 @@ struct OpenClickySettingsView: View {
         } label: {
             VStack(spacing: 8) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    RoundedRectangle(cornerRadius: Self.settingsControlCornerRadius, style: .continuous)
                         .fill(isSelected ? accent.opacity(0.16) : Color.primary.opacity(0.045))
                         .frame(width: 46, height: 46)
                     ClickyPetThumbnailView(pet: pet)
@@ -2528,11 +3129,11 @@ struct OpenClickySettingsView: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)
             .background(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                RoundedRectangle(cornerRadius: Self.settingsCardCornerRadius, style: .continuous)
                     .fill(isSelected ? accent.opacity(0.12) : Color(nsColor: .windowBackgroundColor))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                RoundedRectangle(cornerRadius: Self.settingsCardCornerRadius, style: .continuous)
                     .stroke(isSelected ? accent.opacity(0.8) : Color.primary.opacity(0.08), lineWidth: 1)
             )
         }
@@ -2561,9 +3162,12 @@ struct OpenClickySettingsView: View {
                 .controlSize(.small)
             }
 
-            TextField("Search loaded OpenPets", text: $openPetsCatalog.searchText)
-                .textFieldStyle(.roundedBorder)
-                .font(appUIFont(size: bodyFontSize, weight: .regular))
+            OpenClickySettingsTextInput(
+                placeholder: "Search loaded OpenPets",
+                text: $openPetsCatalog.searchText,
+                fontSize: bodyFontSize
+            )
+            .frame(minHeight: 22)
 
             if let error = openPetsCatalog.errorMessage {
                 Label(error, systemImage: "exclamationmark.triangle")
@@ -2597,11 +3201,11 @@ struct OpenClickySettingsView: View {
         }
         .padding(12)
         .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: Self.settingsGroupCornerRadius, style: .continuous)
                 .fill(Color(nsColor: .windowBackgroundColor).opacity(0.62))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: Self.settingsGroupCornerRadius, style: .continuous)
                 .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         )
         .onAppear {
@@ -2616,7 +3220,7 @@ struct OpenClickySettingsView: View {
 
         return VStack(alignment: .leading, spacing: 8) {
             ZStack {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                RoundedRectangle(cornerRadius: Self.settingsCardCornerRadius, style: .continuous)
                     .fill(Color.primary.opacity(0.045))
                     .frame(height: 76)
 
@@ -2676,11 +3280,11 @@ struct OpenClickySettingsView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
         .background(
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
+            RoundedRectangle(cornerRadius: Self.settingsCardCornerRadius, style: .continuous)
                 .fill(Color(nsColor: .windowBackgroundColor).opacity(0.84))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
+            RoundedRectangle(cornerRadius: Self.settingsCardCornerRadius, style: .continuous)
                 .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         )
         .help(pet.description)
@@ -2698,11 +3302,11 @@ struct OpenClickySettingsView: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)
         .background(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
+            RoundedRectangle(cornerRadius: Self.settingsCardCornerRadius, style: .continuous)
                 .fill(Color(nsColor: .windowBackgroundColor))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
+            RoundedRectangle(cornerRadius: Self.settingsCardCornerRadius, style: .continuous)
                 .stroke(Color.primary.opacity(0.08), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
         )
     }

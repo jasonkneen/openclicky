@@ -60,9 +60,13 @@ Two independent layers — keep them straight:
    - `.openAI` -> `OpenAIAPI`
    - `.codex` -> `CodexVoiceSession` / `CodexPointDetector` (selecting e.g. `gpt-5.5` means Codex handles it)
    - `.deepgram` -> Deepgram Voice Agent
+   - `.localOpenAICompatible` -> `LocalChatCompletionsAPI` (Ollama / LM Studio / MLX / llama.cpp via `/v1/chat/completions`); element pointing uses `LocalElementLocationDetector`. Local model ids are namespaced `local:<id>`; the catalog resolves them ahead of the cloud fallback. Config lives in `LocalModelSettingsStore`.
+   - `.appleFoundation` -> `AppleFoundationModelClient` (Apple on-device `FoundationModels`, text-only, behind `#if canImport(FoundationModels)` + macOS 26 availability). Fixed id `apple-foundation`; no vision (the voice path drops images with a one-line note).
 2. **Within-provider ordering (money rule).** For the Claude branch, the Claude Agent SDK is the PRIMARY path because it uses the local Claude Code sign-in already paid for. Direct `ClaudeAPI` HTTP is FALLBACK ONLY (SDK nil or throws). Never short-circuit to direct REST for latency or capability reasons — direct REST bills per token. The OpenAI/Codex branch follows the same shape: Codex app server first, OpenAI key fallback. EXEMPTION: the OpenAI realtime voice API (`gpt-realtime-2` / `gpt-realtime-1.5`, the bidirectional `OpenAIRealtimeSpeechClient` path) cannot run through the Codex app server and must use the direct API; everything after the realtime turn (gpt-5.x / codex models, including realtime IDs remapped by `voiceAnalysisModel(withID:)`) goes app-server-first.
 
 Do not delete `ClaudeAPI.swift` or the HTTP path — it is the deliberate fallback. Before editing any Claude/OpenAI call site, confirm the order is SDK/app-server -> key fallback.
+
+LOCAL EXEMPTION: `.localOpenAICompatible` and `.appleFoundation` are DIRECT by design. There is no paid cloud call to protect, so the SDK/app-server-first ordering does not apply to them. An explicitly-selected local model must never silently fall back to a billed cloud model — surface the error (e.g. "is Ollama running?") instead. This is the same shape of narrow exemption as the realtime-voice case above.
 
 
 ## Development Rules

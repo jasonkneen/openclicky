@@ -58,6 +58,9 @@ nonisolated final class CodexProcessManager: @unchecked Sendable {
         let configFile = codexHome.appendingPathComponent("config.toml", isDirectory: false)
         let configText = (try? String(contentsOf: configFile, encoding: .utf8)) ?? ""
         let prefersChatGPTAuth = configText.contains("preferred_auth_method = \"chatgpt\"")
+        if configText.contains("bearer_token_env_var = \"OPENCLICKY_BRIDGE_TOKEN\"") {
+            environment["OPENCLICKY_BRIDGE_TOKEN"] = AppBundleConfiguration.ensureExternalControlBridgeToken()
+        }
         if let configuredAPIKey = AppBundleConfiguration.openAIAPIKey(),
            !configuredAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             environment["OPENAI_API_KEY"] = configuredAPIKey

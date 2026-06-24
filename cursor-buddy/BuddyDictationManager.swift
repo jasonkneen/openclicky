@@ -14,15 +14,23 @@ import Foundation
 import Speech
 
 enum BuddyPushToTalkShortcut {
-    enum ShortcutOption {
+    enum ShortcutOption: String, CaseIterable, Identifiable {
+        case commandOption
+        case commandOptionPeriod
         case shiftFunction
         case controlOption
         case shiftControl
         case controlOptionSpace
         case shiftControlSpace
 
+        var id: String { rawValue }
+
         var displayText: String {
             switch self {
+            case .commandOption:
+                return "command + option"
+            case .commandOptionPeriod:
+                return "command + option + ."
             case .shiftFunction:
                 return "shift + fn"
             case .controlOption:
@@ -38,6 +46,10 @@ enum BuddyPushToTalkShortcut {
 
         var keyCapsuleLabels: [String] {
             switch self {
+            case .commandOption:
+                return ["command", "option"]
+            case .commandOptionPeriod:
+                return ["command", "option", "."]
             case .shiftFunction:
                 return ["shift", "fn"]
             case .controlOption:
@@ -53,6 +65,10 @@ enum BuddyPushToTalkShortcut {
 
         fileprivate var modifierOnlyFlags: NSEvent.ModifierFlags? {
             switch self {
+            case .commandOption:
+                return [.command, .option]
+            case .commandOptionPeriod:
+                return nil
             case .shiftFunction:
                 return [.shift, .function]
             case .controlOption:
@@ -66,6 +82,10 @@ enum BuddyPushToTalkShortcut {
 
         fileprivate var spaceShortcutModifierFlags: NSEvent.ModifierFlags? {
             switch self {
+            case .commandOption:
+                return nil
+            case .commandOptionPeriod:
+                return [.command, .option]
             case .shiftFunction:
                 return nil
             case .controlOption:
@@ -76,6 +96,30 @@ enum BuddyPushToTalkShortcut {
                 return [.control, .option]
             case .shiftControlSpace:
                 return [.shift, .control]
+            }
+        }
+
+        fileprivate var keyShortcutKeyCode: UInt16? {
+            switch self {
+            case .commandOptionPeriod:
+                return 47 // Period
+            case .controlOptionSpace, .shiftControlSpace:
+                return BuddyPushToTalkShortcut.spaceKeyCode
+            case .commandOption, .shiftFunction, .controlOption, .shiftControl:
+                return nil
+            }
+        }
+
+        var subtitle: String {
+            switch self {
+            case .commandOption:
+                return "Hold both keys to speak."
+            case .commandOptionPeriod:
+                return "Hold command, option, and period."
+            case .shiftFunction, .controlOption, .shiftControl:
+                return "Hold both modifier keys to speak."
+            case .controlOptionSpace, .shiftControlSpace:
+                return "Hold the modifiers and space to speak."
             }
         }
     }
@@ -92,10 +136,17 @@ enum BuddyPushToTalkShortcut {
         case keyUp
     }
 
-    static let currentShortcutOption: ShortcutOption = .controlOption
-    static let pushToTalkKeyCode: UInt16 = 49 // Space
-    static let pushToTalkDisplayText = currentShortcutOption.displayText
-    static let pushToTalkTooltipText = "push to talk (\(pushToTalkDisplayText))"
+    private static let defaultShortcutOption: ShortcutOption = .commandOption
+    private static let spaceKeyCode: UInt16 = 49
+    static var currentShortcutOption: ShortcutOption {
+        guard let rawValue = UserDefaults.standard.string(forKey: AppBundleConfiguration.userVoicePushToTalkShortcutDefaultsKey),
+              let shortcutOption = ShortcutOption(rawValue: rawValue) else {
+            return defaultShortcutOption
+        }
+        return shortcutOption
+    }
+    static var pushToTalkDisplayText: String { currentShortcutOption.displayText }
+    static var pushToTalkTooltipText: String { "push to talk (\(pushToTalkDisplayText))" }
 
     static func shortcutTransition(
         for event: NSEvent,
@@ -176,7 +227,8 @@ enum BuddyPushToTalkShortcut {
             return .none
         }
 
-        guard let pushToTalkModifierFlags = currentShortcutOption.spaceShortcutModifierFlags else {
+        guard let pushToTalkModifierFlags = currentShortcutOption.spaceShortcutModifierFlags,
+              let pushToTalkKeyCode = currentShortcutOption.keyShortcutKeyCode else {
             return .none
         }
 

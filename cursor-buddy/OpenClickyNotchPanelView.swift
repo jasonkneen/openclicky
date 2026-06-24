@@ -96,6 +96,8 @@ struct OpenClickyNotchPanelView: View {
     private var bodyFontSize: CGFloat { CGFloat(appBodyFontSize) }
     private var subtextFontSize: CGFloat { CGFloat(appSubtextFontSize) }
     private var appTextLineSpacing: CGFloat { CGFloat(appLineSpacing) }
+    private static let resizeGripFooterExclusionWidth: CGFloat = 34
+    private static let resizeGripFooterBottomInset: CGFloat = 10
 
     private var quickPromptAutocompleteOptions: [OpenClickyPromptAutocompleteOption] {
         OpenClickyPromptAutocomplete.options(
@@ -1209,7 +1211,13 @@ struct OpenClickyNotchPanelView: View {
                 ) {
                     NSWorkspace.shared.open(companionManager.codexHomeManager.learnedSkillsDirectory)
                 }
+
+                Color.clear
+                    .frame(width: Self.resizeGripFooterExclusionWidth, height: 1)
+                    .accessibilityHidden(true)
+                    .allowsHitTesting(false)
             }
+            .padding(.bottom, Self.resizeGripFooterBottomInset)
         }
     }
 

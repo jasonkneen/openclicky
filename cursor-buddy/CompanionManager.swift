@@ -224,6 +224,8 @@ private enum OpenClickyComputerUsePointingResolver: String {
     case anthropicAPI = "anthropic_api"
     case codexCLI = "codex_cli"
     case openAIResponses = "openai_responses"
+    case cloudflareGateway = "cloudflare_gateway"
+    case localVision = "local_vision"
     case unsupported = "unsupported"
 }
 
@@ -590,6 +592,7 @@ final class CompanionManager: ObservableObject {
     private static let elevenLabsAPIKey = AppBundleConfiguration.elevenLabsAPIKey()
     private static let elevenLabsVoiceID = AppBundleConfiguration.elevenLabsVoiceID()
     private static let tutorModeDefaultsKey = "isTutorModeEnabled"
+    private static let screenContentPermissionDefaultsKey = "hasScreenContentPermission"
 
     private static func initialTutorModeEnabled() -> Bool {
         UserDefaults.standard.object(forKey: tutorModeDefaultsKey) as? Bool ?? true
@@ -781,6 +784,13 @@ final class CompanionManager: ObservableObject {
         )
     }()
 
+    private lazy var kokoroTTSClient: KokoroTTSClient = {
+        return KokoroTTSClient(
+            baseURLString: AppBundleConfiguration.kokoroBaseURL(),
+            voiceID: AppBundleConfiguration.kokoroVoiceID()
+        )
+    }()
+
     private lazy var openAIRealtimeSpeechClient: OpenAIRealtimeSpeechClient = {
         return OpenAIRealtimeSpeechClient(
             apiKey: AppBundleConfiguration.openAIAPIKey(),
@@ -831,6 +841,7 @@ final class CompanionManager: ObservableObject {
         case .cartesia:   return cartesiaTTSClient
         case .deepgram:   return activeDeepgramTTSClient
         case .microsoftEdge: return microsoftEdgeTTSClient
+        case .kokoro: return kokoroTTSClient
         }
     }
 
@@ -844,6 +855,7 @@ final class CompanionManager: ObservableObject {
         case .cartesia:   return "CartesiaTTSClient"
         case .deepgram:   return "DeepgramTTSClient"
         case .microsoftEdge: return "MicrosoftEdgeTTSClient"
+        case .kokoro: return "KokoroTTSClient"
         }
     }
 
@@ -854,6 +866,7 @@ final class CompanionManager: ObservableObject {
         case .cartesia:   return "CartesiaTTSClient.speakText"
         case .deepgram:   return "DeepgramTTSClient.speakText"
         case .microsoftEdge: return "MicrosoftEdgeTTSClient.speakText"
+        case .kokoro: return "KokoroTTSClient.speakText"
         }
     }
 
@@ -864,6 +877,7 @@ final class CompanionManager: ObservableObject {
         case .cartesia:   return "CartesiaTTSClient.beginStreamingResponse"
         case .deepgram:   return "DeepgramTTSClient.beginStreamingResponse"
         case .microsoftEdge: return "MicrosoftEdgeTTSClient.beginStreamingResponse"
+        case .kokoro: return "KokoroTTSClient.beginStreamingResponse"
         }
     }
 
@@ -896,6 +910,29 @@ final class CompanionManager: ObservableObject {
         )
         if selectedTTSProvider == .microsoftEdge {
             FillerPhraseLibrary.shared.prepare(client: microsoftEdgeTTSClient)
+        }
+    }
+
+    func setKokoroBaseURL(_ baseURL: String) {
+        let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            UserDefaults.standard.removeObject(forKey: AppBundleConfiguration.userKokoroBaseURLDefaultsKey)
+        } else {
+            UserDefaults.standard.set(trimmed, forKey: AppBundleConfiguration.userKokoroBaseURLDefaultsKey)
+        }
+        kokoroTTSClient.updateBaseURL(AppBundleConfiguration.kokoroBaseURL())
+    }
+
+    func setKokoroVoice(_ voice: String) {
+        let trimmed = voice.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            UserDefaults.standard.removeObject(forKey: AppBundleConfiguration.userKokoroVoiceDefaultsKey)
+        } else {
+            UserDefaults.standard.set(trimmed, forKey: AppBundleConfiguration.userKokoroVoiceDefaultsKey)
+        }
+        kokoroTTSClient.updateConfiguration(apiKey: nil, voiceID: AppBundleConfiguration.kokoroVoiceID())
+        if selectedTTSProvider == .kokoro {
+            FillerPhraseLibrary.shared.prepare(client: kokoroTTSClient)
         }
     }
 
@@ -963,6 +1000,47 @@ final class CompanionManager: ObservableObject {
         if selectedTTSProvider == .cartesia {
             FillerPhraseLibrary.shared.prepare(client: cartesiaTTSClient)
         }
+    }
+
+    func setCloudflareAIGatewayEnabled(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: AppBundleConfiguration.userCloudflareAIGatewayEnabledDefaultsKey)
+        buddyDictationManager.setTranscriptionProvider(buddyDictationManager.transcriptionProviderID)
+    }
+
+    func setCloudflareAIGatewayAccountID(_ accountID: String) {
+        let trimmed = accountID.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            UserDefaults.standard.removeObject(forKey: AppBundleConfiguration.userCloudflareAIGatewayAccountIDDefaultsKey)
+        } else {
+            UserDefaults.standard.set(trimmed, forKey: AppBundleConfiguration.userCloudflareAIGatewayAccountIDDefaultsKey)
+        }
+        buddyDictationManager.setTranscriptionProvider(buddyDictationManager.transcriptionProviderID)
+    }
+
+    func setCloudflareAIGatewayID(_ gatewayID: String) {
+        let trimmed = gatewayID.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            UserDefaults.standard.removeObject(forKey: AppBundleConfiguration.userCloudflareAIGatewayIDDefaultsKey)
+        } else {
+            UserDefaults.standard.set(trimmed, forKey: AppBundleConfiguration.userCloudflareAIGatewayIDDefaultsKey)
+        }
+        buddyDictationManager.setTranscriptionProvider(buddyDictationManager.transcriptionProviderID)
+    }
+
+    func setCloudflareAIGatewayToken(_ token: String) {
+        persistOptionalSecret(token, defaultsKey: AppBundleConfiguration.userCloudflareAIGatewayTokenDefaultsKey)
+        buddyDictationManager.setTranscriptionProvider(buddyDictationManager.transcriptionProviderID)
+    }
+
+    func setCloudflareAIGatewayTextRoute(_ route: String) {
+        let trimmed = route.trimmingCharacters(in: .whitespacesAndNewlines)
+        UserDefaults.standard.set(trimmed.isEmpty ? CloudflareAIGatewayRoute.textGeneration : trimmed, forKey: AppBundleConfiguration.userCloudflareAIGatewayTextRouteDefaultsKey)
+    }
+
+    func setCloudflareAIGatewayTranscriptionRoute(_ route: String) {
+        let trimmed = route.trimmingCharacters(in: .whitespacesAndNewlines)
+        UserDefaults.standard.set(trimmed.isEmpty ? CloudflareAIGatewayRoute.transcription : trimmed, forKey: AppBundleConfiguration.userCloudflareAIGatewayTranscriptionRouteDefaultsKey)
+        buddyDictationManager.setTranscriptionProvider(buddyDictationManager.transcriptionProviderID)
     }
 
     func setCartesiaVoiceID(_ voiceID: String) {
@@ -1647,6 +1725,7 @@ final class CompanionManager: ObservableObject {
     /// (agent dashboard, memory icon, computer-use entry points) keep working
     /// for everyone, including users who previously had the toggle off.
     @Published var isAdvancedModeEnabled: Bool = true
+    @Published private(set) var isDockIconHidden: Bool = AppBundleConfiguration.hideDockIconEnabled()
 
     /// Where the agent dock parks itself on the active screen. Persisted
     /// to UserDefaults; defaults to `.topRight`.
@@ -1779,8 +1858,15 @@ final class CompanionManager: ObservableObject {
             if selectedVoiceResponseModel.provider == .codex || AppBundleConfiguration.openAIAPIKey() == nil {
                 codexVoiceSession.warmUp(systemPrompt: currentVoiceResponseSystemPrompt())
             }
+        case .cartesia:
+            if selectedTTSProvider != .cartesia {
+                setTTSProvider(.cartesia)
+            }
         case .deepgram:
             deepgramVoiceAgentClient.warmUpConnection()
+        case .localOpenAICompatible, .appleFoundation:
+            // Local clients are constructed per request; nothing to warm up.
+            break
         }
     }
 
@@ -1814,6 +1900,14 @@ final class CompanionManager: ObservableObject {
                 voiceID: AppBundleConfiguration.deepgramTTSVoice(),
                 thinkModel: AppBundleConfiguration.deepgramVoiceAgentThinkModel()
             )
+        case .cartesia:
+            if selectedTTSProvider != .cartesia {
+                setTTSProvider(.cartesia)
+            }
+        case .localOpenAICompatible, .appleFoundation:
+            // The local analyze paths build their own client per call from
+            // LocalModelSettingsStore; no shared client to configure here.
+            break
         }
     }
 
@@ -1936,31 +2030,33 @@ final class CompanionManager: ObservableObject {
             ]
         )
 
-        let isGranted = OpenClickyMacPrivacyPermissionProbe.hasSystemEventsAutomationPermission(prompt: true)
-        hasSystemEventsAutomationPermission = isGranted
+        Task { @MainActor in
+            let isGranted = await OpenClickyMacPrivacyPermissionProbe.requestSystemEventsAutomationPermission()
+            hasSystemEventsAutomationPermission = isGranted
 
-        if isGranted {
-            OpenClickyMessageLogStore.shared.append(
-                lane: "computer-use",
-                direction: "outgoing",
-                event: "native_cua.automation_probe.ready",
-                fields: [
-                    "target": "System Events"
-                ]
-            )
-            speakShortSystemResponse("System Events automation is ready.")
-        } else {
-            OpenClickyMessageLogStore.shared.append(
-                lane: "computer-use",
-                direction: "error",
-                event: "native_cua.automation_probe.blocked",
-                fields: [
-                    "target": "System Events",
-                    "error": "Automation permission is missing or denied for com.apple.systemevents"
-                ]
-            )
-            openAutomationSettings()
-            speakShortSystemResponse("System Events automation needs approval in Privacy & Security, Automation.")
+            if isGranted {
+                OpenClickyMessageLogStore.shared.append(
+                    lane: "computer-use",
+                    direction: "outgoing",
+                    event: "native_cua.automation_probe.ready",
+                    fields: [
+                        "target": "System Events"
+                    ]
+                )
+                speakShortSystemResponse("System Events automation is ready.")
+            } else {
+                OpenClickyMessageLogStore.shared.append(
+                    lane: "computer-use",
+                    direction: "error",
+                    event: "native_cua.automation_probe.blocked",
+                    fields: [
+                        "target": "System Events",
+                        "error": "Automation permission is missing or denied for com.apple.systemevents"
+                    ]
+                )
+                openAutomationSettings()
+                speakShortSystemResponse("System Events automation needs approval in Privacy & Security, Automation.")
+            }
         }
     }
 
@@ -2048,6 +2144,22 @@ final class CompanionManager: ObservableObject {
         if !enabled {
             codexHUDWindowManager.hide()
         }
+    }
+
+    func applyDockIconPreference(activateWhenShown: Bool = false) {
+        let targetPolicy: NSApplication.ActivationPolicy = isDockIconHidden ? .accessory : .regular
+        if NSApp.activationPolicy() != targetPolicy {
+            _ = NSApp.setActivationPolicy(targetPolicy)
+        }
+        if activateWhenShown, !isDockIconHidden {
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
+    func setDockIconHidden(_ hidden: Bool) {
+        isDockIconHidden = hidden
+        UserDefaults.standard.set(hidden, forKey: AppBundleConfiguration.userHideDockIconDefaultsKey)
+        applyDockIconPreference(activateWhenShown: true)
     }
 
     func setAnthropicAPIKey(_ apiKey: String) {
@@ -2250,6 +2362,14 @@ final class CompanionManager: ObservableObject {
             if selectedVoiceResponseModel.provider == .codex || AppBundleConfiguration.openAIAPIKey() == nil {
                 codexVoiceSession.warmUp(systemPrompt: currentVoiceResponseSystemPrompt())
             }
+        case .cartesia:
+            if selectedTTSProvider != .cartesia {
+                selectedTTSProvider = .cartesia
+                UserDefaults.standard.set(OpenClickyTTSProvider.cartesia.rawValue, forKey: AppBundleConfiguration.userTTSProviderDefaultsKey)
+            }
+        case .localOpenAICompatible, .appleFoundation:
+            // Local clients are constructed per request; nothing to warm up.
+            break
         }
         // Force-init the active TTS provider and prime its TLS
         // handshake. The first sentence's TTS request would otherwise
@@ -2412,6 +2532,20 @@ final class CompanionManager: ObservableObject {
             return await captureExternalControlScreenshots(focused: focused)
         case .click(let point, let caption):
             return clickExternalControlPoint(point, caption: caption)
+        case .nativeStatus:
+            return nativeExternalControlStatus()
+        case .nativeApps(let runningOnly):
+            return nativeExternalControlApps(runningOnly: runningOnly)
+        case .nativeWindows(let visibleOnly):
+            return nativeExternalControlWindows(visibleOnly: visibleOnly)
+        case .nativeFocusedWindow(let refresh):
+            return nativeExternalControlFocusedWindow(refresh: refresh)
+        case .nativeCaptureFocusedWindow:
+            return await nativeExternalControlCaptureFocusedWindow()
+        case .nativeTypeText(let text, let delayMilliseconds):
+            return nativeExternalControlTypeText(text, delayMilliseconds: delayMilliseconds)
+        case .nativePressKey(let key, let modifiers):
+            return nativeExternalControlPressKey(key, modifiers: modifiers)
         case .clear:
             clearExternalProxyOverlay()
             return .ok(["cleared": true])
@@ -2426,6 +2560,8 @@ final class CompanionManager: ObservableObject {
                 userInfo: ["source": "external_control_bridge"]
             )
             return .accepted(["notified": true, "identifier": identifier])
+        case .workflow(let steps, let stopOnError):
+            return await executeExternalControlWorkflow(steps: steps, stopOnError: stopOnError)
         }
     }
 
@@ -3147,6 +3283,223 @@ final class CompanionManager: ObservableObject {
         ])
     }
 
+    private func nativeExternalControlStatus() -> OpenClickyExternalControlResponse {
+        nativeComputerUseController.refreshStatus()
+        return .ok([
+            "status": Self.nativeComputerUseStatusJSON(nativeComputerUseController.status),
+            "backend": OpenClickyComputerUseBackendID.nativeSwift.rawValue
+        ])
+    }
+
+    private func nativeExternalControlApps(runningOnly: Bool) -> OpenClickyExternalControlResponse {
+        let apps = nativeComputerUseController.runningApps()
+            .filter { runningOnly ? $0.running : true }
+            .map(Self.nativeAppJSON)
+        return .ok([
+            "apps": apps,
+            "count": apps.count,
+            "runningOnly": runningOnly
+        ])
+    }
+
+    private func nativeExternalControlWindows(visibleOnly: Bool) -> OpenClickyExternalControlResponse {
+        let windows = (visibleOnly
+            ? nativeComputerUseController.visibleWindows()
+            : nativeComputerUseController.allWindows()
+        ).map(Self.nativeWindowJSON)
+        return .ok([
+            "windows": windows,
+            "count": windows.count,
+            "visibleOnly": visibleOnly
+        ])
+    }
+
+    private func nativeExternalControlFocusedWindow(refresh: Bool) -> OpenClickyExternalControlResponse {
+        let focusedWindow = refresh
+            ? nativeComputerUseController.refreshFocusedTarget()
+            : nativeComputerUseController.status.focusedWindow
+        guard let focusedWindow else {
+            return .error(409, "No focused target window")
+        }
+        return .ok([
+            "window": Self.nativeWindowJSON(focusedWindow),
+            "refreshed": refresh
+        ])
+    }
+
+    private func nativeExternalControlCaptureFocusedWindow() async -> OpenClickyExternalControlResponse {
+        do {
+            if !nativeComputerUseController.isEnabled {
+                nativeComputerUseController.setEnabled(true)
+            }
+            let capture = try await nativeComputerUseController.captureFocusedWindowAsJPEG()
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("OpenClickyExternalControlScreenshots", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let timestamp = Int(Date().timeIntervalSince1970 * 1000)
+            let fileURL = directory.appendingPathComponent("native-window-\(timestamp)-\(capture.window.id).jpg")
+            try capture.imageData.write(to: fileURL, options: .atomic)
+            return .ok([
+                "capture": [
+                    "label": capture.label,
+                    "path": fileURL.path,
+                    "window": Self.nativeWindowJSON(capture.window),
+                    "screenshotWidthInPixels": capture.screenshotWidthInPixels,
+                    "screenshotHeightInPixels": capture.screenshotHeightInPixels,
+                    "agentContextNote": capture.agentContextNote
+                ]
+            ])
+        } catch {
+            return .error(500, error.localizedDescription)
+        }
+    }
+
+    private func nativeExternalControlTypeText(_ text: String, delayMilliseconds: Int) -> OpenClickyExternalControlResponse {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .error(400, "Missing text") }
+        if !nativeComputerUseController.isEnabled {
+            nativeComputerUseController.setEnabled(true)
+        }
+        guard let targetWindow = nativeComputerUseController.refreshFocusedTarget() else {
+            return .error(409, "No focused target window")
+        }
+        do {
+            showActiveControlGlow(
+                around: Self.appKitScreenRect(fromComputerUseWindowBounds: targetWindow.bounds),
+                label: "Typing",
+                duration: 2.4
+            )
+            try nativeComputerUseController.typeText(trimmed, delayMilliseconds: delayMilliseconds, toPid: targetWindow.pid)
+            return .ok([
+                "typed": true,
+                "textLength": trimmed.count,
+                "delayMs": delayMilliseconds,
+                "window": Self.nativeWindowJSON(targetWindow)
+            ])
+        } catch {
+            return .error(500, error.localizedDescription)
+        }
+    }
+
+    private func nativeExternalControlPressKey(_ key: String, modifiers: [String]) -> OpenClickyExternalControlResponse {
+        let trimmedKey = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedKey.isEmpty else { return .error(400, "Missing key") }
+        if !nativeComputerUseController.isEnabled {
+            nativeComputerUseController.setEnabled(true)
+        }
+        guard let targetWindow = nativeComputerUseController.refreshFocusedTarget() else {
+            return .error(409, "No focused target window")
+        }
+        do {
+            showActiveControlGlow(
+                around: Self.appKitScreenRect(fromComputerUseWindowBounds: targetWindow.bounds),
+                label: "Key press",
+                duration: 1.6
+            )
+            try nativeComputerUseController.pressKey(trimmedKey, modifiers: modifiers, toPid: targetWindow.pid)
+            return .ok([
+                "pressed": true,
+                "key": trimmedKey,
+                "modifiers": modifiers,
+                "window": Self.nativeWindowJSON(targetWindow)
+            ])
+        } catch {
+            return .error(500, error.localizedDescription)
+        }
+    }
+
+    private func executeExternalControlWorkflow(steps: [OpenClickyExternalControlWorkflowStep], stopOnError: Bool) async -> OpenClickyExternalControlResponse {
+        var results: [[String: Any]] = []
+        var allSucceeded = true
+        var stoppedOnError = false
+
+        for step in steps {
+            if step.delay > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(step.delay * 1_000_000_000))
+            }
+            let result = await handleExternalControlCommand(step.command)
+            let succeeded = result.statusCode < 400
+            allSucceeded = allSucceeded && succeeded
+            results.append([
+                "index": step.index,
+                "tool": step.name,
+                "ok": succeeded,
+                "statusCode": result.statusCode,
+                "body": result.body
+            ])
+            if stopOnError && !succeeded {
+                stoppedOnError = true
+                break
+            }
+        }
+
+        return OpenClickyExternalControlResponse(
+            statusCode: allSucceeded ? 200 : 207,
+            body: [
+                "ok": allSucceeded,
+                "results": results,
+                "count": results.count,
+                "requestedCount": steps.count,
+                "stoppedOnError": stoppedOnError
+            ]
+        )
+    }
+
+    private static func nativeComputerUseStatusJSON(_ status: OpenClickyComputerUseStatus) -> [String: Any] {
+        var json: [String: Any] = [
+            "enabled": status.enabled,
+            "ready": status.isReadyForComputerUse,
+            "summary": status.summary,
+            "focusedTargetSummary": status.focusedTargetSummary,
+            "runningAppCount": status.runningAppCount,
+            "visibleWindowCount": status.visibleWindowCount,
+            "permissions": [
+                "accessibilityGranted": status.permissions.accessibilityGranted,
+                "screenRecordingGranted": status.permissions.screenRecordingGranted,
+                "skyLightKeyboardPathAvailable": status.permissions.skyLightKeyboardPathAvailable,
+                "fullDiskAccessLikelyGranted": status.permissions.fullDiskAccessLikelyGranted
+            ]
+        ]
+        if let focusedWindow = status.focusedWindow {
+            json["focusedWindow"] = nativeWindowJSON(focusedWindow)
+        }
+        if let lastErrorMessage = status.lastErrorMessage {
+            json["lastErrorMessage"] = lastErrorMessage
+        }
+        return json
+    }
+
+    private static func nativeAppJSON(_ app: OpenClickyComputerUseAppInfo) -> [String: Any] {
+        [
+            "pid": app.pid,
+            "bundleId": app.bundleId ?? "",
+            "name": app.name,
+            "running": app.running,
+            "active": app.active
+        ]
+    }
+
+    private static func nativeWindowJSON(_ window: OpenClickyComputerUseWindowInfo) -> [String: Any] {
+        [
+            "id": window.id,
+            "pid": window.pid,
+            "owner": window.owner,
+            "name": window.name,
+            "displayTitle": window.displayTitle,
+            "bundleIdentifier": window.bundleIdentifier ?? "",
+            "bounds": [
+                "x": window.bounds.x,
+                "y": window.bounds.y,
+                "width": window.bounds.width,
+                "height": window.bounds.height
+            ],
+            "zIndex": window.zIndex,
+            "isOnScreen": window.isOnScreen,
+            "layer": window.layer,
+            "agentContextNote": window.agentContextNote
+        ]
+    }
+
     private func speakExternalProxyText(_ text: String, interrupt: Bool) -> OpenClickyExternalControlResponse {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return .error(400, "Missing text") }
@@ -3258,11 +3611,15 @@ final class CompanionManager: ObservableObject {
         let cameraAuthStatus = AVCaptureDevice.authorizationStatus(for: .video)
         hasCameraPermission = cameraAuthStatus == .authorized
 
-        // Screen content permission is persisted after the ScreenCaptureKit
-        // picker approves it, but it is only useful when real Screen Recording
-        // permission is also present.
-        let persistedScreenContentPermission = UserDefaults.standard.bool(forKey: "hasScreenContentPermission")
-        hasScreenContentPermission = hasScreenRecordingPermission && persistedScreenContentPermission
+        // Screen Content is the app's ability to read pixels through
+        // ScreenCaptureKit. On current macOS builds that permission is backed
+        // by Screen Recording; the old extra defaults gate caused false
+        // "Needs permission" states after users granted Screen Recording in
+        // System Settings and relaunched.
+        hasScreenContentPermission = hasScreenRecordingPermission
+        if hasScreenRecordingPermission {
+            UserDefaults.standard.set(true, forKey: Self.screenContentPermissionDefaultsKey)
+        }
         hasFullDiskAccessPermission = OpenClickyMacPrivacyPermissionProbe.hasLikelyFullDiskAccess()
         hasSystemEventsAutomationPermission = OpenClickyMacPrivacyPermissionProbe.hasSystemEventsAutomationPermission(prompt: false)
 
@@ -3336,7 +3693,7 @@ final class CompanionManager: ObservableObject {
                     isRequestingScreenContent = false
                     guard didCapture else { return }
                     hasScreenContentPermission = true
-                    UserDefaults.standard.set(true, forKey: "hasScreenContentPermission")
+                    UserDefaults.standard.set(true, forKey: Self.screenContentPermissionDefaultsKey)
                     ClickyAnalytics.trackPermissionGranted(permission: "screen_content")
 
                     // If onboarding was already completed, show the cursor overlay now
@@ -3348,8 +3705,9 @@ final class CompanionManager: ObservableObject {
                 print("Screen content permission request failed: \(error)")
                 await MainActor.run {
                     isRequestingScreenContent = false
-                    hasScreenContentPermission = false
-                    UserDefaults.standard.set(false, forKey: "hasScreenContentPermission")
+                    hasScreenRecordingPermission = WindowPositionManager.hasScreenRecordingPermission()
+                    hasScreenContentPermission = hasScreenRecordingPermission
+                    UserDefaults.standard.set(hasScreenContentPermission, forKey: Self.screenContentPermissionDefaultsKey)
                 }
             }
         }
@@ -3399,6 +3757,8 @@ final class CompanionManager: ObservableObject {
         AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
             Task { @MainActor [weak self] in
                 self?.hasCameraPermission = granted
+                OpenClickyCameraCaptureController.shared.refreshAvailableCameras()
+                self?.refreshAllPermissions()
             }
         }
     }
@@ -3406,17 +3766,29 @@ final class CompanionManager: ObservableObject {
     /// Public entry point used by the permission guide and first-run onboarding
     /// to surface the native camera prompt. If the user has already responded,
     /// fall back to opening System Settings so they can flip the toggle.
-    func requestCameraPermission() {
+    func requestCameraPermission(openSettingsAfterRequest: Bool = true) {
+        NSApp.activate(ignoringOtherApps: true)
         let status = AVCaptureDevice.authorizationStatus(for: .video)
         switch status {
         case .notDetermined:
-            promptForCameraIfNotDetermined()
-        case .denied, .restricted:
-            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera") {
-                NSWorkspace.shared.open(url)
+            AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+                Task { @MainActor [weak self] in
+                    self?.hasCameraPermission = granted
+                    OpenClickyCameraCaptureController.shared.refreshAvailableCameras()
+                    self?.refreshAllPermissions()
+                    if openSettingsAfterRequest {
+                        NSWorkspace.shared.open(OpenClickyMacPrivacyPermissionProbe.cameraSettingsURL)
+                    }
+                }
             }
+        case .denied, .restricted:
+            NSWorkspace.shared.open(OpenClickyMacPrivacyPermissionProbe.cameraSettingsURL)
         case .authorized:
             hasCameraPermission = true
+            OpenClickyCameraCaptureController.shared.refreshAvailableCameras()
+            if openSettingsAfterRequest {
+                NSWorkspace.shared.open(OpenClickyMacPrivacyPermissionProbe.cameraSettingsURL)
+            }
         @unknown default:
             break
         }
@@ -4132,6 +4504,19 @@ final class CompanionManager: ObservableObject {
             fields["realtimeVisualPathOverride"] = OpenClickyModelCatalog.isSpeechModelID(selectedVoiceResponseModel.id)
         }
 
+        if shouldUseCloudflareAIGateway(for: executionModel) {
+            fields["executionMethod"] = "CloudflareAIGatewayClient.streamChatCompletion"
+            fields["authMode"] = "cloudflare_ai_gateway_token"
+            fields["transport"] = "cloudflare_ai_gateway_compat_chat_sse"
+            fields["streamingMethod"] = "URLSession.bytes"
+            fields["gatewayID"] = AppBundleConfiguration.cloudflareAIGatewayID()
+            fields["gatewayRoute"] = AppBundleConfiguration.cloudflareAIGatewayTextRoute()
+            fields["requestedModel"] = executionModel.id
+            fields["model"] = AppBundleConfiguration.cloudflareAIGatewayTextRoute()
+            fields["zeroDataRetention"] = AppBundleConfiguration.cloudflareAIGatewayZeroDataRetentionEnabled()
+            return fields
+        }
+
         switch executionModel.provider {
         case .anthropic:
             if AppBundleConfiguration.anthropicAPIKey() != nil {
@@ -4185,12 +4570,30 @@ final class CompanionManager: ObservableObject {
             fields["playbackEngine"] = "deepgram_voice_agent"
             fields["speechVoice"] = deepgramVoiceAgentClient.voiceID
             fields["thinkModel"] = deepgramVoiceAgentClient.thinkModel
+        case .cartesia:
+            fields["executionMethod"] = "CloudflareAIGatewayClient.streamChatCompletion"
+            fields["authMode"] = CloudflareAIGatewayConfiguration.current.isConfigured
+                ? "cloudflare_ai_gateway_token"
+                : "cloudflare_ai_gateway_missing"
+            fields["transport"] = "cloudflare_ai_gateway_compat_chat_sse"
+            fields["streamingMethod"] = "URLSession.bytes"
+            fields["playbackEngine"] = OpenClickyTTSProvider.cartesia.rawValue
         case .codex:
             fields["executionMethod"] = "CodexVoiceSession.analyzeImageStreaming"
             fields["authMode"] = "local_codex_chatgpt_primary"
             fields["transport"] = "codex_app_server_stdio"
             fields["streamingMethod"] = "codex_app_server_agentMessage_delta"
             fields["apiKeyFallback"] = AppBundleConfiguration.openAIAPIKey() != nil
+        case .localOpenAICompatible:
+            fields["executionMethod"] = "LocalChatCompletionsAPI.streamResponse"
+            fields["authMode"] = "local_openai_compatible_direct"
+            fields["transport"] = "chat_completions_sse"
+            fields["streamingMethod"] = "URLSession.bytes"
+        case .appleFoundation:
+            fields["executionMethod"] = "AppleFoundationModelClient.streamResponse"
+            fields["authMode"] = "on_device_foundation_models"
+            fields["transport"] = "foundation_models_session"
+            fields["streamingMethod"] = "LanguageModelSession.streamResponse"
         }
 
         return fields
@@ -16701,6 +17104,17 @@ final class CompanionManager: ObservableObject {
             : OpenClickyModelCatalog.voiceResponseModel(withID: requestedModelID)
         applyVoiceResponseModelSettings(selectedVoiceResponseModel)
 
+        if shouldUseCloudflareAIGateway(for: selectedVoiceResponseModel) {
+            return try await analyzeCloudflareGatewayVoiceResponse(
+                images: images,
+                modelOption: selectedVoiceResponseModel,
+                systemPrompt: systemPrompt,
+                conversationHistory: conversationHistory,
+                userPrompt: userPrompt,
+                onTextChunk: onTextChunk
+            )
+        }
+
         switch selectedVoiceResponseModel.provider {
         case .anthropic:
             return try await analyzeClaudeResponse(
@@ -16739,7 +17153,112 @@ final class CompanionManager: ObservableObject {
                 userPrompt: userPrompt,
                 onTextChunk: onTextChunk
             )
+        case .cartesia:
+            if CloudflareAIGatewayConfiguration.current.isEnabled {
+                throw CloudflareAIGatewayClient.GatewayError.notConfigured
+            }
+            throw NSError(
+                domain: "CartesiaVoiceAgent",
+                code: -30,
+                userInfo: [NSLocalizedDescriptionKey: "Cartesia Voice Agent is not active while Cloudflare AI Gateway is off. Choose a normal response model with Cartesia playback, or enable Gateway for the current hybrid Cartesia route."]
+            )
+        case .localOpenAICompatible:
+            // Local providers are DIRECT by design: there is no paid cloud
+            // call to protect, so no app-server-first ordering applies. An
+            // explicit local selection must never fall back to a billed model.
+            return try await analyzeLocalChatResponse(
+                images: images,
+                modelOption: selectedVoiceResponseModel,
+                systemPrompt: systemPrompt,
+                conversationHistory: conversationHistory,
+                userPrompt: userPrompt,
+                onTextChunk: onTextChunk
+            )
+        case .appleFoundation:
+            return try await analyzeAppleFoundationResponse(
+                images: images,
+                systemPrompt: systemPrompt,
+                conversationHistory: conversationHistory,
+                userPrompt: userPrompt,
+                onTextChunk: onTextChunk
+            )
         }
+    }
+
+    private func shouldUseCloudflareAIGateway(for modelOption: OpenClickyModelOption) -> Bool {
+        let gateway = CloudflareAIGatewayConfiguration.current
+        guard gateway.isConfigured else { return false }
+        switch modelOption.provider {
+        case .anthropic, .openAI, .codex, .cartesia:
+            return true
+        case .deepgram, .localOpenAICompatible, .appleFoundation:
+            return false
+        }
+    }
+
+    private func analyzeCloudflareGatewayVoiceResponse(
+        images: [(data: Data, label: String)],
+        modelOption: OpenClickyModelOption,
+        systemPrompt: String,
+        conversationHistory: [(userPlaceholder: String, assistantResponse: String)],
+        userPrompt: String,
+        onTextChunk: @MainActor @Sendable @escaping (String) -> Void
+    ) async throws -> String {
+        let (text, _) = try await CloudflareAIGatewayClient().streamChatCompletion(
+            systemPrompt: systemPrompt,
+            conversationHistory: conversationHistory,
+            userPrompt: userPrompt,
+            images: images,
+            maxOutputTokens: modelOption.maxOutputTokens,
+            onTextChunk: onTextChunk
+        )
+        return text
+    }
+
+    private func analyzeLocalChatResponse(
+        images: [(data: Data, label: String)],
+        modelOption: OpenClickyModelOption,
+        systemPrompt: String,
+        conversationHistory: [(userPlaceholder: String, assistantResponse: String)],
+        userPrompt: String,
+        onTextChunk: @MainActor @Sendable @escaping (String) -> Void
+    ) async throws -> String {
+        let api = LocalChatCompletionsAPI(
+            baseURL: LocalModelSettingsStore.baseURL,
+            apiKey: LocalModelSettingsStore.token,
+            model: OpenClickyModelCatalog.rawLocalModelID(forID: modelOption.id),
+            maxOutputTokens: modelOption.maxOutputTokens
+        )
+        return try await api.streamResponse(
+            systemPrompt: systemPrompt,
+            history: conversationHistory,
+            userPrompt: userPrompt,
+            images: images,
+            onTextChunk: onTextChunk
+        )
+    }
+
+    private func analyzeAppleFoundationResponse(
+        images: [(data: Data, label: String)],
+        systemPrompt: String,
+        conversationHistory: [(userPlaceholder: String, assistantResponse: String)],
+        userPrompt: String,
+        onTextChunk: @MainActor @Sendable @escaping (String) -> Void
+    ) async throws -> String {
+        let client = AppleFoundationModelClient()
+        var result = try await client.streamResponse(
+            systemPrompt: systemPrompt,
+            history: conversationHistory,
+            userPrompt: userPrompt,
+            onTextChunk: onTextChunk
+        )
+        if !images.isEmpty {
+            // The on-device model is text-only; tell the user its screen blindness once.
+            let note = "\n\n(Note: the on-device model can't see your screen.)"
+            await MainActor.run { onTextChunk(note) }
+            result += note
+        }
+        return result
     }
 
     private func analyzeClaudeResponse(
@@ -16943,7 +17462,7 @@ final class CompanionManager: ObservableObject {
         // cached opener only when the user has asked a real multi-word
         // question or investigation. Short acknowledgements stay crisp.
         switch ttsProvider {
-        case .cartesia, .elevenLabs, .microsoftEdge, .deepgram:
+        case .cartesia, .elevenLabs, .microsoftEdge, .deepgram, .kokoro:
             return wordCount >= 6
         case .openAIRealtime:
             return false
@@ -17157,6 +17676,16 @@ final class CompanionManager: ObservableObject {
         )
 
         switch resolver {
+        case .cloudflareGateway:
+            let gatewayResult = try await CloudflareAIGatewayClient().streamChatCompletion(
+                systemPrompt: systemPrompt,
+                conversationHistory: [],
+                userPrompt: userPrompt,
+                images: [image],
+                maxOutputTokens: selectedPointingModel.maxOutputTokens,
+                onTextChunk: onTextChunk
+            )
+            return gatewayResult.text
         case .openAIRealtime:
             let text = try await openAIRealtimeSpeechClient.analyzeImageResponse(
                 images: [image],
@@ -17195,6 +17724,22 @@ final class CompanionManager: ObservableObject {
             )
             onTextChunk(text)
             return text
+        case .localVision:
+            // Local vision model returns the same [POINT:x,y] text contract;
+            // downstream parsing handles the tag.
+            let api = LocalChatCompletionsAPI(
+                baseURL: LocalModelSettingsStore.baseURL,
+                apiKey: LocalModelSettingsStore.token,
+                model: OpenClickyModelCatalog.rawLocalModelID(forID: selectedPointingModel.id),
+                maxOutputTokens: selectedPointingModel.maxOutputTokens
+            )
+            return try await api.streamResponse(
+                systemPrompt: systemPrompt,
+                history: [],
+                userPrompt: userPrompt,
+                images: [image],
+                onTextChunk: onTextChunk
+            )
         case .unsupported:
             throw NSError(
                 domain: "OpenClickyComputerUsePointing",
@@ -17215,6 +17760,15 @@ final class CompanionManager: ObservableObject {
         }
 
         let pointingModel = OpenClickyModelCatalog.computerUseModel(withID: selectedComputerUseModelID)
+        if CloudflareAIGatewayConfiguration.current.isConfigured {
+            switch pointingModel.provider {
+            case .anthropic, .openAI, .codex:
+                return .cloudflareGateway
+            case .deepgram, .cartesia, .localOpenAICompatible, .appleFoundation:
+                break
+            }
+        }
+
         if pointingModel.provider == .openAI,
            OpenClickyModelCatalog.isSpeechModelID(pointingModel.id) {
             return .openAIRealtime
@@ -17227,7 +17781,9 @@ final class CompanionManager: ObservableObject {
             return .codexCLI
         case .openAI:
             return .openAIResponses
-        case .deepgram:
+        case .localOpenAICompatible:
+            return .localVision
+        case .appleFoundation, .deepgram, .cartesia:
             return .unsupported
         }
     }
@@ -17271,7 +17827,20 @@ final class CompanionManager: ObservableObject {
                 displayWidthInPoints: targetScreenCapture.displayWidthInPoints,
                 displayHeightInPoints: targetScreenCapture.displayHeightInPoints
             )
-        case .openAI, .deepgram:
+        case .localOpenAICompatible:
+            let detector = LocalElementLocationDetector(
+                baseURL: LocalModelSettingsStore.baseURL,
+                apiKey: LocalModelSettingsStore.token,
+                model: OpenClickyModelCatalog.rawLocalModelID(forID: selectedPointingModel.id)
+            )
+            displayLocalLocation = await detector.detectElementLocation(
+                screenshotData: targetScreenCapture.imageData,
+                userQuestion: userQuestion,
+                displayWidthInPoints: targetScreenCapture.displayWidthInPoints,
+                displayHeightInPoints: targetScreenCapture.displayHeightInPoints
+            )
+        case .openAI, .appleFoundation, .deepgram, .cartesia:
+            // No vision pointing for these on this proactive path.
             return
         }
 

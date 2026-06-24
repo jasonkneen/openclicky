@@ -165,8 +165,8 @@ struct OpenClickyWidgetStateStoreTests {
         #expect(!snapshot.needsAttention.contains { $0.kind == .missingPermission })
         
         // Simulate a failed agent session
-        let session = CodexAgentSession(title: "Failed Build Task", accentTheme: .red)
-        session.setTestStatus(.failed("Build exited with code 1"))
+        let session = CodexAgentSession(title: "Failed Build Task", accentTheme: .rose)
+        session.setTestStatus(CodexAgentSessionStatus.failed("Build exited with code 1"))
         session.setTestLastErrorMessage("Build exited with code 1")
         companionManager.setTestCodexAgentSessions([session])
         

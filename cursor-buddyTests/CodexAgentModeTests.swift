@@ -166,6 +166,7 @@ struct CodexAgentModeTests {
 
         #expect(rendered.contains("[mcp_servers.openClickyControl]"))
         #expect(rendered.contains("http://127.0.0.1:32123/mcp"))
+        #expect(rendered.contains("bearer_token_env_var = \"OPENCLICKY_BRIDGE_TOKEN\""))
     }
 
     @Test func cuaDriverMCPConfigurationPrefersExplicitOpenClickyOverride() throws {

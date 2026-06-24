@@ -173,6 +173,10 @@ final class CodexHomeManager {
         let cuaDriverCommand = AppBundleConfiguration.mcpComputerUseEnabled()
             ? AppBundleConfiguration.mcpCuaDriverCommand()
             : nil
+        if AppBundleConfiguration.mcpComputerUseEnabled() {
+            _ = AppBundleConfiguration.ensureExternalControlBridgeToken()
+        }
+        let freeSpeechCommand = Self.freeSpeechMCPCommandIfInstalled(fileManager: fileManager)
         let config = ClickyCodexConfigTemplate(
             model: model,
             reasoningEffort: reasoningEffort,
@@ -182,7 +186,9 @@ final class CodexHomeManager {
             learnedSkillsDirectoryName: learnedSkillsDirectoryName,
             includeOpenAIDeveloperDocsMCP: AppBundleConfiguration.mcpDeveloperDocsEnabled(),
             includeComposioConnectMCP: AppBundleConfiguration.mcpComposioConnectEnabled(),
+            includeOpenClickyControlMCP: AppBundleConfiguration.mcpComputerUseEnabled(),
             cuaDriverMCPCommand: cuaDriverCommand,
+            freeSpeechMCPCommand: freeSpeechCommand,
             preferAPIKeyAuthForDefaultOpenAI: Self.hasConfiguredOpenAIAPIKey()
         )
         let configFile = codexHomeDirectory.appendingPathComponent("config.toml", isDirectory: false)
@@ -371,6 +377,11 @@ final class CodexHomeManager {
     private static func hasConfiguredOpenAIAPIKey() -> Bool {
         guard let apiKey = AppBundleConfiguration.openAIAPIKey() else { return false }
         return !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private static func freeSpeechMCPCommandIfInstalled(fileManager: FileManager) -> String? {
+        let command = "/Applications/Free Speech.app/Contents/Resources/free_speech_mcp.py"
+        return fileManager.isExecutableFile(atPath: command) ? command : nil
     }
 
     private func linkDefaultCodexAuthIfAvailable(to home: URL) throws {

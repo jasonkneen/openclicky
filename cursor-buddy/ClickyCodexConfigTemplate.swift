@@ -14,6 +14,7 @@ struct ClickyCodexConfigTemplate: Equatable {
     var includeComposioConnectMCP: Bool
     var includeOpenClickyControlMCP: Bool
     var cuaDriverMCPCommand: String?
+    var freeSpeechMCPCommand: String?
     var preferAPIKeyAuthForDefaultOpenAI: Bool
 
     init(
@@ -27,6 +28,7 @@ struct ClickyCodexConfigTemplate: Equatable {
         includeComposioConnectMCP: Bool = false,
         includeOpenClickyControlMCP: Bool = false,
         cuaDriverMCPCommand: String? = nil,
+        freeSpeechMCPCommand: String? = nil,
         preferAPIKeyAuthForDefaultOpenAI: Bool = false
     ) {
         self.model = model
@@ -39,6 +41,7 @@ struct ClickyCodexConfigTemplate: Equatable {
         self.includeComposioConnectMCP = includeComposioConnectMCP
         self.includeOpenClickyControlMCP = includeOpenClickyControlMCP
         self.cuaDriverMCPCommand = cuaDriverMCPCommand
+        self.freeSpeechMCPCommand = freeSpeechMCPCommand
         self.preferAPIKeyAuthForDefaultOpenAI = preferAPIKeyAuthForDefaultOpenAI
     }
 
@@ -70,13 +73,16 @@ struct ClickyCodexConfigTemplate: Equatable {
         ]
 
         if !ClickyCodexBackend.isDefaultOpenAIBaseURL(workerBaseURL) {
+            // Local OpenAI-compatible servers serve /chat/completions, not the
+            // proprietary Responses API; pick the wire format accordingly.
+            let wireAPI = ClickyCodexBackend.isLocalBaseURL(workerBaseURL) ? "chat" : "responses"
             lines.append(contentsOf: [
                 "",
                 "[model_providers.\(Self.customModelProviderID)]",
                 "name = \"OpenClicky\"",
                 "env_key = \"OPENAI_API_KEY\"",
                 "base_url = \"\(escape(openAICompatibleEndpoint.absoluteString))\"",
-                "wire_api = \"responses\"",
+                "wire_api = \"\(wireAPI)\"",
                 "trust_level = \"trusted\"",
                 "hide_full_access_warning = true",
                 "fast_mode = true",
@@ -117,7 +123,16 @@ struct ClickyCodexConfigTemplate: Equatable {
             lines.append(contentsOf: [
                 "",
                 "[mcp_servers.openClickyControl]",
-                "url = \"http://127.0.0.1:32123/mcp\""
+                "url = \"http://127.0.0.1:32123/mcp\"",
+                "bearer_token_env_var = \"OPENCLICKY_BRIDGE_TOKEN\""
+            ])
+        }
+
+        if let freeSpeechMCPCommand = normalizedOptionalString(freeSpeechMCPCommand) {
+            lines.append(contentsOf: [
+                "",
+                "[mcp_servers.freeSpeech]",
+                "command = \"\(escape(freeSpeechMCPCommand))\""
             ])
         }
 
@@ -237,6 +252,25 @@ enum ClickyCodexBackend {
 
     static func isOpenClickyLocalModelBaseURL(_ url: URL) -> Bool {
         normalizedBaseURL(url) == normalizedBaseURL(openClickyLocalModelBaseURL)
+    }
+
+    /// True when the endpoint is a local model server (Ollama / LM Studio /
+    /// llama.cpp / vLLM). Local servers speak `/chat/completions`, so the
+    /// generated Codex provider must use `wire_api = "chat"`, not "responses".
+    static func isLocalBaseURL(_ url: URL) -> Bool {
+        if let host = url.host?.lowercased() {
+            if host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "0.0.0.0" {
+                return true
+            }
+            if host.hasSuffix(".local") {
+                return true
+            }
+        }
+        // Common local model server ports as a fallback signal.
+        if let port = url.port, port == 11434 || port == 1234 || port == 8080 {
+            return true
+        }
+        return false
     }
 
     private static func normalizedBaseURL(_ url: URL) -> String {

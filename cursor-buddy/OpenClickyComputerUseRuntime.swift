@@ -849,13 +849,22 @@ enum OpenClickyComputerUsePermissionProbe {
 enum OpenClickyMacPrivacyPermissionProbe {
     static let fullDiskAccessSettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")!
     static let automationSettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")!
+    static let cameraSettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera")!
+    static let microphoneSettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!
     static let systemEventsBundleIdentifier = "com.apple.systemevents"
+    private static let systemEventsApplicationURL = URL(fileURLWithPath: "/System/Library/CoreServices/System Events.app")
 
     static func hasSystemEventsAutomationPermission(prompt: Bool = false) -> Bool {
         hasAppleEventsAutomationPermission(
             targetBundleIdentifier: systemEventsBundleIdentifier,
             prompt: prompt
         )
+    }
+
+    @MainActor
+    static func requestSystemEventsAutomationPermission() async -> Bool {
+        await prepareSystemEventsForPermissionRequest()
+        return hasSystemEventsAutomationPermission(prompt: true)
     }
 
     static func hasAppleEventsAutomationPermission(targetBundleIdentifier: String, prompt: Bool = false) -> Bool {
@@ -869,6 +878,11 @@ enum OpenClickyMacPrivacyPermissionProbe {
             return false
         }
 
+        if targetBundleIdentifier == systemEventsBundleIdentifier,
+           NSRunningApplication.runningApplications(withBundleIdentifier: targetBundleIdentifier).isEmpty {
+            launchSystemEventsForPermissionProbe()
+        }
+
         let target = NSAppleEventDescriptor(bundleIdentifier: targetBundleIdentifier)
         guard let targetDescriptor = target.aeDesc else { return false }
         let status = AEDeterminePermissionToAutomateTarget(
@@ -878,6 +892,30 @@ enum OpenClickyMacPrivacyPermissionProbe {
             prompt
         )
         return status == noErr
+    }
+
+    @MainActor
+    private static func prepareSystemEventsForPermissionRequest() async {
+        guard NSRunningApplication.runningApplications(withBundleIdentifier: systemEventsBundleIdentifier).isEmpty else { return }
+
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = false
+        configuration.createsNewApplicationInstance = false
+
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            NSWorkspace.shared.openApplication(at: systemEventsApplicationURL, configuration: configuration) { _, _ in
+                continuation.resume()
+            }
+        }
+
+        try? await Task.sleep(nanoseconds: 300_000_000)
+    }
+
+    private static func launchSystemEventsForPermissionProbe() {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = false
+        configuration.createsNewApplicationInstance = false
+        NSWorkspace.shared.openApplication(at: systemEventsApplicationURL, configuration: configuration) { _, _ in }
     }
 
     static func hasLikelyFullDiskAccess(fileManager: FileManager = .default) -> Bool {
