@@ -15,6 +15,7 @@ enum BuddyTranscriptionProviderID: String, CaseIterable, Identifiable {
     case assemblyAI = "assemblyai"
     case deepgram = "deepgram"
     case openAI = "openai"
+    case cloudflareGateway = "cloudflare_gateway"
 
     var id: String { rawValue }
 
@@ -32,13 +33,15 @@ enum BuddyTranscriptionProviderID: String, CaseIterable, Identifiable {
             return "Deepgram"
         case .openAI:
             return "Whisper"
+        case .cloudflareGateway:
+            return "Cloudflare"
         }
     }
 
     var subtitle: String {
         switch self {
         case .automatic:
-            return "Local-first"
+            return "Best configured"
         case .parakeet:
             return "Local Parakeet"
         case .appleSpeech:
@@ -49,6 +52,8 @@ enum BuddyTranscriptionProviderID: String, CaseIterable, Identifiable {
             return "Streaming"
         case .openAI:
             return "OpenAI listening"
+        case .cloudflareGateway:
+            return "AI Gateway"
         }
     }
 }
@@ -114,7 +119,7 @@ enum BuddyTranscriptionProviderFactory {
         BuddyTranscriptionProviderID.allCases.filter { providerID in
             switch providerID {
             case .parakeet:
-                return OpenClickyParakeetTranscriptionProvider().isConfigured
+                return FreeSpeechParakeetTranscriptionProvider().isConfigured || OpenClickyParakeetTranscriptionProvider().isConfigured
             default:
                 return true
             }
@@ -124,7 +129,9 @@ enum BuddyTranscriptionProviderFactory {
     static func selectedProviderID() -> BuddyTranscriptionProviderID {
         let rawValue = UserDefaults.standard.string(forKey: AppBundleConfiguration.userVoiceTranscriptionProviderDefaultsKey)
             ?? AppBundleConfiguration.stringValue(forKey: "VoiceTranscriptionProvider")
-            ?? BuddyTranscriptionProviderID.automatic.rawValue
+            ?? (FreeSpeechParakeetTranscriptionProvider.isLocallyAvailable || OpenClickyParakeetTranscriptionProvider().isConfigured
+                ? BuddyTranscriptionProviderID.parakeet.rawValue
+                : BuddyTranscriptionProviderID.automatic.rawValue)
         return BuddyTranscriptionProviderID(rawValue: rawValue.lowercased()) ?? .automatic
     }
 
@@ -134,10 +141,11 @@ enum BuddyTranscriptionProviderFactory {
             .lowercased()
         let resolvedPreferredProvider = preferredProvider ?? preferredProviderRawValue.flatMap(BuddyTranscriptionProviderID.init(rawValue:))
 
+        let parakeetProvider = resolvedParakeetProvider()
         let assemblyAIProvider = AssemblyAIStreamingTranscriptionProvider()
         let deepgramProvider = DeepgramStreamingTranscriptionProvider()
         let openAIProvider = OpenAIAudioTranscriptionProvider()
-        let parakeetProvider = OpenClickyParakeetTranscriptionProvider()
+        let cloudflareProvider = CloudflareAIGatewayTranscriptionProvider()
 
         if resolvedPreferredProvider == .appleSpeech {
             return ProviderSelection(
@@ -159,10 +167,11 @@ enum BuddyTranscriptionProviderFactory {
             print("Transcription: Parakeet preferred but not available, falling back")
             let fallback = configuredFallback(
                 excluding: .parakeet,
+                parakeetProvider: parakeetProvider,
                 assemblyAIProvider: assemblyAIProvider,
                 deepgramProvider: deepgramProvider,
                 openAIProvider: openAIProvider,
-                parakeetProvider: parakeetProvider
+                cloudflareProvider: cloudflareProvider
             )
             return ProviderSelection(
                 requestedProviderID: .parakeet,
@@ -183,14 +192,15 @@ enum BuddyTranscriptionProviderFactory {
             print("Transcription: AssemblyAI preferred but not configured, falling back")
             let fallback = configuredFallback(
                 excluding: .assemblyAI,
+                parakeetProvider: parakeetProvider,
                 assemblyAIProvider: assemblyAIProvider,
                 deepgramProvider: deepgramProvider,
                 openAIProvider: openAIProvider,
-                parakeetProvider: parakeetProvider
+                cloudflareProvider: cloudflareProvider
             )
             return ProviderSelection(
                 requestedProviderID: .assemblyAI,
-                displayedProviderID: .assemblyAI,
+                displayedProviderID: fallback.0,
                 provider: fallback.1
             )
         }
@@ -207,14 +217,15 @@ enum BuddyTranscriptionProviderFactory {
             print("Transcription: Deepgram preferred but not configured, falling back")
             let fallback = configuredFallback(
                 excluding: .deepgram,
+                parakeetProvider: parakeetProvider,
                 assemblyAIProvider: assemblyAIProvider,
                 deepgramProvider: deepgramProvider,
                 openAIProvider: openAIProvider,
-                parakeetProvider: parakeetProvider
+                cloudflareProvider: cloudflareProvider
             )
             return ProviderSelection(
                 requestedProviderID: .deepgram,
-                displayedProviderID: .deepgram,
+                displayedProviderID: fallback.0,
                 provider: fallback.1
             )
         }
@@ -231,42 +242,83 @@ enum BuddyTranscriptionProviderFactory {
             print("Transcription: OpenAI preferred but not configured, falling back")
             let fallback = configuredFallback(
                 excluding: .openAI,
+                parakeetProvider: parakeetProvider,
                 assemblyAIProvider: assemblyAIProvider,
                 deepgramProvider: deepgramProvider,
                 openAIProvider: openAIProvider,
-                parakeetProvider: parakeetProvider
+                cloudflareProvider: cloudflareProvider
             )
             return ProviderSelection(
                 requestedProviderID: .openAI,
-                displayedProviderID: .openAI,
+                displayedProviderID: fallback.0,
+                provider: fallback.1
+            )
+        }
+
+        if resolvedPreferredProvider == .cloudflareGateway {
+            if cloudflareProvider.isConfigured {
+                return ProviderSelection(
+                    requestedProviderID: .cloudflareGateway,
+                    displayedProviderID: .cloudflareGateway,
+                    provider: cloudflareProvider
+                )
+            }
+
+            print("Transcription: Cloudflare Gateway preferred but not configured, falling back")
+            let fallback = configuredFallback(
+                excluding: .cloudflareGateway,
+                parakeetProvider: parakeetProvider,
+                assemblyAIProvider: assemblyAIProvider,
+                deepgramProvider: deepgramProvider,
+                openAIProvider: openAIProvider,
+                cloudflareProvider: cloudflareProvider
+            )
+            return ProviderSelection(
+                requestedProviderID: .cloudflareGateway,
+                displayedProviderID: fallback.0,
                 provider: fallback.1
             )
         }
 
         let fallback = configuredFallback(
             excluding: nil,
+            parakeetProvider: parakeetProvider,
             assemblyAIProvider: assemblyAIProvider,
             deepgramProvider: deepgramProvider,
             openAIProvider: openAIProvider,
-            parakeetProvider: parakeetProvider
+            cloudflareProvider: cloudflareProvider
         )
         return ProviderSelection(
             requestedProviderID: .automatic,
-            displayedProviderID: .automatic,
+            displayedProviderID: fallback.0,
             provider: fallback.1
         )
     }
 
+    private static func resolvedParakeetProvider() -> any BuddyTranscriptionProvider {
+        let freeSpeechProvider = FreeSpeechParakeetTranscriptionProvider()
+        if freeSpeechProvider.isConfigured {
+            return freeSpeechProvider
+        }
+        return OpenClickyParakeetTranscriptionProvider()
+    }
+
     private static func configuredFallback(
         excluding excludedProvider: BuddyTranscriptionProviderID?,
+        parakeetProvider: any BuddyTranscriptionProvider,
         assemblyAIProvider: AssemblyAIStreamingTranscriptionProvider,
         deepgramProvider: DeepgramStreamingTranscriptionProvider,
         openAIProvider: OpenAIAudioTranscriptionProvider,
-        parakeetProvider: OpenClickyParakeetTranscriptionProvider
+        cloudflareProvider: CloudflareAIGatewayTranscriptionProvider
     ) -> (BuddyTranscriptionProviderID, any BuddyTranscriptionProvider) {
         if excludedProvider != .parakeet, parakeetProvider.isConfigured {
             print("Transcription: using Parakeet as fallback")
             return (.parakeet, parakeetProvider)
+        }
+
+        if excludedProvider != .cloudflareGateway, cloudflareProvider.isConfigured {
+            print("Transcription: using Cloudflare Gateway as fallback")
+            return (.cloudflareGateway, cloudflareProvider)
         }
 
         if excludedProvider != .assemblyAI, assemblyAIProvider.isConfigured {

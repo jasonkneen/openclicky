@@ -112,6 +112,7 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDel
 
         UserDefaults.standard.register(defaults: ["NSInitialToolTipDelay": 0])
         AppBundleConfiguration.registerDefaults()
+        companionManager.applyDockIconPreference()
 
         // H15: prune old voice-transcript message logs on launch so the plaintext
         // PII on disk doesn't grow unbounded.
@@ -132,8 +133,19 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDel
         companionManager.stop()
     }
 
+    func applicationDidBecomeActive(_ notification: Notification) {
+        companionManager.applyDockIconPreference()
+        companionManager.refreshAllPermissions()
+    }
+
     func application(_ application: NSApplication, open urls: [URL]) {
         urls.forEach { companionManager.handleApplicationOpenURL($0) }
+        companionManager.refreshAllPermissions()
+        companionManager.applyDockIconPreference()
+        DispatchQueue.main.async { [weak self] in
+            self?.companionManager.refreshAllPermissions()
+            self?.companionManager.applyDockIconPreference()
+        }
     }
 
     func showSettingsWindowFromApplicationMenu() {

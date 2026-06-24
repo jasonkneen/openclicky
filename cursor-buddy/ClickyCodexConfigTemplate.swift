@@ -14,6 +14,7 @@ struct ClickyCodexConfigTemplate: Equatable {
     var includeComposioConnectMCP: Bool
     var includeOpenClickyControlMCP: Bool
     var cuaDriverMCPCommand: String?
+    var freeSpeechMCPCommand: String?
     var preferAPIKeyAuthForDefaultOpenAI: Bool
 
     init(
@@ -27,6 +28,7 @@ struct ClickyCodexConfigTemplate: Equatable {
         includeComposioConnectMCP: Bool = false,
         includeOpenClickyControlMCP: Bool = false,
         cuaDriverMCPCommand: String? = nil,
+        freeSpeechMCPCommand: String? = nil,
         preferAPIKeyAuthForDefaultOpenAI: Bool = false
     ) {
         self.model = model
@@ -39,6 +41,7 @@ struct ClickyCodexConfigTemplate: Equatable {
         self.includeComposioConnectMCP = includeComposioConnectMCP
         self.includeOpenClickyControlMCP = includeOpenClickyControlMCP
         self.cuaDriverMCPCommand = cuaDriverMCPCommand
+        self.freeSpeechMCPCommand = freeSpeechMCPCommand
         self.preferAPIKeyAuthForDefaultOpenAI = preferAPIKeyAuthForDefaultOpenAI
     }
 
@@ -120,7 +123,16 @@ struct ClickyCodexConfigTemplate: Equatable {
             lines.append(contentsOf: [
                 "",
                 "[mcp_servers.openClickyControl]",
-                "url = \"http://127.0.0.1:32123/mcp\""
+                "url = \"http://127.0.0.1:32123/mcp\"",
+                "bearer_token_env_var = \"OPENCLICKY_BRIDGE_TOKEN\""
+            ])
+        }
+
+        if let freeSpeechMCPCommand = normalizedOptionalString(freeSpeechMCPCommand) {
+            lines.append(contentsOf: [
+                "",
+                "[mcp_servers.freeSpeech]",
+                "command = \"\(escape(freeSpeechMCPCommand))\""
             ])
         }
 

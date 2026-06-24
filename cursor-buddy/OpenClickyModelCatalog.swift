@@ -5,6 +5,7 @@ nonisolated enum OpenClickyModelProvider: String, Equatable {
     case openAI
     case codex
     case deepgram
+    case cartesia
     case localOpenAICompatible
     case appleFoundation
 
@@ -18,6 +19,8 @@ nonisolated enum OpenClickyModelProvider: String, Equatable {
             return "Codex"
         case .deepgram:
             return "Deepgram"
+        case .cartesia:
+            return "Cartesia"
         case .localOpenAICompatible:
             return "Local (OpenAI-compatible)"
         case .appleFoundation:
@@ -57,6 +60,7 @@ nonisolated enum OpenClickyModelCatalog {
     /// Coding work goes here; the voice path stays on the fast model.
     static let defaultDelegationModelID = "claude-sonnet-4-6"
     static let defaultComputerUseModelID = defaultCodexActionsModelID
+    static let cartesiaVoiceAgentModelID = "cartesia-voice-agent"
 
     // MARK: - Local models
 
@@ -108,7 +112,8 @@ nonisolated enum OpenClickyModelCatalog {
         OpenClickyModelOption(id: "gpt-5.5", label: "GPT-5.5", provider: .openAI, maxOutputTokens: 128_000),
         OpenClickyModelOption(id: "gpt-5.4", label: "GPT-5.4", provider: .openAI, maxOutputTokens: 128_000),
         OpenClickyModelOption(id: "gpt-5.4-mini", label: "GPT-5.4 Mini", provider: .openAI, maxOutputTokens: 128_000),
-        OpenClickyModelOption(id: "gpt-5.2", label: "GPT-5.2", provider: .openAI, maxOutputTokens: 128_000)
+        OpenClickyModelOption(id: "gpt-5.2", label: "GPT-5.2", provider: .openAI, maxOutputTokens: 128_000),
+        OpenClickyModelOption(id: cartesiaVoiceAgentModelID, label: "Cartesia Voice Agent", provider: .cartesia, maxOutputTokens: 128_000)
     ]
 
     static let speechModels: [OpenClickyModelOption] = [

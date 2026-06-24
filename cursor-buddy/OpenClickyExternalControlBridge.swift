@@ -23,9 +23,24 @@ enum OpenClickyExternalControlCommand {
     case showCaption(text: String, point: CGPoint?, duration: TimeInterval, accentHex: String?)
     case captureScreenshot(focused: Bool)
     case click(point: CGPoint, caption: String?)
+    case nativeStatus
+    case nativeApps(runningOnly: Bool)
+    case nativeWindows(visibleOnly: Bool)
+    case nativeFocusedWindow(refresh: Bool)
+    case nativeCaptureFocusedWindow
+    case nativeTypeText(text: String, delayMilliseconds: Int)
+    case nativePressKey(key: String, modifiers: [String])
     case clear
     case speak(text: String, interrupt: Bool)
     case notify(title: String, body: String, threadID: String?, sound: Bool)
+    case workflow(steps: [OpenClickyExternalControlWorkflowStep], stopOnError: Bool)
+}
+
+struct OpenClickyExternalControlWorkflowStep {
+    var index: Int
+    var name: String
+    var command: OpenClickyExternalControlCommand
+    var delay: TimeInterval
 }
 
 struct OpenClickyExternalControlResponse {
@@ -165,7 +180,8 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
                 "bridgeTokenConfigured": AppBundleConfiguration.externalControlBridgeToken() != nil,
                 "tools": Self.mcpToolDescriptors.compactMap { $0["name"] as? String },
                 "capabilities": Self.capabilityCompatibilityMetadata,
-                "multiToolEndpoints": ["/mcp/calls", "/tools/calls"],
+                "utcpManualEndpoint": "/utcp",
+                "multiToolEndpoints": ["/mcp/calls", "/tools/calls", "/utcp/workflow"],
                 "inferenceProxyEnabled": AppBundleConfiguration.externalInferenceProxyEnabled()
             ]
             if AppBundleConfiguration.externalInferenceProxyEnabled() {
@@ -185,6 +201,11 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
 
         if request.method == "GET", request.path == "/mcp/tools" {
             sendJSON(["ok": true, "tools": Self.mcpToolDescriptors], statusCode: 200, on: connection)
+            return
+        }
+
+        if request.method == "GET", request.path == "/utcp" || request.path == "/.well-known/utcp" {
+            sendJSON(Self.utcpManual(port: port), statusCode: 200, on: connection)
             return
         }
 
@@ -238,6 +259,9 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
         case "/mcp/calls", "/tools/calls":
             handleBatchToolCall(request, on: connection)
             return
+        case "/utcp/workflow", "/workflow":
+            handleBatchToolCall(request, on: connection)
+            return
         case "/mcp":
             if let response = Self.mcpJSONRPCResponse(from: request.jsonBody) {
                 if let command = response.command {
@@ -255,6 +279,11 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
             }
             command = nil
         default:
+            if request.path.hasPrefix("/utcp/tools/"),
+               let toolName = Self.utcpToolName(from: request.path) {
+                command = Self.mcpToolCommand(from: ["tool": toolName, "arguments": request.jsonBody])
+                break
+            }
             sendJSON(["ok": false, "error": "Unknown endpoint"], statusCode: 404, on: connection)
             return
         }
@@ -274,45 +303,16 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
     }
 
     private func handleBatchToolCall(_ request: HTTPRequest, on connection: NWConnection) {
-        guard let calls = Self.array(request.jsonBody["calls"] ?? request.jsonBody["tool_calls"] ?? request.jsonBody["tools"]) else {
-            sendJSON(["ok": false, "error": "Expected calls array"], statusCode: 400, on: connection)
-            return
-        }
-
-        let parsedCalls = calls.enumerated().compactMap { index, value -> (index: Int, name: String, command: OpenClickyExternalControlCommand, delay: TimeInterval)? in
-            guard let call = Self.dictionary(value) else { return nil }
-            let name = Self.string(call["tool"]) ?? Self.string(call["name"]) ?? "unknown"
-            guard let command = Self.mcpToolCommand(from: call) else { return nil }
-            let delayMilliseconds = Self.double(call["delayMs"]) ?? Self.double(call["waitMs"]) ?? 0
-            let delay = max(0, min(delayMilliseconds / 1000.0, 10.0))
-            return (index, name, command, delay)
-        }
-
-        guard parsedCalls.count == calls.count else {
-            sendJSON(["ok": false, "error": "Every batch call must include a valid tool/name and arguments"], statusCode: 400, on: connection)
+        guard let command = Self.workflowCommand(from: request.jsonBody) else {
+            sendJSON(["ok": false, "error": "Expected calls or steps array"], statusCode: 400, on: connection)
             return
         }
 
         Task { @MainActor in
-            var results: [[String: Any]] = []
-            var allSucceeded = true
-            for parsed in parsedCalls {
-                if parsed.delay > 0 {
-                    try? await Task.sleep(nanoseconds: UInt64(parsed.delay * 1_000_000_000))
-                }
-                let result = await self.handler(parsed.command)
-                allSucceeded = allSucceeded && result.statusCode < 400
-                results.append([
-                    "index": parsed.index,
-                    "tool": parsed.name,
-                    "ok": result.statusCode < 400,
-                    "statusCode": result.statusCode,
-                    "body": result.body
-                ])
-            }
+            let response = await self.handler(command)
             self.queue.async {
-                self.broadcast(event: "command", object: ["ok": allSucceeded, "path": request.path, "count": parsedCalls.count])
-                self.sendJSON(["ok": allSucceeded, "results": results], statusCode: allSucceeded ? 200 : 207, on: connection)
+                self.broadcast(event: "command", object: ["ok": response.statusCode < 400, "path": request.path])
+                self.sendJSON(response.body, statusCode: response.statusCode, on: connection)
             }
         }
     }
@@ -642,6 +642,97 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
                 ]
             ],
             [
+                "name": "openclicky_native_status",
+                "description": "Return OpenClicky's native computer-use readiness, permission state, focused target summary, and app/window counts.",
+                "inputSchema": ["type": "object", "properties": [:]]
+            ],
+            [
+                "name": "openclicky_native_apps",
+                "description": "List macOS applications visible to OpenClicky's native computer-use runtime.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "runningOnly": ["type": "boolean"]
+                    ]
+                ]
+            ],
+            [
+                "name": "openclicky_native_windows",
+                "description": "List macOS windows visible to OpenClicky's native computer-use runtime, including bounds in global screen coordinates.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "visibleOnly": ["type": "boolean"]
+                    ]
+                ]
+            ],
+            [
+                "name": "openclicky_native_focused_window",
+                "description": "Return the currently focused non-OpenClicky target window for native computer use.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "refresh": ["type": "boolean"]
+                    ]
+                ]
+            ],
+            [
+                "name": "openclicky_native_capture_window",
+                "description": "Capture the focused target window through OpenClicky's native ScreenCaptureKit path and return a local JPEG path plus coordinate metadata.",
+                "inputSchema": ["type": "object", "properties": [:]]
+            ],
+            [
+                "name": "openclicky_native_type_text",
+                "description": "Type text into the focused target window through OpenClicky's native keyboard path.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "text": ["type": "string"],
+                        "delayMs": ["type": "number"]
+                    ],
+                    "required": ["text"]
+                ]
+            ],
+            [
+                "name": "openclicky_native_press_key",
+                "description": "Press a key or key chord in the focused target window through OpenClicky's native keyboard path.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "key": ["type": "string"],
+                        "modifiers": [
+                            "type": "array",
+                            "items": ["type": "string", "enum": ["command", "control", "option", "shift"]]
+                        ]
+                    ],
+                    "required": ["key"]
+                ]
+            ],
+            [
+                "name": "openclicky_workflow",
+                "description": "Execute multiple OpenClicky native tool calls in one local request. Steps run sequentially and may include delayMs/waitMs. Use this to avoid repeated tool-call round trips for point-then-click, screenshot-then-highlight, or multi-cursor guidance flows.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "steps": [
+                            "type": "array",
+                            "items": [
+                                "type": "object",
+                                "properties": [
+                                    "tool": ["type": "string"],
+                                    "name": ["type": "string"],
+                                    "arguments": ["type": "object"],
+                                    "delayMs": ["type": "number"],
+                                    "waitMs": ["type": "number"]
+                                ]
+                            ]
+                        ],
+                        "stopOnError": ["type": "boolean"]
+                    ],
+                    "required": ["steps"]
+                ]
+            ],
+            [
                 "name": "openclicky_click",
                 "description": "Actually left-click a macOS screen coordinate using OpenClicky's native computer-use path. Coordinates are global AppKit screen points, the same coordinate space returned in screenshot displayFrame metadata.",
                 "inputSchema": [
@@ -786,6 +877,98 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
         ]
     }
 
+    private static func utcpManual(port: UInt16) -> [String: Any] {
+        let baseURL = "http://127.0.0.1:\(port)"
+        let tools = mcpToolDescriptors.compactMap { descriptor in
+            utcpToolDescriptor(from: descriptor, baseURL: baseURL)
+        }
+
+        return [
+            "manual_version": "1.0.0",
+            "utcp_version": "1.1.0",
+            "name": "OpenClicky native tools",
+            "description": "Local-only UTCP manual for OpenClicky's native macOS computer-use, visual guidance, speech, notification, screenshot, and workflow tools.",
+            "auth": [
+                "auth_type": "api_key",
+                "api_key": "Bearer ${OPENCLICKY_BRIDGE_TOKEN}",
+                "var_name": "Authorization",
+                "location": "header"
+            ],
+            "tools": tools,
+            "metadata": [
+                "transport": "local-http",
+                "base_url": baseURL,
+                "workflow_endpoint": "\(baseURL)/utcp/workflow",
+                "mcp_endpoint": "\(baseURL)/mcp"
+            ]
+        ]
+    }
+
+    private static func utcpToolDescriptor(from descriptor: [String: Any], baseURL: String) -> [String: Any]? {
+        guard let name = descriptor["name"] as? String else { return nil }
+        let encodedName = name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? name
+        let endpoint = name == "openclicky_workflow"
+            ? "\(baseURL)/utcp/workflow"
+            : "\(baseURL)/utcp/tools/\(encodedName)"
+        return [
+            "name": name,
+            "description": descriptor["description"] as? String ?? "OpenClicky native tool.",
+            "inputs": descriptor["inputSchema"] ?? ["type": "object", "properties": [:]],
+            "outputs": [
+                "type": "object",
+                "properties": [
+                    "ok": ["type": "boolean"]
+                ]
+            ],
+            "tags": utcpTags(for: name, descriptor: descriptor),
+            "average_response_size": utcpAverageResponseSize(for: name),
+            "tool_call_template": [
+                "call_template_type": "http",
+                "url": endpoint,
+                "http_method": "POST",
+                "content_type": "application/json"
+            ]
+        ]
+    }
+
+    private static func utcpTags(for name: String, descriptor: [String: Any]) -> [String] {
+        var tags = ["openclicky", "native"]
+        if name.contains("screenshot") || name.contains("capture") {
+            tags.append("screen")
+        }
+        if name.contains("click") || name.contains("type") || name.contains("press_key") || name.contains("windows") || name.contains("apps") || name.contains("status") {
+            tags.append("computer-use")
+        }
+        if name.contains("cursor") || name.contains("point") || name.contains("caption") || name.contains("highlight") || name.contains("rectangle") || name.contains("scribble") {
+            tags.append("visual-guidance")
+        }
+        if name.contains("speak") {
+            tags.append("speech")
+        }
+        if name.contains("notify") {
+            tags.append("notification")
+        }
+        if descriptor["compatibility"] != nil {
+            tags.append("gated")
+        }
+        return Array(Set(tags)).sorted()
+    }
+
+    private static func utcpAverageResponseSize(for name: String) -> Int {
+        if name.contains("screenshot") || name.contains("capture") || name.contains("windows") || name.contains("apps") {
+            return 8192
+        }
+        return 1024
+    }
+
+    private static func utcpToolName(from path: String) -> String? {
+        let prefix = "/utcp/tools/"
+        guard path.hasPrefix(prefix) else { return nil }
+        let rawName = String(path.dropFirst(prefix.count))
+        guard !rawName.isEmpty else { return nil }
+        return rawName.removingPercentEncoding ?? rawName
+    }
+
     private static func mcpToolCommand(from json: [String: Any]) -> OpenClickyExternalControlCommand? {
         let tool = string(json["tool"]) ?? string(json["name"])
         let arguments = dictionary(json["arguments"]) ?? dictionary(json["args"]) ?? json
@@ -802,6 +985,22 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
             return rectangleCommand(from: arguments)
         case "screenshot", "screenshots", "capture_screenshot", "openclicky_screenshot":
             return .captureScreenshot(focused: bool(arguments["focused"]) ?? false)
+        case "openclicky_native_status", "native_status":
+            return .nativeStatus
+        case "openclicky_native_apps", "native_apps", "list_apps":
+            return .nativeApps(runningOnly: bool(arguments["runningOnly"]) ?? bool(arguments["running_only"]) ?? false)
+        case "openclicky_native_windows", "native_windows", "list_windows":
+            return .nativeWindows(visibleOnly: bool(arguments["visibleOnly"]) ?? bool(arguments["visible_only"]) ?? true)
+        case "openclicky_native_focused_window", "native_focused_window", "focused_window":
+            return .nativeFocusedWindow(refresh: bool(arguments["refresh"]) ?? true)
+        case "openclicky_native_capture_window", "native_capture_window", "capture_focused_window":
+            return .nativeCaptureFocusedWindow
+        case "openclicky_native_type_text", "native_type_text", "type_text":
+            return nativeTypeTextCommand(from: arguments)
+        case "openclicky_native_press_key", "native_press_key", "press_key":
+            return nativePressKeyCommand(from: arguments)
+        case "openclicky_workflow", "workflow":
+            return workflowCommand(from: arguments)
         case "openclicky_click", "click", "left_click", "mouse_click":
             return clickCommand(from: arguments)
         case "clear", "openclicky_clear":
@@ -813,6 +1012,40 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
         default:
             return nil
         }
+    }
+
+    private static func nativeTypeTextCommand(from json: [String: Any]) -> OpenClickyExternalControlCommand? {
+        guard let text = string(json["text"]),
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        let delayMilliseconds = Int(max(0, min(double(json["delayMs"]) ?? double(json["delay_ms"]) ?? 10, 500)))
+        return .nativeTypeText(text: text, delayMilliseconds: delayMilliseconds)
+    }
+
+    private static func nativePressKeyCommand(from json: [String: Any]) -> OpenClickyExternalControlCommand? {
+        guard let key = string(json["key"]),
+              !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return .nativePressKey(key: key, modifiers: stringArray(json["modifiers"]))
+    }
+
+    private static func workflowCommand(from json: [String: Any]) -> OpenClickyExternalControlCommand? {
+        guard let calls = array(
+            json["calls"]
+                ?? json["tool_calls"]
+                ?? json["tools"]
+                ?? json["steps"]
+        ) else { return nil }
+        let stopOnError = bool(json["stopOnError"]) ?? bool(json["stop_on_error"]) ?? false
+        let steps = calls.enumerated().compactMap { index, value -> OpenClickyExternalControlWorkflowStep? in
+            guard let call = dictionary(value) else { return nil }
+            let name = string(call["tool"]) ?? string(call["name"]) ?? "unknown"
+            guard name != "openclicky_workflow", name != "workflow",
+                  let command = mcpToolCommand(from: call) else { return nil }
+            let delayMilliseconds = double(call["delayMs"]) ?? double(call["waitMs"]) ?? 0
+            let delay = max(0, min(delayMilliseconds / 1000.0, 10.0))
+            return OpenClickyExternalControlWorkflowStep(index: index, name: name, command: command, delay: delay)
+        }
+        guard !steps.isEmpty, steps.count == calls.count else { return nil }
+        return .workflow(steps: steps, stopOnError: stopOnError)
     }
 
     private static func mcpJSONRPCResponse(from json: [String: Any]) -> MCPJSONRPCBridgeResponse? {
@@ -951,10 +1184,18 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
         value as? [Any]
     }
 
+    private static func stringArray(_ value: Any?) -> [String] {
+        guard let values = array(value) else { return [] }
+        return values.compactMap { value in
+            string(value)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty }
+    }
+
     private static func reasonPhrase(for statusCode: Int) -> String {
         switch statusCode {
         case 200: return "OK"
         case 202: return "Accepted"
+        case 207: return "Multi-Status"
         case 400: return "Bad Request"
         case 404: return "Not Found"
         case 405: return "Method Not Allowed"
@@ -978,6 +1219,10 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
 extension OpenClickyExternalControlBridgeServer {
     static var testMCPToolDescriptors: [[String: Any]] {
         mcpToolDescriptors
+    }
+
+    static func testUTCPManual(port: UInt16 = 32123) -> [String: Any] {
+        utcpManual(port: port)
     }
 
     static var testCapabilityCompatibilityMetadata: [[String: Any]] {
@@ -1008,17 +1253,28 @@ private struct MCPJSONRPCBridgeResponse {
             return body
         }
         if let result {
+            let isError = result.statusCode >= 400 || (result.body["ok"] as? Bool) == false
             body["result"] = [
                 "content": [[
                     "type": "text",
-                    "text": (result.body["ok"] as? Bool) == true ? "ok" : (result.body["error"] as? String ?? "error")
+                    "text": Self.jsonString(result.body)
                 ]],
-                "isError": result.statusCode >= 400
+                "structuredContent": result.body,
+                "isError": isError
             ]
             return body
         }
         body["result"] = [:]
         return body
+    }
+
+    private static func jsonString(_ object: [String: Any]) -> String {
+        guard JSONSerialization.isValidJSONObject(object),
+              let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
+              let text = String(data: data, encoding: .utf8) else {
+            return "{}"
+        }
+        return text
     }
 }
 

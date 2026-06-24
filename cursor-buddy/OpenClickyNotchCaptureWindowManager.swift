@@ -89,7 +89,7 @@ final class OpenClickyNotchCaptureWindowManager {
     private var currentAudioPowerLevel: CGFloat = 0
     private var isUsingDynamicNotchKitStatusSurface = false
     private var anchorScreenOverride: NSScreen?
-    private var collapsedHoverProbeTimer: Timer?
+    private var collapsedNotchClickMonitor: Any?
     private var foregroundAppActivationObserver: NSObjectProtocol?
     private var foregroundAppIcon: NSImage?
     private var foregroundAppName: String = "Current app"
@@ -235,7 +235,7 @@ final class OpenClickyNotchCaptureWindowManager {
             },
             dismiss: { [weak self] in self?.collapseToPill(accentColor: accentColor, submitText: submitText) }
         )
-        startCollapsedHoverProbe()
+        installCollapsedNotchClickMonitor()
         let statusScreen = preferredPhysicalNotchStatusScreen()
         let isShowingDynamicNotchKitStatusSurface = showDynamicNotchKitCollapsedIfAvailable(
             on: statusScreen,
@@ -479,7 +479,7 @@ final class OpenClickyNotchCaptureWindowManager {
                     height: Self.voicePanelHeight
                 )
             }
-            startCollapsedHoverProbe()
+            installCollapsedNotchClickMonitor()
         }
     }
 
@@ -496,7 +496,7 @@ final class OpenClickyNotchCaptureWindowManager {
         panel?.orderOut(nil)
         hideDynamicNotchKitStatusSurface()
         hideMainPanel()
-        stopCollapsedHoverProbe()
+        removeCollapsedNotchClickMonitor()
         stopContextAffordanceObservation()
         activeMode = nil
         anchorScreenOverride = nil
@@ -509,7 +509,7 @@ final class OpenClickyNotchCaptureWindowManager {
         mainHostingView = nil
         mainPanelGlassBackdrop = nil
         if activeMode == .collapsedText {
-            startCollapsedHoverProbe()
+            installCollapsedNotchClickMonitor()
         }
     }
 
@@ -529,7 +529,7 @@ final class OpenClickyNotchCaptureWindowManager {
             },
             dismiss: { [weak self] in self?.collapseToPill(accentColor: accentColor, submitText: submitText) }
         )
-        startCollapsedHoverProbe()
+        installCollapsedNotchClickMonitor()
         let statusScreen = preferredPhysicalNotchStatusScreen()
         let isShowingDynamicNotchKitStatusSurface = showDynamicNotchKitCollapsedIfAvailable(
             on: statusScreen,
@@ -548,7 +548,7 @@ final class OpenClickyNotchCaptureWindowManager {
     }
 
     private func showMainPanel(companionManager: CompanionManager, focusedAgentSessionID: UUID? = nil) {
-        stopCollapsedHoverProbe()
+        removeCollapsedNotchClickMonitor()
         panel?.orderOut(nil)
         hideDynamicNotchKitStatusSurface()
         pinAnchorScreenToActiveInteractionIfNeeded()
@@ -1174,20 +1174,20 @@ final class OpenClickyNotchCaptureWindowManager {
         pinAnchorScreenToActiveInteractionIfNeeded()
     }
 
-    private func startCollapsedHoverProbe() {
-        guard collapsedHoverProbeTimer == nil else { return }
-        let timer = Timer(timeInterval: 0.08, repeats: true) { [weak self] _ in
+    private func installCollapsedNotchClickMonitor() {
+        guard collapsedNotchClickMonitor == nil else { return }
+        collapsedNotchClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.probeCollapsedNotchHover()
+                self?.handleCollapsedNotchClickIfNeeded()
             }
         }
-        collapsedHoverProbeTimer = timer
-        RunLoop.main.add(timer, forMode: .common)
     }
 
-    private func stopCollapsedHoverProbe() {
-        collapsedHoverProbeTimer?.invalidate()
-        collapsedHoverProbeTimer = nil
+    private func removeCollapsedNotchClickMonitor() {
+        if let monitor = collapsedNotchClickMonitor {
+            NSEvent.removeMonitor(monitor)
+            collapsedNotchClickMonitor = nil
+        }
     }
 
     private func startContextAffordanceObservation() {
@@ -1206,49 +1206,48 @@ final class OpenClickyNotchCaptureWindowManager {
         contextAffordanceTimer = nil
     }
 
-    private func probeCollapsedNotchHover() {
+    private func handleCollapsedNotchClickIfNeeded() {
         guard (activeMode == .collapsedText || activeMode == .voice), mainPanel?.isVisible != true else {
-            stopCollapsedHoverProbe()
+            removeCollapsedNotchClickMonitor()
             return
         }
         refreshFallbackStatusPanelOrderingIfNeeded()
         let mouseLocation = NSEvent.mouseLocation
-        guard let hoveredScreen = NSScreen.screens.first(where: { Self.notchHoverRegion(on: $0).contains(mouseLocation) }) else { return }
+        guard let clickedScreen = NSScreen.screens.first(where: { Self.notchActivationRegion(on: $0).contains(mouseLocation) }) else { return }
 
-        if anchorScreenOverride?.displayID != hoveredScreen.displayID {
-            anchorScreenOverride = hoveredScreen
+        if anchorScreenOverride?.displayID != clickedScreen.displayID {
+            anchorScreenOverride = clickedScreen
             let width = activeMode == .voice
-                ? Self.voicePanelWidth(for: hoveredScreen, appName: foregroundAppName)
-                : Self.collapsedPanelWidth(for: hoveredScreen, appName: foregroundAppName)
+                ? Self.voicePanelWidth(for: clickedScreen, appName: foregroundAppName)
+                : Self.collapsedPanelWidth(for: clickedScreen, appName: foregroundAppName)
             let height = activeMode == .voice ? Self.voicePanelHeight : Self.collapsedPanelHeight
             resizeAndReposition(width: width, height: height)
         }
-        if showDynamicNotchKitStatusForCurrentModeIfAvailable(on: hoveredScreen, opensExpanded: true) {
+        if showDynamicNotchKitStatusForCurrentModeIfAvailable(on: clickedScreen, opensExpanded: true) {
             panel?.orderOut(nil)
-        } else if !Self.hasPhysicalNotch(on: hoveredScreen) {
+        } else if !Self.hasPhysicalNotch(on: clickedScreen) {
             let width = activeMode == .voice
-                ? Self.voicePanelWidth(for: hoveredScreen, appName: foregroundAppName)
-                : Self.collapsedPanelWidth(for: hoveredScreen, appName: foregroundAppName)
+                ? Self.voicePanelWidth(for: clickedScreen, appName: foregroundAppName)
+                : Self.collapsedPanelWidth(for: clickedScreen, appName: foregroundAppName)
             let height = activeMode == .voice ? Self.voicePanelHeight : Self.collapsedPanelHeight
             showFallbackStatusPanel(width: width, height: height)
         }
     }
 
 
-    private static func notchHoverRegion(on screen: NSScreen) -> NSRect {
-        let baseWidth = collapsedPanelWidth(for: screen) + 28
+    private static func notchActivationRegion(on screen: NSScreen) -> NSRect {
+        let baseWidth = collapsedPanelWidth(for: screen) + 12
         let physicalNotchWidth = hasPhysicalNotch(on: screen)
             ? (physicalNotchWidth(on: screen) ?? 0)
             : 0
-        // DynamicNotchKit's compact SwiftUI content only lives on the small
-        // leading/trailing icon areas. Keep the global hover probe wide enough
-        // to include the black physical notch itself so hovering the main
-        // island surface opens it, not just the icons.
-        let width = max(baseWidth, physicalNotchWidth + 72, 196)
-        let height = max(collapsedPanelHeight + 28, 48)
+        // DynamicNotchKit's compact SwiftUI content lives on the small
+        // leading/trailing icon areas, so include the black physical notch
+        // itself for clicks without keeping the old broad hover target.
+        let width = max(baseWidth, physicalNotchWidth + 40, 156)
+        let height = max(collapsedPanelHeight + 12, 44)
         return NSRect(
             x: screen.frame.midX - width / 2,
-            y: statusLozengeY(for: NSSize(width: width, height: height), on: screen) - 16,
+            y: statusLozengeY(for: NSSize(width: width, height: height), on: screen) - 4,
             width: width,
             height: height
         )

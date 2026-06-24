@@ -43,6 +43,7 @@ nonisolated enum AppBundleConfiguration {
     static let userDeepgramAPIKeyDefaultsKey = "openClickyDeepgramAPIKey"
     static let userVoiceTranscriptionProviderDefaultsKey = "openClickyVoiceTranscriptionProvider"
     static let userVoiceActivationModeDefaultsKey = "openClickyVoiceActivationMode"
+    static let userVoicePushToTalkShortcutDefaultsKey = "openClickyVoicePushToTalkShortcut"
     static let userCameraDeviceIDDefaultsKey = "openClickyCameraDeviceID"
     static let userCameraVoiceContextEnabledDefaultsKey = "openClickyCameraVoiceContextEnabled"
     static let userAdvancedModeDefaultsKey = "openClickyAdvancedModeEnabled"
@@ -58,6 +59,14 @@ nonisolated enum AppBundleConfiguration {
     static let userAgentPlaintextProviderSyncEnabledDefaultsKey = "openClickyAgentPlaintextProviderSyncEnabled"
     static let userDesktopNotificationsEnabledDefaultsKey = "openClickyDesktopNotificationsEnabled"
     static let userAgentCompletionVoiceEnabledDefaultsKey = "openClickyAgentCompletionVoiceEnabled"
+    static let userHideDockIconDefaultsKey = "openClickyHideDockIcon"
+    static let userCloudflareAIGatewayEnabledDefaultsKey = "openClickyCloudflareAIGatewayEnabled"
+    static let userCloudflareAIGatewayAccountIDDefaultsKey = "openClickyCloudflareAIGatewayAccountID"
+    static let userCloudflareAIGatewayIDDefaultsKey = "openClickyCloudflareAIGatewayID"
+    static let userCloudflareAIGatewayTokenDefaultsKey = "openClickyCloudflareAIGatewayToken"
+    static let userCloudflareAIGatewayTextRouteDefaultsKey = "openClickyCloudflareAIGatewayTextRoute"
+    static let userCloudflareAIGatewayTranscriptionRouteDefaultsKey = "openClickyCloudflareAIGatewayTranscriptionRoute"
+    static let userCloudflareAIGatewayZeroDataRetentionDefaultsKey = "openClickyCloudflareAIGatewayZeroDataRetention"
     static let userWidgetsEnabledDefaultsKey = "openClickyWidgetsEnabled"
     static let userWidgetsIncludeAgentTaskNamesDefaultsKey = "openClickyWidgetsIncludeAgentTaskNames"
     static let userWidgetsIncludeMemorySnippetsDefaultsKey = "openClickyWidgetsIncludeMemorySnippets"
@@ -179,12 +188,85 @@ nonisolated enum AppBundleConfiguration {
         ) ?? localDevelopmentEnvironmentValue(forKey: "OPENCLICKY_BRIDGE_TOKEN")
     }
 
+    static func ensureExternalControlBridgeToken() -> String {
+        if let token = externalControlBridgeToken(),
+           !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return token
+        }
+
+        let token = "ocb_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased())"
+        persistSecret(token, defaultsKey: userExternalControlBridgeTokenDefaultsKey)
+        return token
+    }
+
     static func agentPlaintextProviderSyncEnabled() -> Bool {
         userDefaultsBool(forKey: userAgentPlaintextProviderSyncEnabledDefaultsKey, defaultValue: false)
     }
 
     static func agentCompletionVoiceEnabled() -> Bool {
         userDefaultsBool(forKey: userAgentCompletionVoiceEnabledDefaultsKey, defaultValue: true)
+    }
+
+    static func hideDockIconEnabled() -> Bool {
+        userDefaultsBool(forKey: userHideDockIconDefaultsKey, defaultValue: true)
+    }
+
+    static func cloudflareAIGatewayEnabled() -> Bool {
+        if UserDefaults.standard.object(forKey: userCloudflareAIGatewayEnabledDefaultsKey) != nil {
+            return UserDefaults.standard.bool(forKey: userCloudflareAIGatewayEnabledDefaultsKey)
+        }
+        if let explicit = normalizedConfigurationValue(ProcessInfo.processInfo.environment["OPENCLICKY_CLOUDFLARE_AI_GATEWAY_ENABLED"])
+            ?? normalizedConfigurationValue(ProcessInfo.processInfo.environment["CF_AIG_ENABLED"]) {
+            return explicit == "1" || explicit.lowercased() == "true" || explicit.lowercased() == "yes"
+        }
+        return cloudflareAIGatewayAccountID() != nil && cloudflareAIGatewayToken() != nil
+    }
+
+    static func cloudflareAIGatewayAccountID() -> String? {
+        userDefaultsValue(forKey: userCloudflareAIGatewayAccountIDDefaultsKey) ?? stringValue(
+            forKey: "CloudflareAIGatewayAccountID",
+            environmentKeys: ["CF_ACCOUNT_ID", "CLOUDFLARE_ACCOUNT_ID"]
+        ) ?? localDevelopmentEnvironmentValue(forKey: "CF_ACCOUNT_ID")
+            ?? localDevelopmentEnvironmentValue(forKey: "CLOUDFLARE_ACCOUNT_ID")
+    }
+
+    static func cloudflareAIGatewayID() -> String {
+        userDefaultsValue(forKey: userCloudflareAIGatewayIDDefaultsKey) ?? stringValue(
+            forKey: "CloudflareAIGatewayID",
+            environmentKeys: ["CF_GATEWAY_ID", "CLOUDFLARE_AI_GATEWAY_ID"]
+        ) ?? localDevelopmentEnvironmentValue(forKey: "CF_GATEWAY_ID")
+            ?? localDevelopmentEnvironmentValue(forKey: "CLOUDFLARE_AI_GATEWAY_ID")
+            ?? CloudflareAIGatewayRoute.defaultGatewayID
+    }
+
+    static func cloudflareAIGatewayToken() -> String? {
+        userDefaultsValue(forKey: userCloudflareAIGatewayTokenDefaultsKey) ?? stringValue(
+            forKey: "CloudflareAIGatewayToken",
+            environmentKeys: ["CF_AIG_TOKEN", "AI_GATEWAY_TOKEN"]
+        ) ?? localDevelopmentEnvironmentValue(forKey: "CF_AIG_TOKEN")
+            ?? localDevelopmentEnvironmentValue(forKey: "AI_GATEWAY_TOKEN")
+    }
+
+    static func cloudflareAIGatewayTextRoute() -> String {
+        userDefaultsValue(forKey: userCloudflareAIGatewayTextRouteDefaultsKey) ?? stringValue(
+            forKey: "CloudflareAIGatewayTextRoute",
+            environmentKeys: ["CF_AIG_TEXT_ROUTE", "AI_GATEWAY_TEXT_ROUTE"]
+        ) ?? localDevelopmentEnvironmentValue(forKey: "CF_AIG_TEXT_ROUTE")
+            ?? localDevelopmentEnvironmentValue(forKey: "AI_GATEWAY_TEXT_ROUTE")
+            ?? CloudflareAIGatewayRoute.textGeneration
+    }
+
+    static func cloudflareAIGatewayTranscriptionRoute() -> String {
+        userDefaultsValue(forKey: userCloudflareAIGatewayTranscriptionRouteDefaultsKey) ?? stringValue(
+            forKey: "CloudflareAIGatewayTranscriptionRoute",
+            environmentKeys: ["CF_AIG_STT_ROUTE", "AI_GATEWAY_STT_ROUTE"]
+        ) ?? localDevelopmentEnvironmentValue(forKey: "CF_AIG_STT_ROUTE")
+            ?? localDevelopmentEnvironmentValue(forKey: "AI_GATEWAY_STT_ROUTE")
+            ?? CloudflareAIGatewayRoute.transcription
+    }
+
+    static func cloudflareAIGatewayZeroDataRetentionEnabled() -> Bool {
+        userDefaultsBool(forKey: userCloudflareAIGatewayZeroDataRetentionDefaultsKey, defaultValue: true)
     }
 
     static func assemblyAIAPIKey() -> String? {
@@ -382,7 +464,8 @@ nonisolated enum AppBundleConfiguration {
         userLocalModelTokenDefaultsKey,
         userAssemblyAIAPIKeyDefaultsKey,
         userDeepgramAPIKeyDefaultsKey,
-        userExternalControlBridgeTokenDefaultsKey
+        userExternalControlBridgeTokenDefaultsKey,
+        userCloudflareAIGatewayTokenDefaultsKey
     ]
 
     private static func keychainValue(forKey key: String) -> String? {

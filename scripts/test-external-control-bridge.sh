@@ -2,6 +2,7 @@
 set -euo pipefail
 
 BASE_URL="${OPENCLICKY_BRIDGE_URL:-http://127.0.0.1:32123}"
+BRIDGE_TOKEN="${OPENCLICKY_BRIDGE_TOKEN:-}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_DIR="${TMPDIR:-/tmp}/openclicky-bridge-tests"
 mkdir -p "$TMP_DIR"
@@ -32,6 +33,14 @@ print('yes' if any(t.get('name') == name or t == name for t in tools) else 'no')
 PY
 }
 
+curl_bridge() {
+  if [[ -n "$BRIDGE_TOKEN" ]]; then
+    curl -sS --max-time "${CURL_MAX_TIME:-2}" -H "Authorization: Bearer $BRIDGE_TOKEN" "$@"
+  else
+    curl -sS --max-time "${CURL_MAX_TIME:-2}" "$@"
+  fi
+}
+
 printf '== Swift parse checks ==\n'
 cd "$ROOT_DIR"
 xcrun swiftc -parse \
@@ -56,13 +65,31 @@ printf '%s\n' "$health"
 [[ "$(json_get "$health" ok)" == "True" || "$(json_get "$health" ok)" == "true" ]] || fail 'health ok was not true'
 pass 'health endpoint'
 
+if [[ -z "$BRIDGE_TOKEN" ]]; then
+  warn "OPENCLICKY_BRIDGE_TOKEN is not set; protected live bridge tests are skipped"
+  exit 0
+fi
+
 printf '\n== MCP/tool descriptors ==\n'
-tools=$(curl -sS --max-time 2 "$BASE_URL/mcp/tools")
+tools=$(curl_bridge "$BASE_URL/mcp/tools")
 printf '%s\n' "$tools"
-for tool in show_cursor show_cursors show_caption screenshot speak clear; do
+for tool in show_cursor show_cursors show_caption screenshot openclicky_native_status openclicky_native_type_text openclicky_native_press_key openclicky_workflow speak clear; do
   [[ "$(contains_tool "$tools" "$tool")" == "yes" ]] || fail "missing tool descriptor: $tool"
 done
 pass 'tool descriptors include expected tools'
+
+printf '\n== UTCP manual and workflow descriptors ==\n'
+utcp=$(curl_bridge "$BASE_URL/utcp")
+printf '%s\n' "$utcp" | python3 -c 'import sys,json; d=json.load(sys.stdin); print({"manual_version":d.get("manual_version"),"utcp_version":d.get("utcp_version"),"tools":len(d.get("tools", []))})'
+for tool in openclicky_native_status openclicky_native_type_text openclicky_native_press_key openclicky_workflow; do
+  [[ "$(contains_tool "$utcp" "$tool")" == "yes" ]] || fail "missing UTCP tool descriptor: $tool"
+done
+workflow_resp=$(curl_bridge -X POST "$BASE_URL/utcp/workflow" \
+  -H 'Content-Type: application/json' \
+  -d '{"steps":[{"tool":"openclicky_native_status","arguments":{}}],"stopOnError":true}')
+printf '%s\n' "$workflow_resp"
+[[ "$(json_get "$workflow_resp" ok)" == "True" || "$(json_get "$workflow_resp" ok)" == "true" ]] || fail '/utcp/workflow failed'
+pass 'UTCP manual and workflow endpoint'
 
 printf '\n== Basic visual commands ==\n'
 cat > "$TMP_DIR/visual-points.swift" <<'SWIFT'
@@ -80,31 +107,33 @@ emit("multi_b", f.minX + f.width * 0.62, f.minY + f.height * 0.42)
 SWIFT
 eval "$(swift "$TMP_DIR/visual-points.swift")"
 
-caption_resp=$(curl -sS --max-time 2 -X POST "$BASE_URL/caption" \
+caption_resp=$(curl_bridge -X POST "$BASE_URL/caption" \
   -H 'Content-Type: application/json' \
   -d "{\"x\":$caption_x,\"y\":$caption_y,\"text\":\"Bridge caption test\",\"durationMs\":650}")
 printf 'caption: %s\n' "$caption_resp"
 [[ "$(json_get "$caption_resp" ok)" == "True" || "$(json_get "$caption_resp" ok)" == "true" ]] || fail '/caption failed'
 
-secondary_resp=$(curl -sS --max-time 2 -X POST "$BASE_URL/cursor" \
+secondary_resp=$(curl_bridge -X POST "$BASE_URL/cursor" \
   -H 'Content-Type: application/json' \
   -d "{\"x\":$secondary_x,\"y\":$secondary_y,\"caption\":\"Secondary\",\"mode\":\"secondary\",\"durationMs\":650,\"accentHex\":\"#34D399\"}")
 printf 'secondary cursor: %s\n' "$secondary_resp"
 [[ "$(json_get "$secondary_resp" ok)" == "True" || "$(json_get "$secondary_resp" ok)" == "true" ]] || fail '/cursor secondary failed'
 
-multi_resp=$(curl -sS --max-time 2 -X POST "$BASE_URL/cursors" \
+multi_resp=$(curl_bridge -X POST "$BASE_URL/cursors" \
   -H 'Content-Type: application/json' \
   -d "{\"durationMs\":650,\"cursors\":[{\"x\":$multi_a_x,\"y\":$multi_a_y,\"caption\":\"A\",\"accentHex\":\"#60A5FA\"},{\"x\":$multi_b_x,\"y\":$multi_b_y,\"caption\":\"B\",\"accentHex\":\"#F59E0B\"}]}")
 printf 'multi cursor: %s\n' "$multi_resp"
 [[ "$(json_get "$multi_resp" ok)" == "True" || "$(json_get "$multi_resp" ok)" == "true" ]] || fail '/cursors failed'
 sleep 0.75
-curl -sS --max-time 2 -X POST "$BASE_URL/clear" -H 'Content-Type: application/json' -d '{}' >/dev/null
+curl_bridge -X POST "$BASE_URL/clear" -H 'Content-Type: application/json' -d '{}' >/dev/null
 pass 'caption/secondary/multi commands'
 
 printf '\n== Screenshot command ==\n'
-screenshot_resp=$(curl -sS --max-time 8 -X POST "$BASE_URL/screenshot" \
+CURL_MAX_TIME=8
+screenshot_resp=$(curl_bridge -X POST "$BASE_URL/screenshot" \
   -H 'Content-Type: application/json' \
   -d '{"focused":false}')
+unset CURL_MAX_TIME
 printf '%s\n' "$screenshot_resp" | python3 -c 'import sys,json; d=json.load(sys.stdin); print({"ok":d.get("ok"),"count":d.get("count"),"first":(d.get("screens") or [{}])[0].get("path")})'
 [[ "$(json_get "$screenshot_resp" ok)" == "True" || "$(json_get "$screenshot_resp" ok)" == "true" ]] || fail '/screenshot failed'
 count=$(json_get "$screenshot_resp" count)
@@ -113,9 +142,9 @@ pass 'screenshot endpoint'
 
 printf '\n== SSE stream ==\n'
 rm -f "$TMP_DIR/sse.out" "$TMP_DIR/sse.err"
-(curl -sS -N --max-time 2 "$BASE_URL/events" > "$TMP_DIR/sse.out" 2>"$TMP_DIR/sse.err" & echo $! > "$TMP_DIR/sse.pid")
+(curl -sS -N --max-time 2 -H "Authorization: Bearer $BRIDGE_TOKEN" "$BASE_URL/events" > "$TMP_DIR/sse.out" 2>"$TMP_DIR/sse.err" & echo $! > "$TMP_DIR/sse.pid")
 sleep 0.2
-curl -sS --max-time 2 -X POST "$BASE_URL/caption" -H 'Content-Type: application/json' -d '{"text":"SSE command test","durationMs":800}' >/dev/null
+curl_bridge -X POST "$BASE_URL/caption" -H 'Content-Type: application/json' -d '{"text":"SSE command test","durationMs":800}' >/dev/null
 sleep 0.4
 kill "$(cat "$TMP_DIR/sse.pid")" 2>/dev/null || true
 sse_text=$(cat "$TMP_DIR/sse.out")
@@ -143,7 +172,7 @@ SWIFT
 before=$(swift "$TMP_DIR/mouse.swift")
 target=$(swift "$TMP_DIR/mouse.swift" target)
 tx=${target%,*}; ty=${target#*,}
-primary_resp=$(curl -sS --max-time 2 -X POST "$BASE_URL/cursor" \
+primary_resp=$(curl_bridge -X POST "$BASE_URL/cursor" \
   -H 'Content-Type: application/json' \
   -d "{\"x\":$tx,\"y\":$ty,\"caption\":\"Primary choreography test\",\"durationMs\":1000}")
 sleep 0.35
@@ -163,7 +192,7 @@ PY
 pass 'primary /cursor triggers OpenClicky choreography without warping system pointer'
 
 printf '\n== Clear ==\n'
-clear_resp=$(curl -sS --max-time 2 -X POST "$BASE_URL/clear" -H 'Content-Type: application/json' -d '{}')
+clear_resp=$(curl_bridge -X POST "$BASE_URL/clear" -H 'Content-Type: application/json' -d '{}')
 printf '%s\n' "$clear_resp"
 [[ "$(json_get "$clear_resp" ok)" == "True" || "$(json_get "$clear_resp" ok)" == "true" ]] || fail '/clear failed'
 pass 'clear endpoint'

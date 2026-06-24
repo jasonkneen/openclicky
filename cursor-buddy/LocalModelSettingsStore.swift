@@ -3,7 +3,7 @@ import Foundation
 /// Persists local-model configuration. Base URL and numeric/boolean prefs live
 /// in UserDefaults (not secret); the optional bearer token is keychain-backed
 /// through `AppBundleConfiguration` (same mechanism as the other API secrets).
-enum LocalModelSettingsStore {
+nonisolated enum LocalModelSettingsStore {
     static let defaultBaseURLString = "http://localhost:11434/v1"
 
     private static let baseURLKey = "localModelBaseURL"

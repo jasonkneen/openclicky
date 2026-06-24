@@ -17,6 +17,8 @@
 			</array>
 		</dict>
 	</array>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.productivity</string>
 	<key>DeepgramAPIKey</key>
 	<string>$(DEEPGRAM_API_KEY)</string>
 	<key>DeepgramTranscriptionModel</key>
@@ -30,16 +32,18 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
-	<key>NSCameraUsageDescription</key>
-	<string>OpenClicky uses the selected camera only when you enable visual intelligence or meeting notes, so it can understand camera images and visible text.</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>OpenClicky uses Apple Events only when you ask it to automate local apps or System Events for guarded macOS control.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>OpenClicky uses the selected camera only when you enable visual intelligence or meeting notes, so it can understand camera images and visible text.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>OpenClicky connects to local AI model servers (such as Ollama, LM Studio, or an MLX server on your network) when you choose a local model.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>OpenClicky uses the microphone for push-to-talk voice input, optional “Hey Clicky” wake-word listening, and optional meeting notes transcription.</string>
+	<string>OpenClicky uses the microphone for push-to-talk voice input, optional "Hey Clicky" wake-word listening, and optional meeting notes transcription.</string>
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>OpenClicky needs screen recording access to see your screen and help you.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>OpenClicky uses on-device speech recognition to detect the optional “Hey Clicky” wake phrase when hands-free listening is enabled.</string>
+	<string>OpenClicky uses on-device speech recognition to detect the optional "Hey Clicky" wake phrase when hands-free listening is enabled.</string>
 	<key>NSUserNotificationAlertStyle</key>
 	<string>alert</string>
 	<key>SUAllowsAutomaticUpdates</key>
