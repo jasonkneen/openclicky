@@ -71,7 +71,10 @@ enum CompanionScreenCaptureUtility {
         try await captureScreensAsJPEG(cursorScreenOnly: true)
     }
 
-    private static func captureScreensAsJPEG(cursorScreenOnly: Bool) async throws -> [CompanionScreenCapture] {
+    private static func captureScreensAsJPEG(
+        cursorScreenOnly: Bool,
+        targetScreenRect: CGRect? = nil
+    ) async throws -> [CompanionScreenCapture] {
         let content = try await currentShareableContent()
 
         guard !content.displays.isEmpty else {
@@ -118,7 +121,26 @@ enum CompanionScreenCaptureUtility {
         }
 
         let displaysToCapture: [SCDisplay]
-        if cursorScreenOnly, let cursorDisplay = sortedDisplays.first(where: { display in
+        if let targetScreenRect {
+            // A sealed circle selection is expressed in AppKit screen space.
+            // Never pick the cursor display here: the pointer may have moved
+            // to another monitor before asynchronous capture begins.
+            guard let targetDisplay = sortedDisplays.first(where: { display in
+                guard let displayFrame = nsScreenByDisplayID[display.displayID]?.frame else {
+                    // Without an NSScreen mapping we cannot safely compare the
+                    // AppKit-region coordinates to this SCDisplay.
+                    return false
+                }
+                return displayFrameContainsRegion(displayFrame, region: targetScreenRect)
+            }) else {
+                throw NSError(
+                    domain: "CompanionScreenCapture",
+                    code: -5,
+                    userInfo: [NSLocalizedDescriptionKey: "Selected region does not fit within one available display"]
+                )
+            }
+            displaysToCapture = [targetDisplay]
+        } else if cursorScreenOnly, let cursorDisplay = sortedDisplays.first(where: { display in
             let frame = nsScreenByDisplayID[display.displayID]?.frame ?? display.frame
             return frame.contains(mouseLocation)
         }) {
@@ -326,24 +348,53 @@ enum CompanionScreenCaptureUtility {
         )
     }
 
-    /// Captures the cursor screen and crops to a screen-space region.
+    /// Captures the display containing a screen-space region, then crops to it.
+    ///
+    /// The region must fit within one display. Returning an unrelated cursor
+    /// display on failure would send the wrong desktop as model context.
     static func captureRegionAsJPEG(
         _ screenRect: CGRect,
         labelPrefix: String = "circled region"
     ) async throws -> CompanionScreenCapture {
-        let captures = try await captureCursorScreenAsJPEG()
-        guard let primary = captures.first(where: \.isCursorScreen) ?? captures.first else {
+        let captures = try await captureScreensAsJPEG(
+            cursorScreenOnly: false,
+            targetScreenRect: screenRect
+        )
+        guard let capture = captures.first else {
             throw NSError(
                 domain: "CompanionScreenCapture",
                 code: -4,
                 userInfo: [NSLocalizedDescriptionKey: "No screen available for region capture"]
             )
         }
-        if let cropped = cropCapture(primary, toScreenRect: screenRect, labelPrefix: labelPrefix) {
-            return cropped
+        guard let cropped = cropCapture(capture, toScreenRect: screenRect, labelPrefix: labelPrefix) else {
+            throw NSError(
+                domain: "CompanionScreenCapture",
+                code: -6,
+                userInfo: [NSLocalizedDescriptionKey: "Failed to crop the selected region from its display"]
+            )
         }
-        // Fall back to the full cursor screen if crop math fails.
-        return primary
+        return cropped
+    }
+
+    /// Returns whether an AppKit-coordinate region is fully contained by one
+    /// display. Kept nonisolated for deterministic geometry tests.
+    nonisolated static func displayFrameContainsRegion(_ displayFrame: CGRect, region: CGRect) -> Bool {
+        guard displayFrame.width > 0,
+              displayFrame.height > 0,
+              region.width > 0,
+              region.height > 0,
+              displayFrame.minX.isFinite,
+              displayFrame.minY.isFinite,
+              displayFrame.maxX.isFinite,
+              displayFrame.maxY.isFinite,
+              region.minX.isFinite,
+              region.minY.isFinite,
+              region.maxX.isFinite,
+              region.maxY.isFinite else {
+            return false
+        }
+        return displayFrame.contains(region)
     }
 
     private static func recordEncounteredApplications(

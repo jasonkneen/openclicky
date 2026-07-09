@@ -617,6 +617,9 @@ final class CompanionManager: ObservableObject {
     private(set) var pendingCircleSelectStroke: CircleSelectSealedStroke?
     /// Crop capture started at PTT release so the final transcript can attach without extra latency.
     private var pendingCircleSelectCaptureTask: Task<HandoffQueuedRegionScreenshot?, Never>?
+    /// A sealed circle belongs to one just-finished voice hold. It must not
+    /// survive indefinitely and become context for a later, unrelated task.
+    private var pendingCircleSelectExpiryTask: Task<Void, Never>?
     /// Live partial transcript while PTT is held — used to bias circle snap to spoken items.
     private var circleSelectLivePartialTranscript: String = ""
     let circleSelectSession = CircleSelectSession()
@@ -1371,6 +1374,13 @@ final class CompanionManager: ObservableObject {
     /// The currently running AI response task, if any. Cancelled when the user
     /// speaks again so a new response can begin immediately.
     var currentResponseTask: Task<Void, Never>?
+    var currentResponseTaskToken: UUID?
+
+    func clearCurrentResponseTask(ifMatches token: UUID) {
+        guard currentResponseTaskToken == token else { return }
+        currentResponseTask = nil
+        currentResponseTaskToken = nil
+    }
     var currentVoiceResponseRequestID: String?
     var currentVoiceResponseCompletionToken: UUID?
     var currentVoiceResponseCancellationHandler: ((String) -> Void)?
@@ -1539,14 +1549,13 @@ final class CompanionManager: ObservableObject {
     private var pendingWakeWordRestartTask: Task<Void, Never>?
     private var isWakeWordPausedByShortcut = false
 
-    /// True when all required permissions (accessibility, screen recording,
-    /// microphone, camera, screen content) are granted. Used by the panel to
-    /// show a single "all good" state.
+    /// True when the base OpenClicky experience is ready. Camera access is
+    /// deliberately excluded because Visual Intelligence and meeting notes are
+    /// opt-in features, not prerequisites for voice, screen, or Agent Mode.
     var allPermissionsGranted: Bool {
         hasAccessibilityPermission
             && hasScreenRecordingPermission
             && hasMicrophonePermission
-            && hasCameraPermission
             && hasScreenContentPermission
     }
 
@@ -1755,29 +1764,10 @@ final class CompanionManager: ObservableObject {
     private static let quickShortcutInterruptSilenceThreshold: TimeInterval = 1.25
     private var realtimeBidirectionalVoiceTurnGeneration: UInt64 = 0
 
-    private static let realtimeVoiceDefaultMigrationKey = "openClickyRealtimeVoiceDefaultMigrated"
-
     private static func initialVoiceResponseModelID() -> String {
         let defaults = UserDefaults.standard
         let storedModel = defaults.string(forKey: "selectedVoiceResponseModel")
         let storedSpeechModel = defaults.string(forKey: "openClickySpeechModel")
-
-        // OpenClicky briefly stored GPT-5.5 as the voice-response default
-        // while Realtime 2 lived in a separate speech-model setting. That
-        // still routes live voice through Deepgram -> text model -> TTS,
-        // which is the several-second first-audio delay the user is rejecting.
-        // Migrate that stale default once so existing installs actually use
-        // the speech-to-speech Realtime path they now default to.
-        if storedModel == "gpt-5.5",
-           storedSpeechModel == OpenClickyModelCatalog.defaultSpeechModelID
-               || storedSpeechModel == "gpt-realtime-2"
-               || storedSpeechModel == "gpt-realtime-2.1-mini",
-           !defaults.bool(forKey: realtimeVoiceDefaultMigrationKey) {
-            defaults.set(OpenClickyModelCatalog.defaultSpeechModelID, forKey: "selectedVoiceResponseModel")
-            defaults.set(OpenClickyModelCatalog.defaultSpeechModelID, forKey: "openClickySpeechModel")
-            defaults.set(true, forKey: realtimeVoiceDefaultMigrationKey)
-            return OpenClickyModelCatalog.defaultSpeechModelID
-        }
 
         let requestedModel = storedModel
             ?? defaults.string(forKey: "selectedClaudeModel")
@@ -2240,9 +2230,6 @@ final class CompanionManager: ObservableObject {
         // Warm ScreenCaptureKit's window enumeration so the first
         // screenshot after a key press doesn't pay the cold-start tax.
         CompanionScreenCaptureUtility.prewarmShareableContent()
-        if !hasCompletedOnboarding {
-            hasCompletedOnboarding = true
-        }
         print("OpenClicky runtime identity - bundleID: \(Bundle.main.bundleIdentifier ?? "unknown"), appPath: \(Bundle.main.bundleURL.path)")
         print("OpenClicky start - accessibility: \(hasAccessibilityPermission), screen: \(hasScreenRecordingPermission), mic: \(hasMicrophonePermission), camera: \(hasCameraPermission), screenContent: \(hasScreenContentPermission), fullDiskAccess: \(hasFullDiskAccessPermission), onboarded: \(hasCompletedOnboarding)")
         startPermissionPolling()
@@ -2931,7 +2918,12 @@ final class CompanionManager: ObservableObject {
         activeControlGlowClearTask?.cancel()
         activeControlGlowClearTask = Task { [weak self] in
             let nanoseconds = UInt64(max(0.4, min(duration, 12)) * 1_000_000_000)
-            try? await Task.sleep(nanoseconds: nanoseconds)
+            do {
+                try await Task.sleep(nanoseconds: nanoseconds)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
             await MainActor.run {
                 self?.clearActiveControlGlow()
             }
@@ -3024,8 +3016,28 @@ final class CompanionManager: ObservableObject {
             let captures = try await (focused
                 ? CompanionScreenCaptureUtility.captureFocusedWindowAsJPEG()
                 : CompanionScreenCaptureUtility.captureAllScreensAsJPEG())
-            let directory = FileManager.default.temporaryDirectory
+            let rootDirectory = FileManager.default.temporaryDirectory
                 .appendingPathComponent("OpenClickyExternalControlScreenshots", isDirectory: true)
+            try FileManager.default.createDirectory(at: rootDirectory, withIntermediateDirectories: true)
+
+            // External callers receive paths so they can consume the image,
+            // but those paths must not become an unbounded screenshot archive.
+            let now = Date()
+            if let oldEntries = try? FileManager.default.contentsOfDirectory(
+                at: rootDirectory,
+                includingPropertiesForKeys: [.contentModificationDateKey],
+                options: [.skipsHiddenFiles]
+            ) {
+                for entry in oldEntries {
+                    let values = try? entry.resourceValues(forKeys: [.contentModificationDateKey])
+                    if let modifiedAt = values?.contentModificationDate,
+                       now.timeIntervalSince(modifiedAt) > 600 {
+                        try? FileManager.default.removeItem(at: entry)
+                    }
+                }
+            }
+
+            let directory = rootDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
             let timestamp = Int(Date().timeIntervalSince1970 * 1000)
@@ -3047,6 +3059,10 @@ final class CompanionManager: ObservableObject {
                     "screenshotWidthInPixels": capture.screenshotWidthInPixels,
                     "screenshotHeightInPixels": capture.screenshotHeightInPixels
                 ]
+            }
+            Task.detached(priority: .utility) {
+                try? await Task.sleep(nanoseconds: 600_000_000_000)
+                try? FileManager.default.removeItem(at: directory)
             }
             return .ok(["screens": screens, "count": screens.count, "focused": focused])
         } catch {
@@ -3240,6 +3256,7 @@ final class CompanionManager: ObservableObject {
         globalPushToTalkShortcutMonitor.stop()
         wakeWordManager.stop(reason: "companion_stop")
         buddyDictationManager.cancelCurrentDictation()
+        cancelCircleSelectSession()
         overlayWindowManager.hideOverlay()
         transientHideTask?.cancel()
         pendingWakeWordRestartTask?.cancel()
@@ -3247,8 +3264,15 @@ final class CompanionManager: ObservableObject {
 
         currentResponseTask?.cancel()
         currentResponseTask = nil
+        currentResponseTaskToken = nil
+        realtimeBidirectionalVoiceTask?.cancel()
+        realtimeBidirectionalVoiceTask = nil
+        realtimeBidirectionalVoiceTurnGeneration &+= 1
+        openAIRealtimeSpeechClient.cancelBidirectionalVoiceTurn()
+        voiceTTSClient.cancelBidirectionalVoiceTurn()
         claudeAgentSDKAPI?.stop()
         codexVoiceSession.stop()
+        codexAgentSessions.forEach { $0.stop(reason: "companion_stop") }
         // M11: tear down the Background Computer Use runtime too. Previously
         // stop() killed the external bridge, voice, and timers but never the
         // spawned BCU helper, orphaning it across app restarts.
@@ -3481,13 +3505,10 @@ final class CompanionManager: ObservableObject {
     }
 
     /// Called when the permission guide or first-run onboarding becomes visible
-    /// so OpenClicky surfaces the macOS prompts for any permissions the user
-    /// has not yet responded to (currently microphone and camera). Permissions
-    /// that require System Settings (accessibility, screen recording) are left
-    /// to the dedicated onboarding buttons.
+    /// to request the base voice permission. Camera is requested only when the
+    /// user enables a camera-specific feature.
     func requestPendingPermissionPrompts() {
         promptForMicrophoneIfNotDetermined()
-        promptForCameraIfNotDetermined()
     }
 
     /// Polls all permissions frequently so the UI updates live after the
@@ -3803,9 +3824,13 @@ final class CompanionManager: ObservableObject {
         title: String? = nil,
         prompt: String,
         accentTheme: ClickyAccentTheme? = nil,
-        includeScreenContext: Bool = true
+        includeScreenContext: Bool = true,
+        restrictedExecutionPolicy: Bool = false
     ) -> CodexAgentSession {
         let session = createAndSelectNewCodexAgentSession(title: title, accentTheme: accentTheme)
+        if restrictedExecutionPolicy {
+            session.configureRestrictedExecutionPolicy()
+        }
         let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPrompt.isEmpty else { return session }
         stageDashboardAgentSubmission(prompt: trimmedPrompt, session: session)
@@ -4391,6 +4416,8 @@ final class CompanionManager: ObservableObject {
         }
         pendingCircleSelectCaptureTask?.cancel()
         pendingCircleSelectCaptureTask = nil
+        pendingCircleSelectExpiryTask?.cancel()
+        pendingCircleSelectExpiryTask = nil
         pendingCircleSelectStroke = nil
         circleSelectLivePartialTranscript = ""
         clearCircleSelectOverlay()
@@ -4478,9 +4505,30 @@ final class CompanionManager: ObservableObject {
                     return nil
                 }
             }
+            pendingCircleSelectExpiryTask?.cancel()
+            pendingCircleSelectExpiryTask = Task { @MainActor [weak self] in
+                do {
+                    try await Task.sleep(for: .seconds(15))
+                } catch {
+                    return
+                }
+                guard let self,
+                      self.pendingCircleSelectStroke?.sealedAt == sealed.sealedAt else {
+                    return
+                }
+                self.cancelCircleSelectSession()
+                OpenClickyMessageLogStore.shared.append(
+                    lane: "voice",
+                    direction: "internal",
+                    event: "voice.circle_select.expired",
+                    fields: ["reason": "no_matching_voice_turn"]
+                )
+            }
         } else {
             clearCircleSelectOverlay()
             pendingCircleSelectCaptureTask = nil
+            pendingCircleSelectExpiryTask?.cancel()
+            pendingCircleSelectExpiryTask = nil
             OpenClickyMessageLogStore.shared.append(
                 lane: "voice",
                 direction: "internal",
@@ -4497,6 +4545,8 @@ final class CompanionManager: ObservableObject {
             pendingCircleSelectStroke = nil
             pendingCircleSelectCaptureTask?.cancel()
             pendingCircleSelectCaptureTask = nil
+            pendingCircleSelectExpiryTask?.cancel()
+            pendingCircleSelectExpiryTask = nil
         }
     }
 
@@ -4513,6 +4563,8 @@ final class CompanionManager: ObservableObject {
         let captureTask = pendingCircleSelectCaptureTask
         pendingCircleSelectStroke = nil
         pendingCircleSelectCaptureTask = nil
+        pendingCircleSelectExpiryTask?.cancel()
+        pendingCircleSelectExpiryTask = nil
         clearCircleSelectOverlay()
 
         guard sealed != nil || captureTask != nil else { return nil }
@@ -9373,7 +9425,10 @@ final class CompanionManager: ObservableObject {
         let ttsStartedAt = Date()
         var didMarkAudioStarted = false
 
+        let responseTaskToken = UUID()
+        currentResponseTaskToken = responseTaskToken
         currentResponseTask = Task {
+            defer { self.clearCurrentResponseTask(ifMatches: responseTaskToken) }
             self.voiceState = .processing
             var didCompleteRequest = false
             func completeRequest(status: String = "success", extra: [String: Any] = [:]) async {
@@ -13474,6 +13529,8 @@ final class CompanionManager: ObservableObject {
                 instruction,
                 to: agentSession,
                 includeScreenContext: Self.shouldAttachScreenContext(to: instruction)
+                    || pendingCircleSelectStroke != nil,
+                attachPendingVoiceCircle: true
             )
 
             guard speakAcknowledgement else { return }
@@ -13483,7 +13540,10 @@ final class CompanionManager: ObservableObject {
             // representation appears in the dock.
             try? await Task.sleep(nanoseconds: 350_000_000)
 
+            let responseTaskToken = UUID()
+            currentResponseTaskToken = responseTaskToken
             currentResponseTask = Task { [acknowledgement, dockItemID] in
+                defer { self.clearCurrentResponseTask(ifMatches: responseTaskToken) }
                 guard await self.waitForSystemAnnouncementSlot(sessionID: nil, maxWaitSeconds: 8.0) else { return }
                 await MainActor.run { self.voiceState = .processing }
                 do {
@@ -14752,7 +14812,8 @@ final class CompanionManager: ObservableObject {
         let session = createAndLaunchCodexAgentSession(
             title: Self.shortAgentInstructionSummary(launchPrompt),
             prompt: launchPrompt,
-            includeScreenContext: Self.shouldAttachScreenContext(to: launchPrompt)
+            includeScreenContext: Self.shouldAttachScreenContext(to: launchPrompt),
+            restrictedExecutionPolicy: source == "browser_workspace_untrusted_context"
         )
         agentRequestTimingsBySessionID[session.id] = timing
         agentExecutionStartDatesBySessionID[session.id] = executionStartedAt
@@ -14936,7 +14997,12 @@ final class CompanionManager: ObservableObject {
         animateAgentSpawnProxyFromCursorToDock(accentTheme: spawnAccentTheme, dockItemID: spawnDockItemID)
     }
 
-    func submitAgentPrompt(_ prompt: String, to session: CodexAgentSession, includeScreenContext: Bool = true) {
+    func submitAgentPrompt(
+        _ prompt: String,
+        to session: CodexAgentSession,
+        includeScreenContext: Bool = true,
+        attachPendingVoiceCircle: Bool = false
+    ) {
         let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPrompt.isEmpty else { return }
 
@@ -14953,9 +15019,11 @@ final class CompanionManager: ObservableObject {
             await Task.yield()
             try? await Task.sleep(for: .milliseconds(120))
 
-            // If the user just circled while talking and agent is taking the turn,
-            // ensure the region is on the handoff queue before context prep.
-            if includeScreenContext,
+            // A freehand selection is scoped to the voice turn that explicitly
+            // requested it. Typed HUD and delayed background prompts must never
+            // inherit a prior sensitive crop.
+            if attachPendingVoiceCircle,
+               includeScreenContext,
                handoffQueue.allSatisfy({ !$0.selection.hasFreehandPath }),
                let circleHandoff = await consumePendingCircleSelectHandoff(instruction: trimmedPrompt) {
                 queueHandoffRegion(selection: circleHandoff.selection, imageData: circleHandoff.imageData)
@@ -14988,6 +15056,7 @@ final class CompanionManager: ObservableObject {
         currentVoiceResponseCompletionToken = nil
         currentResponseTask?.cancel()
         currentResponseTask = nil
+        currentResponseTaskToken = nil
         realtimeBidirectionalVoiceTask?.cancel()
         realtimeBidirectionalVoiceTask = nil
         realtimeBidirectionalVoiceTurnGeneration &+= 1
@@ -14995,6 +15064,8 @@ final class CompanionManager: ObservableObject {
         isRealtimeBidirectionalVoiceInputReady = false
         pendingRealtimeBidirectionalFinishSource = nil
         codexVoiceSession.cancelActiveTurn(reason: "voice_response_interrupted")
+        openAIRealtimeSpeechClient.cancelBidirectionalVoiceTurn()
+        voiceTTSClient.cancelBidirectionalVoiceTurn()
         openAIRealtimeSpeechClient.stopPlayback()
         deepgramVoiceAgentClient.stopPlayback()
         voiceTTSClient.stopPlayback()
@@ -15441,7 +15512,10 @@ final class CompanionManager: ObservableObject {
         if interruptExisting {
             interruptCurrentVoiceResponse()
         }
+        let responseTaskToken = UUID()
+        currentResponseTaskToken = responseTaskToken
         currentResponseTask = Task {
+            defer { self.clearCurrentResponseTask(ifMatches: responseTaskToken) }
             self.voiceState = .processing
             let ttsStartedAt = Date()
             var didMarkAudioStarted = false

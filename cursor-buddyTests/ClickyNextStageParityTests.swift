@@ -204,4 +204,49 @@ struct ClickyNextStageParityTests {
         // May be nil without AX fixtures; just ensure the API is callable.
         _ = snap
     }
+
+    @Test func circleSelectPathContainmentHandlesDescendingEdges() {
+        // The right edge descends in this ordering. Its Y delta must retain
+        // its sign in the ray-cast calculation or the center is reported out.
+        let diamond: [CGPoint] = [
+            CGPoint(x: 10, y: 0),
+            CGPoint(x: 20, y: 10),
+            CGPoint(x: 10, y: 20),
+            CGPoint(x: 0, y: 10)
+        ]
+
+        #expect(CircleSelectSnapResolver.pathContains(CGPoint(x: 10, y: 10), points: diamond))
+        #expect(CircleSelectSnapResolver.pathContains(CGPoint(x: 10, y: 10), points: Array(diamond.reversed())))
+        #expect(!CircleSelectSnapResolver.pathContains(CGPoint(x: 25, y: 10), points: diamond))
+    }
+
+    @Test func circleSelectAXCoordinatesUseMenuBarScreenOrigin() {
+        // A taller secondary display must not redefine the AX coordinate
+        // origin. The menu-bar display's max Y is the conversion anchor.
+        let appKitY = CircleSelectSnapResolver.appKitY(
+            fromAXY: 120,
+            height: 30,
+            menuBarScreenMaxY: 900
+        )
+
+        #expect(appKitY == 750)
+    }
+
+    @Test func regionCaptureRequiresAContainingDisplay() {
+        let leftDisplay = CGRect(x: -1440, y: 0, width: 1440, height: 900)
+        let menuBarDisplay = CGRect(x: 0, y: 0, width: 1440, height: 900)
+
+        #expect(CompanionScreenCaptureUtility.displayFrameContainsRegion(
+            menuBarDisplay,
+            region: CGRect(x: 100, y: 100, width: 220, height: 180)
+        ))
+        #expect(!CompanionScreenCaptureUtility.displayFrameContainsRegion(
+            menuBarDisplay,
+            region: CGRect(x: -20, y: 100, width: 80, height: 180)
+        ))
+        #expect(!CompanionScreenCaptureUtility.displayFrameContainsRegion(
+            leftDisplay,
+            region: CGRect(x: -20, y: 100, width: 80, height: 180)
+        ))
+    }
 }

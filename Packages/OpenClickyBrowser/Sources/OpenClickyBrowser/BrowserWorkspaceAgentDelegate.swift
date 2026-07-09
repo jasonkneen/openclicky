@@ -10,6 +10,7 @@ public protocol BrowserWorkspaceAgentDelegate: AnyObject {
     func hasLinkedAgentSession(id: UUID) -> Bool
     func selectCodexAgentSession(_ id: UUID)
     func submitAgentPromptFromUI(_ prompt: String)
+    func submitAgentPromptFromUI(_ prompt: String, source: String)
     func submitNewAgentTaskFromUI(_ prompt: String, source: String) -> BrowserWorkspaceAgentSessionProtocol?
     func hasAgentSDK() -> Bool
     func analyzeImageWithAgentSDK(
@@ -48,4 +49,10 @@ public protocol BrowserWorkspaceAgentDelegate: AnyObject {
     /// Stops the active dictation session (if any). The final transcript is
     /// delivered via the callbacks that were passed to `startBrowserWorkspaceDictation`.
     func stopBrowserWorkspaceDictation()
+}
+
+public extension BrowserWorkspaceAgentDelegate {
+    func submitAgentPromptFromUI(_ prompt: String, source: String) {
+        submitAgentPromptFromUI(prompt)
+    }
 }

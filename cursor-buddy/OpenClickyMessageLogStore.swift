@@ -30,13 +30,17 @@ nonisolated final class OpenClickyMessageLogStore: @unchecked Sendable {
         self.logDirectory = logDirectory ?? Self.defaultLogDirectory(fileManager: fileManager)
     }
 
-    /// H15: default retention for daily message logs (which contain full voice
-    /// transcripts = PII). 30 days balances debug usefulness against unbounded
-    /// growth and plaintext-on-disk exposure.
-    static let defaultRetentionDays: Int = 30
+    /// Message logs can contain transcripts and agent output. Keep a short,
+    /// privacy-oriented diagnostic window rather than a month of plaintext.
+    static let defaultRetentionDays: Int = 14
+    static let reviewCommentRetentionDays: Int = 30
+    private static let maximumConversationPreviewLength = 2_000
+    private static let maximumReviewCommentLength = 2_000
+    private static let maximumReviewSourceExcerptLength = 1_200
 
-    /// Prune message-log files older than the retention window. Safe to call on
-    /// launch and on the daily boundary. Never touches review-comment files.
+    /// Prune message logs and review artifacts older than their retention
+    /// windows. Review comments used to be exempt and could retain full raw
+    /// transcripts indefinitely.
     func pruneOldMessageLogs(olderThanDays days: Int = OpenClickyMessageLogStore.defaultRetentionDays) {
         writeQueue.async { [weak self] in
             guard let self else { return }
@@ -50,12 +54,14 @@ nonisolated final class OpenClickyMessageLogStore: @unchecked Sendable {
                     try? self.fileManager.removeItem(at: file)
                 }
             }
+            let reviewCutoff = Date().addingTimeInterval(-Double(Self.reviewCommentRetentionDays) * 86_400)
+            self.pruneReviewCommentsLocked(olderThan: reviewCutoff)
         }
     }
 
     func availableMessageLogFiles() -> [URL] {
         do {
-            try fileManager.createDirectory(at: logDirectory, withIntermediateDirectories: true)
+            try ensureLogDirectoryExists()
             let files = try fileManager.contentsOfDirectory(
                 at: logDirectory,
                 includingPropertiesForKeys: [.contentModificationDateKey],
@@ -79,14 +85,14 @@ nonisolated final class OpenClickyMessageLogStore: @unchecked Sendable {
         defer { lock.unlock() }
 
         do {
-            try fileManager.createDirectory(at: logDirectory, withIntermediateDirectories: true)
+            try ensureLogDirectoryExists()
             if !fileManager.fileExists(atPath: agentReviewCommentsFile.path) {
                 let header = """
                 # OpenClicky Log Review Comments
 
-                Agents should read this file when the user asks to fix issues flagged from message logs. Each entry includes the source log file, source line, status, user comment, and raw JSONL entry. Keep status current when a note is fixed or verified.
+                Review comments retain diagnostic metadata and a privacy-filtered source excerpt. They expire automatically; use the live log viewer for current context.
                 """
-                try Data(header.utf8).write(to: agentReviewCommentsFile, options: [.atomic])
+                try writePrivateFile(Data(header.utf8), to: agentReviewCommentsFile)
             }
             try ensureEmptyJSONLReviewCommentsFileExists()
         } catch {
@@ -105,21 +111,24 @@ nonisolated final class OpenClickyMessageLogStore: @unchecked Sendable {
         rawEntry: String,
         comment: String
     ) {
-        let trimmedComment = comment.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedComment = Self.truncated(
+            comment.trimmingCharacters(in: .whitespacesAndNewlines),
+            maxLength: Self.maximumReviewCommentLength
+        )
         guard !trimmedComment.isEmpty else { return }
 
         lock.lock()
         defer { lock.unlock() }
 
         do {
-            try fileManager.createDirectory(at: logDirectory, withIntermediateDirectories: true)
+            try ensureLogDirectoryExists()
             if !fileManager.fileExists(atPath: agentReviewCommentsFile.path) {
                 let header = """
                 # OpenClicky Log Review Comments
 
-                Agents should read this file when the user asks to fix issues flagged from message logs. Each entry includes the source log file, source line, status, user comment, and raw JSONL entry. Keep status current when a note is fixed or verified.
+                Review comments retain diagnostic metadata and a privacy-filtered source excerpt. They expire automatically; use the live log viewer for current context.
                 """
-                try Data(header.utf8).write(to: agentReviewCommentsFile, options: [.atomic])
+                try writePrivateFile(Data(header.utf8), to: agentReviewCommentsFile)
             }
             try ensureEmptyJSONLReviewCommentsFileExists()
 
@@ -130,7 +139,7 @@ nonisolated final class OpenClickyMessageLogStore: @unchecked Sendable {
             let entry: [String: Any] = [
                 "id": UUID().uuidString,
                 "createdAt": createdAt,
-                "sourceLogFile": sourceLogFile.path,
+                "sourceLogFile": sourceLogFile.lastPathComponent,
                 "sourceLineNumber": sourceLineNumber,
                 "entryID": entryID,
                 "entryTimestamp": entryTimestamp,
@@ -141,7 +150,7 @@ nonisolated final class OpenClickyMessageLogStore: @unchecked Sendable {
                 "fixedBy": "",
                 "verifiedAt": "",
                 "comment": trimmedComment,
-                "rawEntry": Self.truncated(rawEntry, maxLength: 20_000)
+                "sourceExcerpt": Self.redactedReviewExcerpt(rawEntry)
             ]
 
             guard JSONSerialization.isValidJSONObject(entry) else { return }
@@ -149,26 +158,7 @@ nonisolated final class OpenClickyMessageLogStore: @unchecked Sendable {
             jsonlData.append(0x0A)
             try append(jsonlData, to: reviewCommentsFile)
 
-            let markdownEntry = """
-
-            ## \(createdAt) - \(event)
-
-            - Source: \(sourceLogFile.lastPathComponent):\(sourceLineNumber)
-            - Entry timestamp: \(entryTimestamp)
-            - Lane: \(lane)
-            - Direction: \(direction)
-            - Status: open
-            - Fixed by:
-            - Verified at:
-
-            Comment:
-            \(trimmedComment)
-
-            Raw entry:
-            ```json
-            \(Self.truncated(rawEntry, maxLength: 8_000))
-            ```
-            """
+            let markdownEntry = Self.markdownReviewEntry(from: entry)
             try append(Data(markdownEntry.utf8), to: agentReviewCommentsFile)
         } catch {
             print("OpenClicky log review comment write failed: \(error.localizedDescription)")
@@ -183,7 +173,7 @@ nonisolated final class OpenClickyMessageLogStore: @unchecked Sendable {
             defer { self.lock.unlock() }
 
             do {
-                try self.fileManager.createDirectory(at: self.logDirectory, withIntermediateDirectories: true)
+                try self.ensureLogDirectoryExists()
 
                 let isoFormatter = ISO8601DateFormatter()
                 isoFormatter.timeZone = TimeZone(secondsFromGMT: 0)
@@ -224,13 +214,19 @@ nonisolated final class OpenClickyMessageLogStore: @unchecked Sendable {
         var fields = extraFields
         fields["role"] = role
         fields["source"] = source
-        fields["text"] = trimmedText
+        // Persist only a bounded, secret-redacted diagnostic preview. The live
+        // transcript remains in the active session UI; disk logs do not need a
+        // complete copy of every voice/agent conversation.
+        fields["textPreview"] = Self.truncated(
+            trimmedText,
+            maxLength: Self.maximumConversationPreviewLength
+        )
         fields["textLength"] = trimmedText.count
         if let sessionID, !sessionID.isEmpty {
             fields["sessionID"] = sessionID
         }
         if let title, !title.isEmpty {
-            fields["title"] = title
+            fields["title"] = Self.truncated(title, maxLength: 240)
         }
 
         append(
@@ -248,13 +244,28 @@ nonisolated final class OpenClickyMessageLogStore: @unchecked Sendable {
             handle.write(data)
             handle.closeFile()
         } else {
-            try data.write(to: fileURL, options: [.atomic])
+            try writePrivateFile(data, to: fileURL)
         }
+        try? fileManager.setAttributes([.posixPermissions: NSNumber(value: 0o600)], ofItemAtPath: fileURL.path)
     }
 
     private func ensureEmptyJSONLReviewCommentsFileExists() throws {
         guard !fileManager.fileExists(atPath: reviewCommentsFile.path) else { return }
-        try Data().write(to: reviewCommentsFile, options: [.atomic])
+        try writePrivateFile(Data(), to: reviewCommentsFile)
+    }
+
+    private func ensureLogDirectoryExists() throws {
+        try fileManager.createDirectory(
+            at: logDirectory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: NSNumber(value: 0o700)]
+        )
+        try? fileManager.setAttributes([.posixPermissions: NSNumber(value: 0o700)], ofItemAtPath: logDirectory.path)
+    }
+
+    private func writePrivateFile(_ data: Data, to fileURL: URL) throws {
+        try data.write(to: fileURL, options: [.atomic])
+        try? fileManager.setAttributes([.posixPermissions: NSNumber(value: 0o600)], ofItemAtPath: fileURL.path)
     }
 
     private static func defaultLogDirectory(fileManager: FileManager) -> URL {
@@ -265,8 +276,168 @@ nonisolated final class OpenClickyMessageLogStore: @unchecked Sendable {
             .appendingPathComponent("Logs", isDirectory: true)
     }
 
+    private func pruneReviewCommentsLocked(olderThan cutoff: Date) {
+        guard fileManager.fileExists(atPath: reviewCommentsFile.path) else { return }
+        guard let contents = try? String(contentsOf: reviewCommentsFile, encoding: .utf8) else { return }
+        let existingMarkdown = try? String(contentsOf: agentReviewCommentsFile, encoding: .utf8)
+
+        let dateFormatter = ISO8601DateFormatter()
+        let retainedEntries: [[String: Any]] = contents
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .compactMap { line -> [String: Any]? in
+                guard let data = String(line).data(using: .utf8),
+                      let entry = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let createdAt = entry["createdAt"] as? String,
+                      let date = dateFormatter.date(from: createdAt),
+                      date >= cutoff else {
+                    return nil
+                }
+                return Self.privacySanitizedReviewEntry(entry)
+            }
+
+        do {
+            let jsonl = retainedEntries.compactMap { entry -> String? in
+                guard JSONSerialization.isValidJSONObject(entry),
+                      let data = try? JSONSerialization.data(withJSONObject: entry, options: [.sortedKeys]),
+                      let line = String(data: data, encoding: .utf8) else {
+                    return nil
+                }
+                return line
+            }.joined(separator: "\n")
+            let jsonlData = Data((jsonl.isEmpty ? "" : jsonl + "\n").utf8)
+            try writePrivateFile(jsonlData, to: reviewCommentsFile)
+
+            let markdown = retainedReviewMarkdown(
+                existing: existingMarkdown,
+                cutoff: cutoff,
+                fallbackEntries: retainedEntries
+            )
+            try writePrivateFile(Data(markdown.utf8), to: agentReviewCommentsFile)
+        } catch {
+            print("OpenClicky review comment prune failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func retainedReviewMarkdown(
+        existing: String?,
+        cutoff: Date,
+        fallbackEntries: [[String: Any]]
+    ) -> String {
+        let header = """
+        # OpenClicky Log Review Comments
+
+        Review comments retain diagnostic metadata and a privacy-filtered source excerpt. They expire automatically; use the live log viewer for current context.
+        """
+        guard let existing, existing.contains("## ") else {
+            return header + fallbackEntries.map(Self.markdownReviewEntry).joined()
+        }
+
+        let formatter = ISO8601DateFormatter()
+        let sections = existing.components(separatedBy: "\n## ")
+        let preserved = sections.dropFirst().compactMap { section -> String? in
+            let heading = section.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? ""
+            let dateText = heading.split(separator: " ").first.map(String.init)
+            guard let dateText, let date = formatter.date(from: dateText) else {
+                // Keep hand-authored sections whose heading is not a generated
+                // ISO timestamp; pruning must not discard manual review notes.
+                return "\n## " + section
+            }
+            return date >= cutoff ? "\n## " + section : nil
+        }.joined()
+        return header + preserved
+    }
+
+    private static func privacySanitizedReviewEntry(_ entry: [String: Any]) -> [String: Any] {
+        var sanitized: [String: Any] = [:]
+        for (key, value) in entry {
+            switch key {
+            case "rawEntry":
+                sanitized["sourceExcerpt"] = redactedReviewExcerpt(value as? String ?? "")
+            case "sourceExcerpt":
+                sanitized[key] = redactedReviewExcerpt(value as? String ?? "")
+            case "sourceLogFile":
+                let sourcePath = value as? String ?? ""
+                sanitized[key] = URL(fileURLWithPath: sourcePath).lastPathComponent
+            case "comment":
+                sanitized[key] = truncated(value as? String ?? "", maxLength: maximumReviewCommentLength)
+            default:
+                sanitized[key] = sanitizedJSONObject(value, key: key)
+            }
+        }
+        return sanitized
+    }
+
+    private static func markdownReviewEntry(from entry: [String: Any]) -> String {
+        let createdAt = entry["createdAt"] as? String ?? "Unknown date"
+        let event = entry["event"] as? String ?? "unknown"
+        let source = entry["sourceLogFile"] as? String ?? "unknown"
+        let line = entry["sourceLineNumber"] as? Int ?? 0
+        let timestamp = entry["entryTimestamp"] as? String ?? ""
+        let lane = entry["lane"] as? String ?? ""
+        let direction = entry["direction"] as? String ?? ""
+        let status = entry["status"] as? String ?? "open"
+        let fixedBy = entry["fixedBy"] as? String ?? ""
+        let verifiedAt = entry["verifiedAt"] as? String ?? ""
+        let comment = entry["comment"] as? String ?? ""
+        let sourceExcerpt = (entry["sourceExcerpt"] as? String ?? "No retained source excerpt.")
+            .replacingOccurrences(of: "```", with: "'''")
+
+        return """
+
+        ## \(createdAt) - \(event)
+
+        - Source: \(source):\(line)
+        - Entry timestamp: \(timestamp)
+        - Lane: \(lane)
+        - Direction: \(direction)
+        - Status: \(status)
+        - Fixed by: \(fixedBy)
+        - Verified at: \(verifiedAt)
+
+        Comment:
+        \(comment)
+
+        Source excerpt (privacy filtered):
+        ```json
+        \(sourceExcerpt)
+        ```
+        """
+    }
+
+    private static func redactedReviewExcerpt(_ rawEntry: String) -> String {
+        guard let data = rawEntry.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) else {
+            return "[unstructured source entry omitted for privacy]"
+        }
+        let sanitized = reviewContextValue(object)
+        guard JSONSerialization.isValidJSONObject(sanitized),
+              let data = try? JSONSerialization.data(withJSONObject: sanitized, options: [.sortedKeys]),
+              let text = String(data: data, encoding: .utf8) else {
+            return "[source entry omitted for privacy]"
+        }
+        return truncated(text, maxLength: maximumReviewSourceExcerptLength)
+    }
+
+    private static func reviewContextValue(_ value: Any, key: String? = nil) -> Any {
+        if let key, isSensitiveKey(key) || isPrivateContentKey(key) {
+            return "[redacted]"
+        }
+        if let dictionary = value as? [String: Any] {
+            return Dictionary(uniqueKeysWithValues: dictionary.map { childKey, childValue in
+                (childKey, reviewContextValue(childValue, key: childKey))
+            })
+        }
+        if let array = value as? [Any] {
+            return array.map { reviewContextValue($0) }
+        }
+        if let string = value as? String {
+            return truncated(string, maxLength: 320)
+        }
+        return sanitizedJSONObject(value, key: key)
+    }
+
     private static func sanitizedJSONObject(_ value: Any, key: String? = nil) -> Any {
-        if let key, isSensitiveKey(key) {
+        if let key, isSensitiveKey(key) || isPrivateContentKey(key) {
             return "[redacted]"
         }
 
@@ -319,6 +490,13 @@ nonisolated final class OpenClickyMessageLogStore: @unchecked Sendable {
             || lowered.contains("secret")
             || lowered.contains("token")
             || lowered == "x-api-key"
+    }
+
+    private static func isPrivateContentKey(_ key: String) -> Bool {
+        let lowered = key.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current).lowercased()
+        return ["text", "content", "message", "prompt", "transcript", "response", "rawentry", "raw_entry"].contains(lowered)
+            || lowered.contains("screenshot")
+            || lowered.contains("imagebase64")
     }
 
     private static let sensitiveValuePatterns = [

@@ -366,20 +366,25 @@ final class OpenAIRealtimeSpeechClient: OpenClickyTTSClient {
         routeUserTranscriptBeforeAssistantResponse: (@MainActor @Sendable (String) -> Bool)? = nil,
         routeRealtimeToolCallBeforeAssistantResponse: (@MainActor @Sendable (String, String) -> Bool)? = nil
     ) async throws -> BidirectionalVoiceTurnResult {
-        guard let activeBidirectionalVoiceTurn else {
+        guard let turn = activeBidirectionalVoiceTurn else {
             throw CancellationError()
         }
-        self.activeBidirectionalVoiceTurn = nil
         do {
-            let result = try await activeBidirectionalVoiceTurn.finish(
+            let result = try await turn.finish(
                 routeUserTranscriptBeforeAssistantResponse: routeUserTranscriptBeforeAssistantResponse,
                 routeRealtimeToolCallBeforeAssistantResponse: routeRealtimeToolCallBeforeAssistantResponse
             )
-            stopPlayback(for: activeBidirectionalVoiceTurn)
+            if activeBidirectionalVoiceTurn === turn {
+                activeBidirectionalVoiceTurn = nil
+            }
+            stopPlayback(for: turn)
             return result
         } catch {
-            activeBidirectionalVoiceTurn.cancel()
-            stopPlayback(for: activeBidirectionalVoiceTurn)
+            turn.cancel()
+            if activeBidirectionalVoiceTurn === turn {
+                activeBidirectionalVoiceTurn = nil
+            }
+            stopPlayback(for: turn)
             throw error
         }
     }
@@ -970,12 +975,14 @@ final class OpenAIRealtimeSpeechClient: OpenClickyTTSClient {
         private let onAssistantTextChunk: @MainActor @Sendable (String) -> Void
         private let onPlaybackStarted: @MainActor @Sendable () -> Void
         private var receiveTask: Task<BidirectionalVoiceTurnResult, Error>?
+        private var responseFallbackTask: Task<Void, Never>?
         private var routeUserTranscriptBeforeAssistantResponse: (@MainActor @Sendable (String) -> Bool)?
         private var routeRealtimeToolCallBeforeAssistantResponse: (@MainActor @Sendable (String, String) -> Bool)?
         private var didStartPlayback = false
         private var didCommitInput = false
         private var didRequestAssistantResponse = false
         private var didRouteByClient = false
+        private var isCancelled = false
 
         init(
             client: OpenAIRealtimeSpeechClient,
@@ -1035,6 +1042,8 @@ final class OpenAIRealtimeSpeechClient: OpenClickyTTSClient {
             routeUserTranscriptBeforeAssistantResponse: (@MainActor @Sendable (String) -> Bool)? = nil,
             routeRealtimeToolCallBeforeAssistantResponse: (@MainActor @Sendable (String, String) -> Bool)? = nil
         ) async throws -> BidirectionalVoiceTurnResult {
+            try Task.checkCancellation()
+            guard !isCancelled else { throw CancellationError() }
             stopInputCapture()
             let inputStats = inputCapture.captureStats()
             guard inputStats.byteCount >= OpenAIRealtimeSpeechClient.minimumInputAudioBytes,
@@ -1047,30 +1056,41 @@ final class OpenAIRealtimeSpeechClient: OpenClickyTTSClient {
             self.routeRealtimeToolCallBeforeAssistantResponse = routeRealtimeToolCallBeforeAssistantResponse
             didCommitInput = true
             try await sendJSON(["type": "input_audio_buffer.commit"])
+            try Task.checkCancellation()
+            guard !isCancelled else { throw CancellationError() }
 
             // Let the Realtime transcription event reach OpenClicky's app
             // router before asking the model to speak. Pointing, direct
             // computer-use, and agent-start requests must become real app
             // actions, not spoken "[POINT:...]" / "Done" audio.
-            let responseFallbackTask = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
+            responseFallbackTask?.cancel()
+            responseFallbackTask = Task { [weak self] in
+                do {
+                    try await Task.sleep(nanoseconds: 5_000_000_000)
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else { return }
                 try? await self?.requestAssistantResponseIfNeeded()
             }
 
             do {
                 guard let receiveTask else { throw CancellationError() }
                 let result = try await receiveTask.value
-                responseFallbackTask.cancel()
+                responseFallbackTask?.cancel()
+                responseFallbackTask = nil
                 webSocket.cancel(with: .normalClosure, reason: nil)
                 return result
             } catch {
-                responseFallbackTask.cancel()
+                responseFallbackTask?.cancel()
+                responseFallbackTask = nil
                 throw error
             }
         }
 
         private func requestAssistantResponseIfNeeded() async throws {
             guard didCommitInput,
+                  !isCancelled,
                   !didRequestAssistantResponse,
                   !didRouteByClient else {
                 return
@@ -1085,9 +1105,12 @@ final class OpenAIRealtimeSpeechClient: OpenClickyTTSClient {
         }
 
         func cancel() {
+            isCancelled = true
             stopInputCapture()
             receiveTask?.cancel()
             receiveTask = nil
+            responseFallbackTask?.cancel()
+            responseFallbackTask = nil
             TTSStreamingPlaybackEngine.stopPlayerIfAttached(playerNode)
             outputEngine.stop()
             outputEngine.reset()

@@ -185,12 +185,31 @@ nonisolated enum CuaDriverMCPConfiguration {
         return knownCommandPaths.first { fileManager.isExecutableFile(atPath: $0) || fileManager.fileExists(atPath: $0) }
     }
 
-    static func bundledRuntimeExecutableURL(fileManager: FileManager = .default) -> URL? {
-        guard let resources = CodexRuntimeLocator.sourceAppResourcesDirectory(fileManager: fileManager) else { return nil }
-        let executable = resources
-            .appendingPathComponent("CuaDriverRuntime", isDirectory: true)
-            .appendingPathComponent("cua-driver", isDirectory: false)
-        return fileManager.isExecutableFile(atPath: executable.path) ? executable : nil
+    static func bundledRuntimeExecutableURL(
+        bundle: Bundle = .main,
+        fileManager: FileManager = .default
+    ) -> URL? {
+        // Release builds copy CuaDriverRuntime directly into the app's
+        // Resources directory. Resolve that bundle location first; the source
+        // checkout fallback is only for development/test execution.
+        var runtimeDirectories: [URL] = []
+        if let bundledRuntime = bundle.url(forResource: "CuaDriverRuntime", withExtension: nil) {
+            runtimeDirectories.append(bundledRuntime)
+        }
+        if let resourceURL = bundle.resourceURL {
+            runtimeDirectories.append(resourceURL.appendingPathComponent("CuaDriverRuntime", isDirectory: true))
+        }
+        if let sourceResources = CodexRuntimeLocator.sourceAppResourcesDirectory(fileManager: fileManager) {
+            runtimeDirectories.append(sourceResources.appendingPathComponent("CuaDriverRuntime", isDirectory: true))
+        }
+
+        for runtimeDirectory in runtimeDirectories {
+            let executable = runtimeDirectory.appendingPathComponent("cua-driver", isDirectory: false)
+            if fileManager.isExecutableFile(atPath: executable.path) {
+                return executable
+            }
+        }
+        return nil
     }
 
     private static func normalized(_ value: String?) -> String? {

@@ -70,7 +70,10 @@ extension CompanionManager {
             }
         }
 
+        let responseTaskToken = UUID()
+        currentResponseTaskToken = responseTaskToken
         currentResponseTask = Task {
+            defer { self.clearCurrentResponseTask(ifMatches: responseTaskToken) }
             // Stay in processing (spinner) state — no streaming text displayed
             self.voiceState = .processing
 
@@ -103,13 +106,6 @@ extension CompanionManager {
                 // Circle-while-talking: if the user drew a freehand trail during
                 // this PTT hold, always attach visual context (crop + full screen).
                 let circleHandoff = await self.consumePendingCircleSelectHandoff(instruction: transcript)
-                if let circleHandoff {
-                    // Also queue for Agent Mode so dual-mode consumers share the same region.
-                    self.queueHandoffRegion(
-                        selection: circleHandoff.selection,
-                        imageData: circleHandoff.imageData
-                    )
-                }
 
                 // Only attach screenshots when the utterance actually needs
                 // visual context. Text-only turns should not pay the capture,
@@ -1166,6 +1162,11 @@ extension CompanionManager {
                     onTextChunk: onTextChunk
                 )
                 return text
+            } catch is CancellationError {
+                // Cancellation means the user interrupted the primary SDK path;
+                // it is not an availability failure and must never trigger a
+                // paid direct-HTTP fallback.
+                throw CancellationError()
             } catch {
                 guard AppBundleConfiguration.anthropicAPIKey() != nil else { throw error }
                 OpenClickyMessageLogStore.shared.append(
@@ -1596,15 +1597,9 @@ extension CompanionManager {
     }
 
     static func computerUsePointingResolver(
-        selectedVoiceModelID: String,
+        selectedVoiceModelID _: String,
         selectedComputerUseModelID: String
     ) -> OpenClickyComputerUsePointingResolver {
-        let voiceModel = OpenClickyModelCatalog.voiceResponseModel(withID: selectedVoiceModelID)
-        if voiceModel.provider == .openAI,
-           OpenClickyModelCatalog.isSpeechModelID(voiceModel.id) {
-            return .openAIRealtime
-        }
-
         let pointingModel = OpenClickyModelCatalog.computerUseModel(withID: selectedComputerUseModelID)
         if pointingModel.provider == .openAI,
            OpenClickyModelCatalog.isSpeechModelID(pointingModel.id) {

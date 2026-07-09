@@ -84,35 +84,81 @@ final class OpenClickyAgentManager: ObservableObject {
     // MARK: - Binary Location
 
     func locateBinary() -> URL? {
-        // 1. Bundled in app resources
-        if let bundled = Bundle.main.url(forResource: "openclicky-agent", withExtension: nil) {
+        // A persistent launch agent must never be installed from PATH or a
+        // user-writable adjacent directory in a release build. The signed app
+        // bundle is the only execution authority in production.
+        if let bundled = Self.bundledBinaryURL(named: agentBinaryName) {
             return bundled
         }
 
-        // 2. Next to the app bundle (development)
+        #if DEBUG
+        guard Self.developmentBinaryOverridesEnabled else { return nil }
+
+        // Local development is deliberately opt-in. Setting the environment
+        // variable below is an explicit acknowledgement that the runtime will
+        // execute an unbundled binary and persist it through launchd.
         let appDir = Bundle.main.bundleURL.deletingLastPathComponent()
         let devBinary = appDir.appendingPathComponent("openclicky-agent")
-        if FileManager.default.fileExists(atPath: devBinary.path) {
+        if FileManager.default.isExecutableFile(atPath: devBinary.path) {
             return devBinary
         }
 
-        // 3. PATH lookup
+        // PATH and ~/bin are available only to the explicit debug override.
         if let path = ProcessInfo.processInfo.environment["PATH"] {
             for dir in path.split(separator: ":") {
                 let candidate = URL(fileURLWithPath: String(dir)).appendingPathComponent("openclicky-agent")
-                if FileManager.default.fileExists(atPath: candidate.path) {
+                if FileManager.default.isExecutableFile(atPath: candidate.path) {
                     return candidate
                 }
             }
         }
 
-        // 4. ~/bin
         let homeBin = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("bin/openclicky-agent")
-        if FileManager.default.fileExists(atPath: homeBin.path) {
+        if FileManager.default.isExecutableFile(atPath: homeBin.path) {
             return homeBin
         }
+        #endif
 
         return nil
+    }
+
+    nonisolated private static func bundledBinaryURL(
+        named name: String,
+        bundle: Bundle = .main,
+        fileManager: FileManager = .default
+    ) -> URL? {
+        guard let binary = bundle.url(forResource: name, withExtension: nil),
+              fileManager.isExecutableFile(atPath: binary.path),
+              let resourceURL = bundle.resourceURL else {
+            return nil
+        }
+
+        let resolvedBinary = binary.standardizedFileURL.resolvingSymlinksInPath()
+        let resolvedResources = resourceURL.standardizedFileURL.resolvingSymlinksInPath()
+        guard resolvedBinary.path.hasPrefix(resolvedResources.path + "/") else {
+            return nil
+        }
+        return resolvedBinary
+    }
+
+    #if DEBUG
+    nonisolated private static var developmentBinaryOverridesEnabled: Bool {
+        ProcessInfo.processInfo.environment["OPENCLICKY_ALLOW_UNTRUSTED_AGENT_RUNTIME"] == "1"
+    }
+    #endif
+
+    nonisolated private static func isPermittedLaunchBinary(_ binaryURL: URL) -> Bool {
+        let resolvedBinary = binaryURL.standardizedFileURL.resolvingSymlinksInPath()
+        if let bundled = bundledBinaryURL(named: "openclicky-agent"), bundled == resolvedBinary {
+            return true
+        }
+
+        #if DEBUG
+        return developmentBinaryOverridesEnabled
+            && FileManager.default.isExecutableFile(atPath: resolvedBinary.path)
+        #else
+        return false
+        #endif
     }
 
     // MARK: - Service Management
@@ -141,10 +187,18 @@ final class OpenClickyAgentManager: ObservableObject {
     /// the launchctl `waitUntilExit()` and file writes never block the UI.
     nonisolated static func performInstall(binaryPath: String, plistPath: String, supportDir: URL) throws {
         let installLog = Logger(subsystem: "com.jkneen.openclicky", category: "AgentRuntime")
+        let binaryURL = URL(fileURLWithPath: binaryPath, isDirectory: false)
+        guard isPermittedLaunchBinary(binaryURL) else {
+            throw NSError(
+                domain: "OpenClickyAgent",
+                code: 9,
+                userInfo: [NSLocalizedDescriptionKey: "Refusing to install an untrusted openclicky-agent executable. Bundle the runtime with OpenClicky, or use the explicit debug-only development override."]
+            )
+        }
         installLog.info("performInstall: writing plist to \(plistPath, privacy: .public)")
         let plist: [String: Any] = [
             "Label": "com.jkneen.openclicky.agent",
-            "ProgramArguments": [binaryPath, "run"],
+            "ProgramArguments": [binaryURL.path, "run"],
             "RunAtLoad": true,
             "KeepAlive": true,
             "StandardOutPath": supportDir.appendingPathComponent("logs/agent.log").path,
@@ -160,6 +214,11 @@ final class OpenClickyAgentManager: ObservableObject {
             options: 0
         )
 
+        // A launchd job keeps the old ProgramArguments in memory after its
+        // plist is overwritten. Unload it before writing so an explicit
+        // install cannot accidentally preserve a stale executable.
+        _ = try? runLaunchctlStatic(["bootout", "gui/\(getuid())/com.jkneen.openclicky.agent"])
+        _ = try? runLaunchctlStatic(["unload", plistPath])
         try FileManager.default.createDirectory(at: supportDir, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: supportDir.appendingPathComponent("logs"), withIntermediateDirectories: true)
         try plistData.write(to: URL(fileURLWithPath: plistPath))
@@ -187,6 +246,39 @@ final class OpenClickyAgentManager: ObservableObject {
                 ]
             )
         }
+    }
+
+    /// A pre-existing launchd plist is executable state. Verify it points to
+    /// the binary selected for this run before kickstarting it; otherwise a
+    /// previous PATH/dev selection can survive an app upgrade indefinitely.
+    nonisolated private static func launchAgentPlistMatchesExpectedBinary(
+        plistPath: String,
+        binaryPath: String
+    ) -> Bool {
+        let plistURL = URL(fileURLWithPath: plistPath, isDirectory: false)
+        guard let data = try? Data(contentsOf: plistURL),
+              let propertyList = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
+              let plist = propertyList as? [String: Any],
+              plist["Label"] as? String == "com.jkneen.openclicky.agent",
+              let arguments = plist["ProgramArguments"] as? [String],
+              arguments.count == 2,
+              arguments[1] == "run" else {
+            return false
+        }
+
+        let expected = URL(fileURLWithPath: binaryPath, isDirectory: false)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        let configured = URL(fileURLWithPath: arguments[0], isDirectory: false)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        return configured == expected && isPermittedLaunchBinary(configured)
+    }
+
+    nonisolated private static func unloadAndRemoveLaunchAgent(plistPath: String) {
+        _ = try? runLaunchctlStatic(["bootout", "gui/\(getuid())/com.jkneen.openclicky.agent"])
+        _ = try? runLaunchctlStatic(["unload", plistPath])
+        try? FileManager.default.removeItem(atPath: plistPath)
     }
 
     func uninstallService() throws {
@@ -591,14 +683,9 @@ final class OpenClickyAgentManager: ObservableObject {
         syncProvidersFromSettings()
         refreshStatus()
 
-        if case .running = status, FileManager.default.fileExists(atPath: ipcSocketPath) {
-            logger.info("ensureRunning: already running with live socket")
-            return
-        }
-
         guard let binary = locateBinary() else {
-            logger.error("ensureRunning: openclicky-agent binary not found in bundle, app dir, PATH, or ~/bin")
-            throw NSError(domain: "OpenClickyAgent", code: 1, userInfo: [NSLocalizedDescriptionKey: "openclicky-agent binary not found"])
+            logger.error("ensureRunning: trusted bundled openclicky-agent binary not found")
+            throw NSError(domain: "OpenClickyAgent", code: 1, userInfo: [NSLocalizedDescriptionKey: "OpenClicky needs a bundled openclicky-agent runtime. It will not install a runtime from PATH or a user-writable location."])
         }
 
         let binaryPath = binary.path
@@ -606,6 +693,13 @@ final class OpenClickyAgentManager: ObservableObject {
         let supportDir = supportDirectory
         let socketPath = ipcSocketPath
         let log = self.logger
+
+        if case .running = status,
+           FileManager.default.fileExists(atPath: socketPath),
+           Self.launchAgentPlistMatchesExpectedBinary(plistPath: plistPath, binaryPath: binaryPath) {
+            logger.info("ensureRunning: already running with the expected bundled runtime")
+            return
+        }
 
         logger.info("ensureRunning: binary=\(binaryPath, privacy: .public) plist=\(plistPath, privacy: .public) socket=\(socketPath, privacy: .public)")
 
@@ -624,10 +718,13 @@ final class OpenClickyAgentManager: ObservableObject {
             // listening even though launchctl reports it as loaded.
             Self.clearStaleSocket(at: socketPath)
 
-            let plistExists = FileManager.default.fileExists(atPath: plistPath)
-            log.info("ensureRunning.work: plistExists=\(plistExists, privacy: .public)")
+            let plistMatchesExpectedBinary = Self.launchAgentPlistMatchesExpectedBinary(
+                plistPath: plistPath,
+                binaryPath: binaryPath
+            )
+            log.info("ensureRunning.work: plistMatchesExpectedBinary=\(plistMatchesExpectedBinary, privacy: .public)")
 
-            if plistExists {
+            if plistMatchesExpectedBinary {
                 report("Kickstarting openclicky-agent via launchctl")
                 let kickstart = (try? Self.runLaunchctlStatic(["kickstart", "-k", "gui/\(getuid())/com.jkneen.openclicky.agent"])) ?? -1
                 let startCmd = (try? Self.runLaunchctlStatic(["start", "com.jkneen.openclicky.agent"])) ?? -1
@@ -638,6 +735,10 @@ final class OpenClickyAgentManager: ObservableObject {
                 }
                 log.warning("ensureRunning.work: socket not live after kickstart; falling through to install")
             }
+
+            // Never let a stale plist retain an old/untrusted executable. Also
+            // unload a matching but failed service before replacing its plist.
+            Self.unloadAndRemoveLaunchAgent(plistPath: plistPath)
 
             report("Installing openclicky-agent launch service")
             do {
@@ -680,18 +781,14 @@ final class OpenClickyAgentManager: ObservableObject {
         let socketPath = ipcSocketPath
 
         let result: ServiceStatus = await Task.detached(priority: .userInitiated) {
-            _ = try? Self.runLaunchctlStatic(["bootout", "gui/\(getuid())/com.jkneen.openclicky.agent"])
-            _ = try? Self.runLaunchctlStatic(["unload", plistPath])
+            // Rebuild the launchd definition from the freshly resolved,
+            // permitted binary. Never bootstrap whatever a stale plist names.
+            Self.unloadAndRemoveLaunchAgent(plistPath: plistPath)
             Self.terminateAgentProcesses(modes: ["run"])
             try? FileManager.default.removeItem(atPath: socketPath)
 
             do {
-                if FileManager.default.fileExists(atPath: plistPath) {
-                    _ = try? Self.runLaunchctlStatic(["bootstrap", "gui/\(getuid())", plistPath])
-                    _ = try? Self.runLaunchctlStatic(["kickstart", "-k", "gui/\(getuid())/com.jkneen.openclicky.agent"])
-                } else {
-                    try Self.performInstall(binaryPath: binaryPath, plistPath: plistPath, supportDir: supportDir)
-                }
+                try Self.performInstall(binaryPath: binaryPath, plistPath: plistPath, supportDir: supportDir)
 
                 if Self.waitForRunningSocketStatic(path: socketPath, timeout: 5.0) {
                     return .running

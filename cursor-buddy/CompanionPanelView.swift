@@ -92,9 +92,9 @@ struct CompanionPanelView: View {
         )
         .background(panelBackground)
         .onAppear {
-            // Surface the native macOS prompts for microphone/camera the first
-            // time the permission guide becomes visible so users don't have to
-            // discover them via the per-feature entry points.
+            // Surface the base microphone prompt when the permission guide
+            // first appears. Optional camera features request their own access
+            // at the point the user enables them.
             if !companionManager.allPermissionsGranted {
                 companionManager.requestPendingPermissionPrompts()
             }

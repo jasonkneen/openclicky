@@ -79,17 +79,24 @@ final class OpenClickyWakeWordManager: NSObject, ObservableObject {
             guard await requestMicrophonePermission() else {
                 throw WakeWordError("Microphone permission is required for Hey Clicky listening.")
             }
+            guard isCurrentStart(nextSessionID) else { return }
             guard await requestSpeechPermission() else {
                 throw WakeWordError("Speech Recognition permission is required for Hey Clicky listening.")
             }
+            guard isCurrentStart(nextSessionID) else { return }
             guard let speechRecognizer = Self.makeBestAvailableSpeechRecognizer() else {
                 throw WakeWordError("On-device wake-word listening is not available on this Mac.")
             }
             guard speechRecognizer.supportsOnDeviceRecognition else {
                 throw WakeWordError("This Mac does not expose on-device Speech recognition for the current locale, so OpenClicky will not run an always-listening remote gate.")
             }
+            guard isCurrentStart(nextSessionID) else { return }
 
             try startRecognitionSession(speechRecognizer: speechRecognizer, sessionID: nextSessionID)
+            guard isCurrentStart(nextSessionID) else {
+                tearDownRecognition(cancelTask: true)
+                return
+            }
             isStarting = false
             isListening = true
             OpenClickyMessageLogStore.shared.append(
@@ -102,6 +109,10 @@ final class OpenClickyWakeWordManager: NSObject, ObservableObject {
                 ]
             )
         } catch {
+            // Stop may have happened while macOS was showing a permission
+            // prompt. That invalidates this start; it must not tear down or
+            // overwrite a newer session when the prompt finally returns.
+            guard sessionID == nextSessionID else { return }
             isStarting = false
             isListening = false
             lastErrorMessage = error.localizedDescription
@@ -116,10 +127,15 @@ final class OpenClickyWakeWordManager: NSObject, ObservableObject {
     }
 
     func stop(reason: String = "stopped") {
-        guard isListening || isStarting || recognitionTask != nil || audioEngine.isRunning else { return }
+        let hadActiveSession = isListening || isStarting || recognitionTask != nil || audioEngine.isRunning
+        // Invalidate an in-flight async permission/start sequence before
+        // changing the visible state. Without this, granting a permission
+        // after Stop would start the microphone listener again.
+        sessionID = UUID()
         isStarting = false
         isListening = false
         tearDownRecognition(cancelTask: true)
+        guard hadActiveSession else { return }
         OpenClickyMessageLogStore.shared.append(
             lane: "voice",
             direction: "internal",
@@ -187,6 +203,9 @@ final class OpenClickyWakeWordManager: NSObject, ObservableObject {
 
     private func handleWakeDetected(_ transcript: String) {
         let callback = onWakeWordDetected
+        // Suppress any queued recognition callbacks from the completed
+        // listener before handing control back to the app.
+        sessionID = UUID()
         isListening = false
         tearDownRecognition(cancelTask: true)
         OpenClickyMessageLogStore.shared.append(
@@ -199,6 +218,10 @@ final class OpenClickyWakeWordManager: NSObject, ObservableObject {
             ]
         )
         callback?(transcript)
+    }
+
+    private func isCurrentStart(_ candidateSessionID: UUID) -> Bool {
+        sessionID == candidateSessionID && isStarting && !isListening
     }
 
     private func tearDownRecognition(cancelTask: Bool) {

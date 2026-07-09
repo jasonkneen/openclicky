@@ -175,16 +175,11 @@ extension CompanionManager {
         }
     }
 
-    private static var allowsDeveloperHUD: Bool {
-        #if DEBUG
-        return true
-        #else
-        return false
-        #endif
-    }
-
-    func showCodexHUD(developerRequested: Bool = false) {
-        guard isAdvancedModeEnabled, developerRequested, Self.allowsDeveloperHUD else { return }
+    /// Opens the current Agent screen.  The public entry point retains its
+    /// historic name so menu-bar actions, deep links, and SDK callers all land
+    /// on the new ChatWorkspace surface rather than a debug-only legacy HUD.
+    func showCodexHUD(developerRequested _: Bool = false) {
+        guard isAdvancedModeEnabled else { return }
         codexHUDWindowManager.show(
             companionManager: self,
             openMemory: { [weak self] in
@@ -200,7 +195,7 @@ extension CompanionManager {
 
     #if DEBUG
     func showDeveloperCodexHUD() {
-        showCodexHUD(developerRequested: true)
+        showCodexHUD()
     }
     #endif
 
@@ -822,6 +817,15 @@ final class OpenClickyDirectActionMemoryStore: @unchecked Sendable {
 extension CompanionManager: BrowserWorkspaceAgentDelegate {
     public func hasLinkedAgentSession(id: UUID) -> Bool {
         return codexAgentSessions.contains(where: { $0.id == id })
+    }
+
+    public func submitAgentPromptFromUI(_ prompt: String, source: String) {
+        if source == "browser_workspace_untrusted_context",
+           !codexAgentSession.usesRestrictedExecutionPolicy {
+            codexAgentSession.stop(reason: "browser_execution_policy_upgrade")
+            codexAgentSession.configureRestrictedExecutionPolicy()
+        }
+        submitAgentPromptFromUI(prompt)
     }
 
     /// True when OpenClicky has a local provider that can participate in the

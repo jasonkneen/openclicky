@@ -37,21 +37,23 @@ actor OpenClickyAgentFileLeaseCoordinator {
         claimAvailablePaths(Array(Set(paths.map(Self.normalizedPath))).sorted(), for: sessionID, title: title, waitedForConflicts: false, waitTimedOut: false)
     }
 
-    func claimPathsWaitingForRelease(_ paths: [String], for sessionID: UUID, title: String, timeout: TimeInterval = 900, pollInterval: TimeInterval = 2) async -> LeaseSummary {
+    func claimPathsWaitingForRelease(_ paths: [String], for sessionID: UUID, title: String, timeout: TimeInterval = 900, pollInterval: TimeInterval = 2) async throws -> LeaseSummary {
         releaseLeases(for: sessionID)
         let uniquePaths = Array(Set(paths.map(Self.normalizedPath))).sorted()
         let deadline = Date().addingTimeInterval(timeout)
         var waitedForConflicts = false
 
         while !conflicts(for: uniquePaths, excluding: sessionID).isEmpty {
+            try Task.checkCancellation()
             waitedForConflicts = true
             guard Date() < deadline else {
                 return claimAvailablePaths(uniquePaths, for: sessionID, title: title, waitedForConflicts: true, waitTimedOut: true)
             }
             let nanoseconds = UInt64(max(0.25, pollInterval) * 1_000_000_000)
-            try? await Task.sleep(nanoseconds: nanoseconds)
+            try await Task.sleep(nanoseconds: nanoseconds)
         }
 
+        try Task.checkCancellation()
         return claimAvailablePaths(uniquePaths, for: sessionID, title: title, waitedForConflicts: waitedForConflicts, waitTimedOut: false)
     }
 
@@ -254,7 +256,31 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
     @Published var specialistAgentSlug: String? = nil
     @Published var workingDirectoryPath: String = UserDefaults.standard.string(forKey: "clickyCodexWorkingDirectory")
         ?? FileManager.default.homeDirectoryForCurrentUser.path
+    /// Browser-origin tasks carry only an origin and user goal, but retain a
+    /// restricted execution policy as defense in depth if future context is
+    /// added to that handoff.
+    var usesRestrictedExecutionPolicy = false
     var onOpenableFileFound: (@MainActor (URL) -> Void)?
+
+    private var executionApprovalPolicy: String {
+        usesRestrictedExecutionPolicy ? "on-request" : "never"
+    }
+
+    private var executionSandboxMode: String {
+        usesRestrictedExecutionPolicy ? "workspace-write" : "danger-full-access"
+    }
+
+    func configureRestrictedExecutionPolicy() {
+        usesRestrictedExecutionPolicy = true
+        let sandboxRoot = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first!
+            .appendingPathComponent("OpenClicky/AgentMode/BrowserSandbox", isDirectory: true)
+            .appendingPathComponent(id.uuidString, isDirectory: true)
+        try? FileManager.default.createDirectory(at: sandboxRoot, withIntermediateDirectories: true, attributes: [.posixPermissions: NSNumber(value: 0o700)])
+        workingDirectoryPath = sandboxRoot.path
+    }
 
     var spokenAgentName: String {
         "the agent"
@@ -388,6 +414,14 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
     private var currentAssistantEntryID: String?
     private var pendingAssistantDeltas: [String: String] = [:]
     private var pendingAssistantDeltaFlushTask: Task<Void, Never>?
+    /// Owns the preflight work (including file-lease waits) for the current
+    /// prompt. It must be retained so Stop can make a pending start terminal.
+    private var promptStartTask: Task<Void, Never>?
+    private var warmUpTask: Task<Void, Never>?
+    /// Every stop or new prompt invalidates work that was suspended before it.
+    /// A cancelled task alone is not enough because not every awaited API
+    /// cooperates with cancellation immediately.
+    private var runGeneration: UInt64 = 0
     private var hasInitializedProcess = false
     private var lastSubmittedPrompt: String?
     private var latestAssistantResponseForCompletedTurn: String?
@@ -428,12 +462,18 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
     }
 
     func warmUp() {
-        Task {
+        warmUpTask?.cancel()
+        let generation = runGeneration
+        warmUpTask = Task { [weak self] in
+            guard let self else { return }
             do {
-                try await ensureThread()
+                try await self.ensureThread(for: generation)
+            } catch is CancellationError {
+                return
             } catch {
-                lastErrorMessage = error.localizedDescription
-                status = .failed(error.localizedDescription)
+                guard self.isCurrentRun(generation) else { return }
+                self.lastErrorMessage = error.localizedDescription
+                self.status = .failed(error.localizedDescription)
             }
         }
     }
@@ -527,6 +567,16 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
     }
 
     private func startPromptTurn(_ prompt: String, screenContext: CodexAgentScreenContext? = nil) {
+        // A prompt can spend minutes waiting for a file lease. Invalidate any
+        // prior preflight before adding this turn so an older task cannot wake
+        // up later and start a stale Codex turn.
+        runGeneration &+= 1
+        let generation = runGeneration
+        promptStartTask?.cancel()
+        promptStartTask = nil
+        warmUpTask?.cancel()
+        warmUpTask = nil
+
         if entries.isEmpty {
             let fallbackTitle = Self.shortTitle(from: prompt)
             title = fallbackTitle
@@ -560,9 +610,31 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
             ]
         )
         appendActivityStatusLine("Queued request: \(Self.spokenSnippet(from: prompt, maxLength: 90))")
-        Task {
-            let coordinationNote = await buildAgentCoordinationNote(for: prompt)
-            await runPrompt(promptForModel(prompt: prompt, screenContext: screenContext, coordinationNote: coordinationNote))
+        status = .starting
+        progressStage = .starting
+        let sessionID = id
+        promptStartTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let coordinationNote = try await self.buildAgentCoordinationNote(for: prompt)
+                try self.requireCurrentRun(generation)
+                let modelPrompt = self.promptForModel(
+                    prompt: prompt,
+                    screenContext: screenContext,
+                    coordinationNote: coordinationNote
+                )
+                await self.runPrompt(modelPrompt, generation: generation)
+            } catch is CancellationError {
+                await OpenClickyAgentFileLeaseCoordinator.shared.releaseLeases(for: sessionID)
+            } catch {
+                guard self.isCurrentRun(generation) else { return }
+                let text = Self.userFacingErrorMessage(from: error.localizedDescription)
+                self.lastErrorMessage = text
+                self.status = .failed(text)
+                self.progressStage = .failed
+                self.entries.append(CodexTranscriptEntry(role: .system, text: text))
+                await OpenClickyAgentFileLeaseCoordinator.shared.releaseLeases(for: sessionID)
+            }
         }
     }
 
@@ -573,11 +645,9 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
     func setModel(_ model: String) {
         let resolvedModel = OpenClickyModelCatalog.codexActionsModel(withID: model).id
         guard self.model != resolvedModel else { return }
-        self.model = resolvedModel
-        homeManager.model = resolvedModel
-        UserDefaults.standard.set(resolvedModel, forKey: "clickyCodexModel")
+        applyModel(resolvedModel)
 
-        if processManager.isRunning {
+        if processManager.isRunning || promptStartTask != nil || warmUpTask != nil {
             stop(reason: "model_changed")
         }
     }
@@ -595,6 +665,11 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
     }
 
     func stop(reason: String? = nil) {
+        runGeneration &+= 1
+        promptStartTask?.cancel()
+        promptStartTask = nil
+        warmUpTask?.cancel()
+        warmUpTask = nil
         queuedFollowUpPrompts.removeAll()
         pendingAssistantDeltaFlushTask?.cancel()
         pendingAssistantDeltaFlushTask = nil
@@ -604,14 +679,17 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
         hasInitializedProcess = false
         activeThreadID = nil
         currentAssistantEntryID = nil
+        currentLeasePaths = []
         status = .stopped
         progressStage = .idle
         Task { await OpenClickyAgentFileLeaseCoordinator.shared.releaseLeases(for: id) }
     }
 
-    private func runPrompt(_ prompt: String, didRetryCompatibilityFallback: Bool = false) async {
+    private func runPrompt(_ prompt: String, generation: UInt64, didRetryCompatibilityFallback: Bool = false) async {
         do {
-            try await ensureThread()
+            try requireCurrentRun(generation)
+            try await ensureThread(for: generation)
+            try requireCurrentRun(generation)
             guard let activeThreadID else {
                 throw CodexRPCError(message: "Codex thread did not start.")
             }
@@ -621,8 +699,11 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
             progressStage = .starting
             lastErrorMessage = nil
             UserDefaults.standard.set(model, forKey: "clickyCodexModel")
-            UserDefaults.standard.set(workingDirectoryPath, forKey: "clickyCodexWorkingDirectory")
+            if !usesRestrictedExecutionPolicy {
+                UserDefaults.standard.set(workingDirectoryPath, forKey: "clickyCodexWorkingDirectory")
+            }
 
+            try requireCurrentRun(generation)
             _ = try await processManager.sendRequest(method: "turn/start", params: [
                 "threadId": activeThreadID,
                 "input": [[
@@ -631,16 +712,19 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
                     "text_elements": []
                 ]],
                 "cwd": workingDirectoryPath,
-                "approvalPolicy": "never",
-                "sandbox": "danger-full-access",
+                "approvalPolicy": executionApprovalPolicy,
+                "sandbox": executionSandboxMode,
                 "model": model,
                 "effort": homeManager.reasoningEffort,
                 "config": [
-                    "approval_policy": "never",
-                    "sandbox_mode": "danger-full-access"
+                    "approval_policy": executionApprovalPolicy,
+                    "sandbox_mode": executionSandboxMode
                 ]
             ])
+        } catch is CancellationError {
+            return
         } catch {
+            guard isCurrentRun(generation) else { return }
             let text = Self.userFacingErrorMessage(from: error.localizedDescription)
             if text == "Codex app-server stopped.",
                lastErrorMessage?.contains("terminal xcodebuild") == true {
@@ -655,8 +739,9 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
                     role: .system,
                     text: "Codex rejected \(requestedModel) with this runtime, so OpenClicky is retrying with \(Self.codexRuntimeCompatibilityFallbackModel)."
                 ))
-                setModel(Self.codexRuntimeCompatibilityFallbackModel)
-                await runPrompt(prompt, didRetryCompatibilityFallback: true)
+                applyModel(Self.codexRuntimeCompatibilityFallbackModel)
+                restartProcessForCompatibilityFallback()
+                await runPrompt(prompt, generation: generation, didRetryCompatibilityFallback: true)
                 return
             }
 
@@ -664,6 +749,28 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
             status = .failed(text)
             progressStage = .failed
             entries.append(CodexTranscriptEntry(role: .system, text: text))
+        }
+    }
+
+    private func applyModel(_ resolvedModel: String) {
+        model = resolvedModel
+        homeManager.model = resolvedModel
+        UserDefaults.standard.set(resolvedModel, forKey: "clickyCodexModel")
+    }
+
+    private func restartProcessForCompatibilityFallback() {
+        processManager.stop()
+        hasInitializedProcess = false
+        activeThreadID = nil
+    }
+
+    private func isCurrentRun(_ generation: UInt64) -> Bool {
+        runGeneration == generation && !Task.isCancelled
+    }
+
+    private func requireCurrentRun(_ generation: UInt64) throws {
+        guard isCurrentRun(generation) else {
+            throw CancellationError()
         }
     }
 
@@ -728,7 +835,8 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
         """
     }
 
-    private func ensureThread() async throws {
+    private func ensureThread(for generation: UInt64) async throws {
+        try requireCurrentRun(generation)
         if processManager.isRunning, activeThreadID != nil {
             return
         }
@@ -750,18 +858,22 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
             )
             return try hm.prepare(bundle: .main)
         }
+        try requireCurrentRun(generation)
 
         let executable = try CodexRuntimeLocator.codexExecutableURL(bundle: .main)
         try await Task.detached(priority: .userInitiated) {
             try processManager.start(executableURL: executable, codexHome: preparedLayout.homeDirectory)
         }.value
+        try requireCurrentRun(generation)
 
         if !hasInitializedProcess {
             _ = try await processManager.initialize(clientName: "openclicky", title: "OpenClicky", version: "1.0.0")
+            try requireCurrentRun(generation)
             hasInitializedProcess = true
         }
 
-        try await ensureCodexAuthentication()
+        try await ensureCodexAuthentication(for: generation)
+        try requireCurrentRun(generation)
 
         let baseInstructions = (try? String(contentsOf: preparedLayout.modelInstructionsFile, encoding: .utf8))
             ?? "You are OpenClicky, a friendly macOS cursor companion with Codex Agent Mode."
@@ -803,8 +915,8 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
                 "model": model,
                 "modelProvider": modelProviderID,
                 "cwd": workingDirectoryPath,
-                "approvalPolicy": "never",
-                "sandbox": "danger-full-access",
+                "approvalPolicy": executionApprovalPolicy,
+                "sandbox": executionSandboxMode,
                 "config": [:],
                 "serviceName": "OpenClicky",
                 "baseInstructions": baseInstructions,
@@ -813,7 +925,11 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
                 "ephemeral": false,
                 "sessionStartSource": "startup"
             ])
+            try requireCurrentRun(generation)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
+            try requireCurrentRun(generation)
             let text = Self.userFacingErrorMessage(from: error.localizedDescription)
             if Self.shouldRetryWithCompatibilityFallback(text),
                model != Self.codexRuntimeCompatibilityFallbackModel {
@@ -822,8 +938,9 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
                     role: .system,
                     text: "Codex rejected \(requestedModel) during startup with this runtime, so OpenClicky is retrying with \(Self.codexRuntimeCompatibilityFallbackModel)."
                 ))
-                setModel(Self.codexRuntimeCompatibilityFallbackModel)
-                try await ensureThread()
+                applyModel(Self.codexRuntimeCompatibilityFallbackModel)
+                restartProcessForCompatibilityFallback()
+                try await ensureThread(for: generation)
                 return
             }
             throw error
@@ -839,7 +956,8 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
         }
     }
 
-    private func ensureCodexAuthentication() async throws {
+    private func ensureCodexAuthentication(for generation: UInt64) async throws {
+        try requireCurrentRun(generation)
         let modelProviderID = homeManager.modelProviderID
         guard modelProviderID == ClickyCodexConfigTemplate.defaultModelProviderID else { return }
         guard !codexConfigPrefersAPIKeyAuth() else { return }
@@ -847,6 +965,7 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
         let accountRead = try await processManager.sendRequest(method: "account/read", params: [
             "refreshToken": false
         ])
+        try requireCurrentRun(generation)
 
         if CodexJSON.dictionary(accountRead["account"]) != nil {
             return
@@ -855,6 +974,7 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
         let loginStart = try await processManager.sendRequest(method: "account/login/start", params: [
             "type": "chatgpt"
         ])
+        try requireCurrentRun(generation)
 
         if let authURLString = CodexJSON.string(loginStart["authUrl"]),
            let authURL = URL(string: authURLString) {
@@ -1153,7 +1273,8 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
         }
     }
 
-    private func buildAgentCoordinationNote(for prompt: String) async -> String? {
+    private func buildAgentCoordinationNote(for prompt: String) async throws -> String? {
+        try Task.checkCancellation()
         let mentionedPaths = Self.extractLikelyFilePaths(from: prompt)
         let leaseSummary: OpenClickyAgentFileLeaseCoordinator.LeaseSummary?
 
@@ -1162,7 +1283,8 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
             await OpenClickyAgentFileLeaseCoordinator.shared.releaseLeases(for: id)
             leaseSummary = nil
         } else {
-            let claimed = await OpenClickyAgentFileLeaseCoordinator.shared.claimPathsWaitingForRelease(mentionedPaths, for: id, title: title)
+            let claimed = try await OpenClickyAgentFileLeaseCoordinator.shared.claimPathsWaitingForRelease(mentionedPaths, for: id, title: title)
+            try Task.checkCancellation()
             currentLeasePaths = claimed.claimedPaths
             leaseSummary = claimed
         }
@@ -1173,6 +1295,7 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
         } else {
             activeClaims = await OpenClickyAgentFileLeaseCoordinator.shared.coordinationSnapshot(excluding: id)
         }
+        try Task.checkCancellation()
         let activeClaimsSection = activeClaims.isEmpty
             ? "  - No explicit file leases are currently registered by other OpenClicky agents."
             : "  - Files currently claimed by other OpenClicky agents:\n" + activeClaims.joined(separator: "\n")

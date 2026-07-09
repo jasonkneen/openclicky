@@ -31,7 +31,7 @@ nonisolated enum CodexRuntimeLocator {
         var errorDescription: String? {
             switch self {
             case .codexExecutableNotFound:
-                return "OpenClicky could not find a bundled, installed, or PATH Codex executable."
+                return "OpenClicky could not find its bundled Codex executable."
             }
         }
     }
@@ -47,6 +47,14 @@ nonisolated enum CodexRuntimeLocator {
         if let bundled = bundledCodexExecutableURL(bundle: bundle, fileManager: fileManager) {
             candidates.append(bundled)
         }
+
+        // Release builds execute only the runtime shipped inside the signed app
+        // bundle. Selecting a newer executable from PATH, a source checkout, or
+        // a user-writable Applications directory made a settings/runtime lookup
+        // into arbitrary-code execution. Developers can opt in explicitly for a
+        // local debug session; that escape hatch is compiled out of releases.
+        #if DEBUG
+        if developmentRuntimeOverridesEnabled {
         if let source = sourceCodexExecutableURL(fileManager: fileManager) {
             candidates.append(source)
         }
@@ -54,8 +62,16 @@ nonisolated enum CodexRuntimeLocator {
         if let pathCodex = pathCodexExecutableURL(fileManager: fileManager) {
             candidates.append(pathCodex)
         }
+        }
+        #endif
         return deduplicated(candidates)
     }
+
+    #if DEBUG
+    private static var developmentRuntimeOverridesEnabled: Bool {
+        ProcessInfo.processInfo.environment["OPENCLICKY_ALLOW_UNTRUSTED_CODEX_RUNTIME"] == "1"
+    }
+    #endif
 
     static func bundledCodexExecutableURL(bundle: Bundle = .main, fileManager: FileManager = .default) -> URL? {
         guard let runtime = bundle.url(forResource: "CodexRuntime", withExtension: nil) else { return nil }
@@ -223,9 +239,9 @@ nonisolated enum CodexRuntimeLocator {
         var seenPaths = Set<String>()
         var uniqueURLs: [URL] = []
         for url in urls {
-            let path = url.standardizedFileURL.path
+            let path = url.standardizedFileURL.resolvingSymlinksInPath().path
             guard seenPaths.insert(path).inserted else { continue }
-            uniqueURLs.append(url)
+            uniqueURLs.append(URL(fileURLWithPath: path, isDirectory: false))
         }
         return uniqueURLs
     }

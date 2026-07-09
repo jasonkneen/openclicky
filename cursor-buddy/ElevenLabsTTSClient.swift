@@ -1234,12 +1234,17 @@ protocol OpenClickyTTSClient: AnyObject {
     func beginStreamingResponse(onPlaybackStarted: @escaping @MainActor () -> Void) -> StreamingTTSSession
     func fetchSentenceSamples(_ text: String) async throws -> [Int16]
     func stopPlayback()
+    /// Cancels a bidirectional voice turn when the active provider supports
+    /// one. Ordinary one-shot TTS providers use the no-op default below.
+    func cancelBidirectionalVoiceTurn()
 }
 
 extension ElevenLabsTTSClient: OpenClickyTTSClient {}
 extension CartesiaTTSClient: OpenClickyTTSClient {}
 
 extension OpenClickyTTSClient {
+    func cancelBidirectionalVoiceTurn() {}
+
     /// Brief overload for callers that only need to say something with
     /// default options. Works around the protocol's inability to carry
     /// default-arg values through existentials.
@@ -1437,15 +1442,20 @@ final class DeepgramVoiceAgentClient {
     func finishBidirectionalVoiceTurn(
         routeUserTranscriptBeforeAssistantResponse: (@MainActor @Sendable (String) -> Bool)? = nil
     ) async throws -> BidirectionalVoiceTurnResult {
-        guard let activeTurn else { throw CancellationError() }
-        self.activeTurn = nil
+        guard let turn = activeTurn else { throw CancellationError() }
         do {
-            let result = try await activeTurn.finish(routeUserTranscriptBeforeAssistantResponse: routeUserTranscriptBeforeAssistantResponse)
-            stopPlayback(for: activeTurn)
+            let result = try await turn.finish(routeUserTranscriptBeforeAssistantResponse: routeUserTranscriptBeforeAssistantResponse)
+            if activeTurn === turn {
+                activeTurn = nil
+            }
+            stopPlayback(for: turn)
             return result
         } catch {
-            activeTurn.cancel()
-            stopPlayback(for: activeTurn)
+            turn.cancel()
+            if activeTurn === turn {
+                activeTurn = nil
+            }
+            stopPlayback(for: turn)
             throw error
         }
     }

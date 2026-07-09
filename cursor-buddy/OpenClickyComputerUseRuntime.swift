@@ -135,22 +135,12 @@ final class OpenClickyBackgroundComputerUseController: ObservableObject {
     private let installedAppURL: URL
     private let manifestURL: URL
 
-    /// Per-install random bearer token sent on every BCU HTTP request.
-    ///
-    /// SECURITY(C3): the bundled `BackgroundComputerUse` binary currently does
-    /// NOT validate any credential on its localhost HTTP action server, so any
-    /// same-user process that can read `runtime-manifest.json` can POST
-    /// `/v1/click` / `/v1/type_text` / `/v1/press_key` and synthesize
-    /// Accessibility-trusted, invisible input. Full remediation requires the
-    /// BCU binary to be rebuilt to validate this `Authorization: Bearer <token>`
-    /// header (or to bind a 0700 Unix-domain socket and check peer euid). Until
-    /// that binary ships, this header is a no-op server-side — but we send it
-    /// anyway so the contract is in place and enforced the moment a validating
-    /// binary is bundled, and so the token is available to pass to the spawned
-    /// process via `OPENCLICKY_BCU_CONTROL_TOKEN`.
-    private let controlToken: String
-
-    nonisolated private static let controlTokenDefaultsKey = "OpenClickyBCUControlToken"
+    /// The bundled helper exposes privileged Accessibility actions over an
+    /// unauthenticated localhost server. Its source is not included in this
+    /// checkout, so the Swift client cannot make that server safe by adding a
+    /// request header. Do not launch or use it until the helper is rebuilt with
+    /// server-side authentication (or a peer-authenticated Unix socket).
+    nonisolated private static let unsafeRuntimeMessage = "Background Computer Use is disabled because the bundled helper does not authenticate its privileged local control server. Install a rebuilt authenticated helper before enabling this backend."
 
     nonisolated private static let developmentSourceRootURL = URL(
         fileURLWithPath: "/Users/jkneen/Documents/GitHub/background-computer-use",
@@ -164,22 +154,6 @@ final class OpenClickyBackgroundComputerUseController: ObservableObject {
 
     nonisolated private static func bundledAppURL(in runtimeRootURL: URL) -> URL {
         runtimeRootURL.appendingPathComponent("BackgroundComputerUse.app", isDirectory: true)
-    }
-
-    /// Load the per-install control token from UserDefaults, or generate and
-    /// persist a fresh 256-bit random token on first launch. See `controlToken`
-    /// doc comment for the C3 remediation status.
-    nonisolated private static func loadOrCreateControlToken() -> String {
-        let defaults = UserDefaults.standard
-        if let existing = defaults.string(forKey: controlTokenDefaultsKey),
-           !existing.isEmpty {
-            return existing
-        }
-        var bytes = [UInt8](repeating: 0, count: 32)
-        let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-        let token = (status == errSecSuccess) ? Data(bytes).base64EncodedString() : UUID().uuidString + UUID().uuidString
-        defaults.set(token, forKey: controlTokenDefaultsKey)
-        return token
     }
 
     nonisolated private static func installedAppURL(fileManager: FileManager) -> URL {
@@ -208,7 +182,6 @@ final class OpenClickyBackgroundComputerUseController: ObservableObject {
         self.manifestURL = fileManager.temporaryDirectory
             .appendingPathComponent("background-computer-use", isDirectory: true)
             .appendingPathComponent("runtime-manifest.json", isDirectory: false)
-        self.controlToken = Self.loadOrCreateControlToken()
         self.status = Self.makeStatus(
             sourceRootURL: sourceRootURL,
             installedAppURL: installedAppURL,
@@ -240,6 +213,9 @@ final class OpenClickyBackgroundComputerUseController: ObservableObject {
         for app in apps {
             app.terminate()
         }
+        // Clear the legacy discoverable manifest as part of shutting down an
+        // older helper. It is not trusted as an authority for future launches.
+        try? fileManager.removeItem(at: manifestURL)
         status = Self.makeStatus(
             sourceRootURL: sourceRootURL,
             installedAppURL: installedAppURL,
@@ -251,120 +227,16 @@ final class OpenClickyBackgroundComputerUseController: ObservableObject {
     }
 
     func startRuntime() {
-        guard status.isStarting == false else { return }
-
-        status = Self.makeStatus(
-            sourceRootURL: sourceRootURL,
-            installedAppURL: installedAppURL,
-            manifestURL: manifestURL,
-            fileManager: fileManager,
-            isStarting: true,
-            lastErrorMessage: nil
-        )
-
-        let sourceRootURL = sourceRootURL
-        let installedAppURL = installedAppURL
-        let manifestURL = manifestURL
-        let fileManager = fileManager
-
-        Task.detached(priority: .userInitiated) {
-            let startScriptURL = sourceRootURL
-                .appendingPathComponent("script", isDirectory: true)
-                .appendingPathComponent("start.sh", isDirectory: false)
-            let bundledAppURL = Self.bundledAppURL(in: sourceRootURL)
-            let logDirectoryURL = fileManager.temporaryDirectory
-                .appendingPathComponent("background-computer-use", isDirectory: true)
-            let launchLogURL = logDirectoryURL
-                .appendingPathComponent("openclicky-launch.log", isDirectory: false)
-
-            do {
-                try fileManager.createDirectory(at: logDirectoryURL, withIntermediateDirectories: true)
-                fileManager.createFile(atPath: launchLogURL.path, contents: nil)
-                let logHandle = try FileHandle(forWritingTo: launchLogURL)
-                defer {
-                    try? logHandle.close()
-                }
-
-                let process = Process()
-                if fileManager.fileExists(atPath: bundledAppURL.path) {
-                    process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-                    process.arguments = [bundledAppURL.path]
-                    process.currentDirectoryURL = sourceRootURL
-                } else {
-                    process.executableURL = URL(fileURLWithPath: "/bin/bash")
-                    process.arguments = [startScriptURL.path]
-                    process.currentDirectoryURL = sourceRootURL
-                }
-                // Forward the control token to the spawned runtime via env so a
-                // rebuilt validating binary can read and enforce it. See
-                // SECURITY(C3) on `controlToken`.
-                var spawnEnvironment = ProcessInfo.processInfo.environment
-                spawnEnvironment["OPENCLICKY_BCU_CONTROL_TOKEN"] = await MainActor.run { self.controlToken }
-                process.environment = spawnEnvironment
-                process.standardOutput = logHandle
-                process.standardError = logHandle
-                try process.run()
-                process.waitUntilExit()
-
-                let launchError = process.terminationStatus == 0
-                    ? nil
-                    : "BackgroundComputerUse launch exited with status \(process.terminationStatus). See \(launchLogURL.path)"
-                await MainActor.run {
-                    self.status = Self.makeStatus(
-                        sourceRootURL: sourceRootURL,
-                        installedAppURL: installedAppURL,
-                        manifestURL: manifestURL,
-                        fileManager: fileManager,
-                        isStarting: false,
-                        lastErrorMessage: launchError
-                    )
-                }
-            } catch {
-                await MainActor.run {
-                    self.status = Self.makeStatus(
-                        sourceRootURL: sourceRootURL,
-                        installedAppURL: installedAppURL,
-                        manifestURL: manifestURL,
-                        fileManager: fileManager,
-                        isStarting: false,
-                        lastErrorMessage: error.localizedDescription
-                    )
-                }
-            }
-        }
+        // A client-side bearer token is not a security boundary when the
+        // server ignores it. Explicitly stop any legacy process instead of
+        // spawning a new unauthenticated Accessibility service.
+        stopRuntime()
     }
 
     func ensureRuntimeReady(timeoutSeconds: TimeInterval = 10) async throws {
+        _ = timeoutSeconds // Preserves the public signature while disabled.
         refreshStatus()
-        if status.isRuntimeReady {
-            return
-        }
-
-        guard status.sourceAvailable else {
-            throw OpenClickyBackgroundComputerUseError.runtimeUnavailable(status.summary)
-        }
-        guard status.startScriptAvailable else {
-            throw OpenClickyBackgroundComputerUseError.runtimeUnavailable(status.summary)
-        }
-
-        if status.isStarting == false {
-            startRuntime()
-        }
-
-        let deadline = Date().addingTimeInterval(timeoutSeconds)
-        while Date() < deadline {
-            try await Task.sleep(nanoseconds: 250_000_000)
-            refreshStatus()
-            if status.isRuntimeReady {
-                return
-            }
-            if let lastErrorMessage = status.lastErrorMessage,
-               !lastErrorMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                throw OpenClickyBackgroundComputerUseError.runtimeUnavailable(status.summary)
-            }
-        }
-
-        throw OpenClickyBackgroundComputerUseError.runtimeUnavailable(status.summary)
+        throw OpenClickyBackgroundComputerUseError.runtimeUnavailable(Self.unsafeRuntimeMessage)
     }
 
     func captureFrontmostWindowAsJPEG() async throws -> OpenClickyBackgroundComputerUseWindowCapture {
@@ -589,10 +461,6 @@ final class OpenClickyBackgroundComputerUseController: ObservableObject {
         var request = URLRequest(url: url, timeoutInterval: 8)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        // Forward-compatible auth: see `controlToken` / SECURITY(C3). The
-        // current bundled binary ignores this header; a rebuilt validating
-        // binary will enforce it. Sent on every request so the contract holds.
-        request.setValue("Bearer \(controlToken)", forHTTPHeaderField: "Authorization")
         request.httpBody = try JSONEncoder().encode(payload)
 
         do {
@@ -641,6 +509,7 @@ final class OpenClickyBackgroundComputerUseController: ObservableObject {
             )
             : nil
 
+        let effectiveErrorMessage = lastErrorMessage ?? Self.unsafeRuntimeMessage
         return OpenClickyBackgroundComputerUseStatus(
             sourceRootPath: sourceRootURL.path,
             sourceAvailable: sourceAvailable,
@@ -655,7 +524,7 @@ final class OpenClickyBackgroundComputerUseController: ObservableObject {
             instructionsReady: manifest?.instructions.ready,
             instructionsSummary: manifest?.instructions.summary,
             isStarting: isStarting,
-            lastErrorMessage: lastErrorMessage
+            lastErrorMessage: effectiveErrorMessage
         )
     }
 }

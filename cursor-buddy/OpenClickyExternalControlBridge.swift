@@ -2,6 +2,13 @@ import AppKit
 import Foundation
 import Network
 
+/// Keep the loopback bridge bounded before authentication and JSON decoding.
+/// The bridge may proxy multimodal inference payloads, so this retains the
+/// previous ten-megabyte total-request ceiling while rejecting oversized or
+/// malformed requests before any integer/range arithmetic occurs.
+private let openClickyExternalControlMaximumHeaderBytes = 32 * 1024
+private let openClickyExternalControlMaximumBodyBytes = 10 * 1024 * 1024
+
 /// Local-only bridge used by other apps/agents to display OpenClicky UI affordances
 /// without entering the normal voice/conversation/agent state machine.
 struct OpenClickyExternalCursorSpec {
@@ -159,12 +166,18 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
             var nextBuffer = buffer
             if let data { nextBuffer.append(data) }
 
-            if let request = HTTPRequest(data: nextBuffer) {
+            switch HTTPRequest.parse(nextBuffer) {
+            case .request(let request):
                 self.handle(request, on: connection)
                 return
+            case .malformed(let reason):
+                self.sendJSON(["ok": false, "error": reason], statusCode: 400, on: connection)
+                return
+            case .incomplete:
+                break
             }
 
-            if isComplete || nextBuffer.count > 10 * 1024 * 1024 {
+            if isComplete || nextBuffer.count > openClickyExternalControlMaximumHeaderBytes + openClickyExternalControlMaximumBodyBytes {
                 self.sendJSON(["ok": false, "error": "Malformed HTTP request"], statusCode: 400, on: connection)
                 return
             }
@@ -1154,6 +1167,12 @@ private struct MCPJSONRPCBridgeResponse {
 }
 
 private struct HTTPRequest {
+    enum ParseResult {
+        case incomplete
+        case malformed(String)
+        case request(HTTPRequest)
+    }
+
     let method: String
     let path: String
     let headers: [String: String]
@@ -1168,29 +1187,94 @@ private struct HTTPRequest {
         return dictionary
     }
 
-    init?(data: Data) {
-        guard let headerRange = data.range(of: Data("\r\n\r\n".utf8)) else { return nil }
+    private init(method: String, path: String, headers: [String: String], body: Data) {
+        self.method = method
+        self.path = path
+        self.headers = headers
+        self.body = body
+    }
+
+    static func parse(_ data: Data) -> ParseResult {
+        guard let headerRange = data.range(of: Data("\r\n\r\n".utf8)) else {
+            return data.count > openClickyExternalControlMaximumHeaderBytes
+                ? .malformed("HTTP request headers exceed the maximum size.")
+                : .incomplete
+        }
+        guard headerRange.lowerBound <= openClickyExternalControlMaximumHeaderBytes else {
+            return .malformed("HTTP request headers exceed the maximum size.")
+        }
         let headerData = data[..<headerRange.lowerBound]
-        guard let headerText = String(data: headerData, encoding: .utf8) else { return nil }
+        guard let headerText = String(data: headerData, encoding: .utf8) else {
+            return .malformed("HTTP request headers must be UTF-8.")
+        }
         let lines = headerText.components(separatedBy: "\r\n")
-        guard let requestLine = lines.first else { return nil }
+        guard let requestLine = lines.first else {
+            return .malformed("HTTP request line is missing.")
+        }
         let parts = requestLine.split(separator: " ", maxSplits: 2).map(String.init)
-        guard parts.count >= 2 else { return nil }
+        guard parts.count == 3,
+              !parts[0].isEmpty,
+              !parts[1].isEmpty,
+              parts[2].hasPrefix("HTTP/") else {
+            return .malformed("HTTP request line is invalid.")
+        }
 
         var headers: [String: String] = [:]
+        var sawContentLength = false
         for line in lines.dropFirst() {
-            guard let separator = line.firstIndex(of: ":") else { continue }
+            guard let separator = line.firstIndex(of: ":") else {
+                return .malformed("HTTP request header is invalid.")
+            }
             let key = line[..<separator].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             let value = line[line.index(after: separator)...].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !key.isEmpty else {
+                return .malformed("HTTP request header name is missing.")
+            }
+            if key == "content-length" {
+                guard !sawContentLength else {
+                    return .malformed("Multiple Content-Length headers are not allowed.")
+                }
+                sawContentLength = true
+            }
             headers[key] = value
         }
 
+        if let transferEncoding = headers["transfer-encoding"],
+           !transferEncoding.isEmpty,
+           transferEncoding.lowercased() != "identity" {
+            return .malformed("Transfer-Encoding is not supported.")
+        }
+
         let bodyStart = headerRange.upperBound
-        let contentLength = Int(headers["content-length"] ?? "0") ?? 0
-        guard data.count >= bodyStart + contentLength else { return nil }
-        self.method = parts[0].uppercased()
-        self.path = URLComponents(string: parts[1])?.path ?? parts[1]
-        self.headers = headers
-        self.body = data[bodyStart..<bodyStart + contentLength]
+        let contentLength: Int
+        if let declaredLength = headers["content-length"] {
+            guard !declaredLength.isEmpty,
+                  declaredLength.allSatisfy({ $0.isASCII && $0.isNumber }),
+                  let parsedLength = Int(declaredLength),
+                  parsedLength <= openClickyExternalControlMaximumBodyBytes else {
+                return .malformed("Content-Length is invalid or exceeds the maximum request size.")
+            }
+            contentLength = parsedLength
+        } else {
+            contentLength = 0
+        }
+
+        // `contentLength <= data.count - bodyStart` avoids both a negative
+        // range and integer overflow for attacker-controlled header values.
+        guard bodyStart <= data.count else {
+            return .malformed("HTTP request body offset is invalid.")
+        }
+        guard contentLength <= data.count - bodyStart else {
+            return .incomplete
+        }
+        let bodyEnd = bodyStart + contentLength
+        return .request(
+            HTTPRequest(
+                method: parts[0].uppercased(),
+                path: URLComponents(string: parts[1])?.path ?? parts[1],
+                headers: headers,
+                body: Data(data[bodyStart..<bodyEnd])
+            )
+        )
     }
 }

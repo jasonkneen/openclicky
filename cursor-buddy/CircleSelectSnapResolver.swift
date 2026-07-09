@@ -279,15 +279,22 @@ enum CircleSelectSnapResolver {
     }
 
     /// Ray-cast point-in-polygon for the freehand path (AppKit coords).
-    private static func pathContains(_ point: CGPoint, points: [CGPoint]) -> Bool {
+    ///
+    /// This stays internal so the geometry can be exercised independently of
+    /// Accessibility fixtures in focused tests.
+    static func pathContains(_ point: CGPoint, points: [CGPoint]) -> Bool {
         guard points.count >= 3 else { return false }
         var inside = false
         var j = points.count - 1
         for i in 0..<points.count {
             let pi = points[i]
             let pj = points[j]
-            let intersects = ((pi.y > point.y) != (pj.y > point.y))
-                && (point.x < (pj.x - pi.x) * (point.y - pi.y) / max(pj.y - pi.y, 0.0001) + pi.x)
+            let crossesHorizontalRay = (pi.y > point.y) != (pj.y > point.y)
+            // `crossesHorizontalRay` guarantees a non-zero denominator. Keep
+            // its sign: replacing a descending edge's denominator with a
+            // positive epsilon moves its intersection far off-screen.
+            let intersects = crossesHorizontalRay
+                && (point.x < (pj.x - pi.x) * (point.y - pi.y) / (pj.y - pi.y) + pi.x)
             if intersects { inside.toggle() }
             j = i
         }
@@ -353,14 +360,29 @@ enum CircleSelectSnapResolver {
         return CGRect(x: position.x, y: appKitY, width: size.width, height: size.height)
     }
 
+    /// Convert AX top-left Y + height into AppKit bottom-left Y using the
+    /// menu-bar display as the shared global-coordinate origin.
+    static func appKitY(
+        fromAXY axY: CGFloat,
+        height: CGFloat,
+        menuBarScreenMaxY: CGFloat
+    ) -> CGFloat {
+        menuBarScreenMaxY - axY - height
+    }
+
     /// Convert AX top-left Y + height into AppKit bottom-left Y.
     private static func globalAppKitY(fromAXY axY: CGFloat, height: CGFloat) -> CGFloat {
-        // Primary display top in AppKit is main.frame.maxY when origin is bottom-left.
-        // For multi-monitor, AX uses a global coordinate system with origin at the
-        // top-left of the primary display. Map via primary maxY.
-        let primaryMaxY = NSScreen.screens.map(\.frame.maxY).max()
+        // Accessibility coordinates use the top-left of the menu-bar display
+        // as their global origin. AppKit's global origin is the lower-left of
+        // that same display, so using the tallest/uppermost secondary screen
+        // would offset every AX/CG window on asymmetric multi-display setups.
+        let menuBarScreenMaxY = NSScreen.screens.first?.frame.maxY
             ?? NSScreen.main?.frame.maxY
             ?? 0
-        return primaryMaxY - axY - height
+        return appKitY(
+            fromAXY: axY,
+            height: height,
+            menuBarScreenMaxY: menuBarScreenMaxY
+        )
     }
 }

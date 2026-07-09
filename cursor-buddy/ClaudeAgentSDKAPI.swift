@@ -19,6 +19,7 @@ final class ClaudeAgentSDKAPI {
         let startedAt: Date
         let onTextChunk: @MainActor @Sendable (String) -> Void
         let continuation: ResponseContinuation
+        var timeoutTask: Task<Void, Never>?
         var accumulatedText: String
         var didReceiveFirstDelta: Bool
     }
@@ -49,6 +50,9 @@ final class ClaudeAgentSDKAPI {
     private var warmupRequestID: String?
     private var activeBridgeModel: String?
     private var activeBridgeSystemPromptHash: Int?
+    // Allows a cold bridge to start normally while ensuring a wedged SDK
+    // request cannot leave the voice lane suspended forever.
+    private static let requestTimeoutNanoseconds: UInt64 = 120_000_000_000
 
     init?(
         model: String = "claude-haiku-4-5",
@@ -147,6 +151,8 @@ final class ClaudeAgentSDKAPI {
                     userPrompt: "get ready. prime the OpenClicky voice response session and reply with ready only.",
                     onTextChunk: { _ in }
                 )
+            } catch is CancellationError {
+                return
             } catch {
                 OpenClickyMessageLogStore.shared.append(
                     lane: "voice",
@@ -187,6 +193,10 @@ final class ClaudeAgentSDKAPI {
     }
 
     func stop() {
+        stopBridge(failingPendingRequestsWith: CancellationError())
+    }
+
+    private func stopBridge(failingPendingRequestsWith error: Error) {
         let process = bridgeProcess
         bridgeProcess = nil
         process?.terminationHandler = nil
@@ -199,13 +209,7 @@ final class ClaudeAgentSDKAPI {
         activeBridgeModel = nil
         activeBridgeSystemPromptHash = nil
         terminateBridgeProcess(process)
-        failPendingRequests(
-            NSError(
-                domain: "ClaudeAgentSDKAPI",
-                code: -10,
-                userInfo: [NSLocalizedDescriptionKey: "Claude Agent SDK bridge stopped."]
-            )
-        )
+        failPendingRequests(error)
     }
 
     private func sendRequest(
@@ -218,6 +222,7 @@ final class ClaudeAgentSDKAPI {
         onTextChunk: @MainActor @Sendable @escaping (String) -> Void
     ) async throws -> (text: String, duration: TimeInterval) {
         try ensureBridge()
+        try Task.checkCancellation()
 
         let requestID = UUID().uuidString
         let attachments = images.map { image -> [String: Any] in
@@ -264,33 +269,43 @@ final class ClaudeAgentSDKAPI {
             ]
         )
 
-        // No per-request timeout. The Agent SDK needs as long as it
-        // needs — cold-start (Node + claude CLI spin-up + model warm)
-        // can run 10-30s on a fresh bridge, and we don't want HTTP
-        // hijacking the response just because the SDK is slow. If the
-        // bridge process dies, `handleBridgeTermination` fails pending
-        // requests; if the user truly wants to abandon, they can press
-        // push-to-talk again to interrupt.
-        return try await withCheckedThrowingContinuation { continuation in
-            pendingRequests[requestID] = PendingRequest(
-                id: requestID,
-                startedAt: Date(),
-                onTextChunk: onTextChunk,
-                continuation: continuation,
-                accumulatedText: "",
-                didReceiveFirstDelta: false
-            )
-            if kind == "warmup" {
-                warmupRequestID = requestID
+        return try await withTaskCancellationHandler(operation: { [weak self] in
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                guard let self else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+
+                self.pendingRequests[requestID] = PendingRequest(
+                    id: requestID,
+                    startedAt: Date(),
+                    onTextChunk: onTextChunk,
+                    continuation: continuation,
+                    timeoutTask: nil,
+                    accumulatedText: "",
+                    didReceiveFirstDelta: false
+                )
+                if kind == "warmup" {
+                    self.warmupRequestID = requestID
+                }
+                self.scheduleTimeout(for: requestID)
+
+                do {
+                    try self.writeBridgeCommand(payload)
+                } catch {
+                    self.failRequestIfPending(requestID: requestID, error: error)
+                }
             }
-            do {
-                try writeBridgeCommand(payload)
-            } catch {
-                pendingRequests.removeValue(forKey: requestID)
-                continuation.resume(throwing: error)
-                return
+        }, onCancel: { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.cancelRequestIfPending(requestID: requestID)
             }
-        }
+        })
     }
 
     private func ensureBridge() throws {
@@ -303,7 +318,13 @@ final class ClaudeAgentSDKAPI {
             return
         }
 
-        stop()
+        stopBridge(
+            failingPendingRequestsWith: NSError(
+                domain: "ClaudeAgentSDKAPI",
+                code: -10,
+                userInfo: [NSLocalizedDescriptionKey: "Claude Agent SDK bridge was reset for a new configuration."]
+            )
+        )
 
         guard let nodeExecutableURL else {
             throw NSError(
@@ -548,6 +569,7 @@ final class ClaudeAgentSDKAPI {
         case "result":
             guard let requestID,
                   let pending = pendingRequests.removeValue(forKey: requestID) else { return }
+            pending.timeoutTask?.cancel()
             let text = (event["text"] as? String) ?? pending.accumulatedText
             let duration = Date().timeIntervalSince(pending.startedAt)
             let logEvent = requestID == warmupRequestID ? "claude_agent_sdk.warmup.ready" : "claude_agent_sdk.query.response"
@@ -579,6 +601,8 @@ final class ClaudeAgentSDKAPI {
             )
             if let requestID,
                let pending = pendingRequests.removeValue(forKey: requestID) {
+                pending.timeoutTask?.cancel()
+                if requestID == warmupRequestID { warmupRequestID = nil }
                 pending.continuation.resume(throwing: error)
             } else {
                 failPendingRequests(error)
@@ -630,8 +654,56 @@ final class ClaudeAgentSDKAPI {
         )
     }
 
-    private func failRequestIfPending(requestID: String, error: Error) {
+    private func scheduleTimeout(for requestID: String) {
+        let timeoutTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: Self.requestTimeoutNanoseconds)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            self?.failRequestIfPending(
+                requestID: requestID,
+                error: NSError(
+                    domain: "ClaudeAgentSDKAPI",
+                    code: -40,
+                    userInfo: [NSLocalizedDescriptionKey: "Claude Agent SDK did not respond within two minutes."]
+                ),
+                tearDownBridge: true
+            )
+        }
+        guard var pending = pendingRequests[requestID] else {
+            timeoutTask.cancel()
+            return
+        }
+        pending.timeoutTask = timeoutTask
+        pendingRequests[requestID] = pending
+    }
+
+    private func cancelRequestIfPending(requestID: String) {
         guard let pending = pendingRequests.removeValue(forKey: requestID) else { return }
+        pending.timeoutTask?.cancel()
+        if requestID == warmupRequestID { warmupRequestID = nil }
+        OpenClickyMessageLogStore.shared.append(
+            lane: "voice",
+            direction: "internal",
+            event: "claude_agent_sdk.query.cancelled",
+            fields: [
+                "executor": "voice_response",
+                "executionMethod": "ClaudeAgentSDKAPI.query",
+                "requestID": requestID
+            ]
+        )
+        pending.continuation.resume(throwing: CancellationError())
+        // The bridge protocol has no per-request abort command. Rebuild it
+        // after interruption so a cancelled SDK query cannot emit a late
+        // result into the next voice turn.
+        stopBridge(failingPendingRequestsWith: CancellationError())
+    }
+
+    private func failRequestIfPending(requestID: String, error: Error, tearDownBridge: Bool = true) {
+        guard let pending = pendingRequests.removeValue(forKey: requestID) else { return }
+        pending.timeoutTask?.cancel()
         if requestID == warmupRequestID { warmupRequestID = nil }
         OpenClickyMessageLogStore.shared.append(
             lane: "voice",
@@ -646,10 +718,13 @@ final class ClaudeAgentSDKAPI {
                 "error": error.localizedDescription
             ]
         )
-        print("⚠️ ClaudeAgentSDKAPI: request \(requestID) timed out — \(error.localizedDescription)")
+        print("ClaudeAgentSDKAPI: request \(requestID) failed — \(error.localizedDescription)")
         pending.continuation.resume(throwing: error)
-        // Bridge is hung — tear it down so the next call rebuilds it fresh.
-        stop()
+        if tearDownBridge {
+            // A timed-out request leaves the bridge's state unknown. Tear it
+            // down so the next call cannot inherit a stuck session.
+            stopBridge(failingPendingRequestsWith: error)
+        }
     }
 
     private func failPendingRequests(_ error: Error) {
@@ -657,6 +732,7 @@ final class ClaudeAgentSDKAPI {
         pendingRequests.removeAll()
         warmupRequestID = nil
         for request in requests {
+            request.timeoutTask?.cancel()
             request.continuation.resume(throwing: error)
         }
     }

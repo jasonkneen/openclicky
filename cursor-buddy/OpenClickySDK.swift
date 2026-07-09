@@ -66,6 +66,15 @@ public final class OpenClickySDKSession: ObservableObject {
         self.manager = CompanionManager(runtimeMode: runtimeMode)
     }
 
+    deinit {
+        // Embedding hosts are not required to remember an additional cleanup
+        // call when their owning SwiftUI view/session is released.
+        let manager = manager
+        Task { @MainActor in
+            manager.stop()
+        }
+    }
+
     public func start() {
         guard !isStarted else { return }
         manager.start()
@@ -78,7 +87,9 @@ public final class OpenClickySDKSession: ObservableObject {
     }
 
     public func stop() {
-        guard isStarted else { return }
+        // CompanionManager.stop() is deliberately idempotent. Always forward
+        // the request so an embedding host can clean up an in-flight runtime
+        // even if its own `isStarted` bookkeeping was reset first.
         manager.stop()
         isStarted = false
     }
