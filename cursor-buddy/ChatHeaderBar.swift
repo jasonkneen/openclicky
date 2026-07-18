@@ -126,6 +126,9 @@ struct ChatHeaderBar: View {
 
   private var modelMenu: some View {
     Menu {
+      Section("Apple") {
+        ForEach(appleOptions, id: \.id) { opt in modelButton(opt) }
+      }
       Section("Claude Agent SDK") {
         ForEach(claudeOptions, id: \.id) { opt in modelButton(opt) }
       }
@@ -168,10 +171,14 @@ struct ChatHeaderBar: View {
 
   private var currentModelLabel: String {
     let id = session.model
-    if let match = (claudeOptions + codexOptions).first(where: { $0.id == id }) {
+    if let match = (appleOptions + claudeOptions + codexOptions).first(where: { $0.id == id }) {
       return match.label
     }
     return id
+  }
+
+  private var appleOptions: [OpenClickyModelOption] {
+    OpenClickyModelCatalog.voiceResponseModels.filter { $0.provider == .apple }
   }
 
   private var claudeOptions: [OpenClickyModelOption] {
@@ -183,8 +190,15 @@ struct ChatHeaderBar: View {
   }
 
   private func selectModel(_ id: String) {
+    // Agent Mode stays Codex-only for task execution; chat header model still
+    // updates the HUD session label. Voice backend family is set separately
+    // via the bubble / notch selector.
     session.model = id
     UserDefaults.standard.set(id, forKey: "clickyCodexModel")
+    if OpenClickyModelCatalog.voiceResponseModel(withID: id).provider == .apple
+        || OpenClickyModelCatalog.voiceResponseModel(withID: id).provider == .anthropic {
+      companion.setSelectedModel(id)
+    }
   }
 
   private func iconButton(systemName: String, help: String, action: @escaping () -> Void) -> some View {

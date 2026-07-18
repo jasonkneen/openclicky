@@ -249,6 +249,66 @@ struct OpenClickyComputerUseTests {
         #expect(OpenClickyModelCatalog.speechModels.contains { $0.id == "gpt-realtime-2.1-mini" })
     }
 
+    @Test func appleFoundationModelIsInVoiceCatalog() throws {
+        let apple = OpenClickyModelCatalog.voiceResponseModel(withID: OpenClickyModelCatalog.appleFoundationModelID)
+        #expect(apple.id == OpenClickyModelCatalog.appleFoundationModelID)
+        #expect(apple.provider == .apple)
+        #expect(apple.provider.voiceBackendFamily == .apple)
+        #expect(apple.maxOutputTokens >= 64_000)
+        #expect(OpenClickyVoiceBackendFamily.apple.defaultModelID == OpenClickyModelCatalog.appleFoundationModelID)
+        #expect(OpenClickyVoiceBackendFamily.claude.defaultModelID == "claude-haiku-4-5")
+        #expect(OpenClickyVoiceBackendFamily.codex.defaultModelID == OpenClickyModelCatalog.defaultCodexActionsModelID)
+        #expect(OpenClickyVoiceBackendFamily.allCases.count == 3)
+
+        let claudeDefault = OpenClickyModelCatalog.voiceResponseModel(withID: OpenClickyVoiceBackendFamily.claude.defaultModelID)
+        #expect(claudeDefault.provider == .anthropic)
+        #expect(claudeDefault.provider.voiceBackendFamily == .claude)
+
+        let codexDefault = OpenClickyModelCatalog.voiceResponseModel(withID: OpenClickyVoiceBackendFamily.codex.defaultModelID)
+        #expect(codexDefault.provider.voiceBackendFamily == .codex)
+
+        // Apple is offered in the settings response grid via responseVoiceModels.
+        #expect(OpenClickyModelCatalog.responseVoiceModels.contains { $0.id == OpenClickyModelCatalog.appleFoundationModelID })
+        #expect(!OpenClickyModelCatalog.isSpeechModelID(OpenClickyModelCatalog.appleFoundationModelID))
+    }
+
+    @Test func providerDiscoveryReturnsThreeFamilies() throws {
+        let rows = OpenClickyProviderDiscovery.availability()
+        #expect(rows.map(\.family) == [.apple, .codex, .claude])
+        for row in rows {
+            #expect(!row.statusLabel.isEmpty)
+            #expect(!row.detail.isEmpty)
+            #expect(OpenClickyProviderDiscovery.isAvailable(row.family) == row.isAvailable)
+        }
+    }
+
+    @Test func responseOverlayAutoHideCancelsPriorScheduleBeforeReschedule() throws {
+        var policy = ResponseOverlayAutoHidePolicy()
+        let first = policy.schedule(now: 0, holdSeconds: 6)
+        #expect(policy.isCurrent(first))
+        #expect(policy.shouldHide(now: 6, generation: first))
+
+        // Mid-stream chunk: cancel-before-schedule must invalidate the first hide.
+        let second = policy.schedule(now: 1.5, holdSeconds: 6)
+        #expect(second != first)
+        #expect(!policy.isCurrent(first))
+        #expect(!policy.shouldHide(now: 6, generation: first), "stale first-chunk hide must not fire")
+        #expect(policy.shouldHide(now: 7.5, generation: second))
+        #expect(!policy.shouldHide(now: 7.4, generation: second))
+
+        // updateStreamingText path: cancel alone keeps bubble open with no pending hide.
+        policy.cancel()
+        #expect(policy.scheduledHideAt == nil)
+        #expect(!policy.shouldHide(now: 100, generation: second))
+    }
+
+    @Test func responseOverlayAutoHideDefaultHoldIsLongerThanIdleCaptionClear() throws {
+        // Cursor caption clears at ~1.2s on voice idle; interactive bubble must
+        // outlive that so the provider selector remains usable (criterion 3).
+        #expect(ResponseOverlayAutoHidePolicy.defaultHoldSeconds > 1.2)
+        #expect(ResponseOverlayAutoHidePolicy.defaultHoldSeconds >= 6)
+    }
+
     @Test func retiredRealtimeTwoAliasMigratesToCurrentMiniDefault() throws {
         #expect(OpenClickyModelCatalog.normalizedModelID("gpt-realtime-2") == "gpt-realtime-2.1-mini")
         #expect(OpenClickyModelCatalog.voiceResponseModel(withID: "gpt-realtime-2").id == "gpt-realtime-2.1-mini")

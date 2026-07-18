@@ -1,6 +1,7 @@
 import Foundation
 
 nonisolated enum OpenClickyModelProvider: String, Equatable {
+    case apple
     case anthropic
     case openAI
     case codex
@@ -8,6 +9,8 @@ nonisolated enum OpenClickyModelProvider: String, Equatable {
 
     var displayName: String {
         switch self {
+        case .apple:
+            return "Apple"
         case .anthropic:
             return "Anthropic"
         case .openAI:
@@ -16,6 +19,58 @@ nonisolated enum OpenClickyModelProvider: String, Equatable {
             return "Codex"
         case .deepgram:
             return "Deepgram"
+        }
+    }
+
+    /// Coarse family used by the bubble / notch provider selector.
+    /// Realtime speech and Deepgram stay outside this three-way switch.
+    var voiceBackendFamily: OpenClickyVoiceBackendFamily? {
+        switch self {
+        case .apple:
+            return .apple
+        case .anthropic:
+            return .claude
+        case .codex:
+            return .codex
+        case .openAI:
+            return .codex
+        case .deepgram:
+            return nil
+        }
+    }
+}
+
+/// Terminal-first voice backend family: Apple on-device, local Codex, or Claude Agent SDK.
+nonisolated enum OpenClickyVoiceBackendFamily: String, CaseIterable, Equatable, Sendable {
+    case apple
+    case codex
+    case claude
+
+    var displayName: String {
+        switch self {
+        case .apple: return "Apple"
+        case .codex: return "Codex"
+        case .claude: return "Claude"
+        }
+    }
+
+    var shortLabel: String {
+        switch self {
+        case .apple: return "A"
+        case .codex: return "X"
+        case .claude: return "C"
+        }
+    }
+
+    /// Default catalog model id when the user picks this family in the bubble selector.
+    var defaultModelID: String {
+        switch self {
+        case .apple:
+            return OpenClickyModelCatalog.appleFoundationModelID
+        case .codex:
+            return OpenClickyModelCatalog.defaultCodexActionsModelID
+        case .claude:
+            return "claude-haiku-4-5"
         }
     }
 }
@@ -41,6 +96,8 @@ nonisolated enum OpenClickyModelCatalog {
     /// background work to the configured Codex model.
     static let defaultVoiceResponseModelID = defaultSpeechModelID
     static let defaultCodexActionsModelID = "gpt-5.5"
+    /// On-device Apple Foundation Models (macOS 26+ / Apple Intelligence).
+    static let appleFoundationModelID = "apple-foundation"
     /// Text/vision model used when a live speech model needs screenshots,
     /// attachments, or Codex fallback. Realtime IDs stay on the audio path.
     static let defaultVoiceAnalysisModelID = defaultCodexActionsModelID
@@ -65,6 +122,7 @@ nonisolated enum OpenClickyModelCatalog {
         // Voice turns should still be concise by prompt, but never by a
         // hard generation ceiling. Long spoken explanations can stream
         // sentence-by-sentence through TTS without being cut off.
+        OpenClickyModelOption(id: appleFoundationModelID, label: "Apple On-Device", provider: .apple, maxOutputTokens: 64_000),
         OpenClickyModelOption(id: "claude-haiku-4-5", label: "Claude Haiku", provider: .anthropic, maxOutputTokens: 64_000),
         OpenClickyModelOption(id: "claude-sonnet-4-6", label: "Claude Sonnet", provider: .anthropic, maxOutputTokens: 64_000),
         OpenClickyModelOption(id: "claude-opus-4-6", label: "Claude Opus", provider: .anthropic, maxOutputTokens: 128_000),

@@ -1089,6 +1089,14 @@ extension CompanionManager {
         applyVoiceResponseModelSettings(selectedVoiceResponseModel)
 
         switch selectedVoiceResponseModel.provider {
+        case .apple:
+            return try await AppleFoundationModelsVoiceClient.analyzeVoiceResponse(
+                images: images,
+                systemPrompt: systemPrompt,
+                conversationHistory: conversationHistory,
+                userPrompt: userPrompt,
+                onTextChunk: onTextChunk
+            )
         case .anthropic:
             return try await analyzeClaudeResponse(
                 images: images,
@@ -1613,7 +1621,7 @@ extension CompanionManager {
             return .codexCLI
         case .openAI:
             return .openAIResponses
-        case .deepgram:
+        case .apple, .deepgram:
             return .unsupported
         }
     }
@@ -1657,7 +1665,7 @@ extension CompanionManager {
                 displayWidthInPoints: targetScreenCapture.displayWidthInPoints,
                 displayHeightInPoints: targetScreenCapture.displayHeightInPoints
             )
-        case .openAI, .deepgram:
+        case .apple, .openAI, .deepgram:
             return
         }
 

@@ -1133,35 +1133,44 @@ struct BlueCursorView: View {
 
     @ViewBuilder
     private func externalCaption(_ caption: String, at position: CGPoint, color: Color) -> some View {
+        let providerBadge = companionManager.selectedVoiceBackendFamily?.displayName
         let bubblePosition = anchoredBubblePosition(
             for: position,
-            bubbleSize: estimatedExternalCaptionBubbleSize(for: caption),
+            bubbleSize: estimatedExternalCaptionBubbleSize(for: caption, providerBadge: providerBadge),
             horizontalOffset: 12,
             verticalOffset: 20
         )
 
-        Text(caption)
-            .font(OpenClickyResponseCaptionFont.resolved(voiceResponseCaptionFontRawValue).swiftUIFont(size: 11, weight: .semibold))
-            .foregroundColor(captionBubbleTextColor)
-            .lineLimit(5)
-            .multilineTextAlignment(.leading)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
-            .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(captionBubbleBackgroundColor.opacity(normalizedVoiceResponseCaptionOpacity))
-                    .shadow(color: captionBubbleShadowColor.opacity(normalizedVoiceResponseCaptionOpacity), radius: 8, x: 0, y: 2)
-            )
-            .frame(maxWidth: 340, alignment: .leading)
-            .fixedSize(horizontal: false, vertical: true)
-            .position(x: bubblePosition.x, y: bubblePosition.y)
-            .transition(.opacity)
-            .transaction { transaction in
-                transaction.animation = nil
+        VStack(alignment: .leading, spacing: 3) {
+            if let providerBadge {
+                Text(providerBadge)
+                    .font(.system(size: 8, weight: .heavy, design: .rounded))
+                    .foregroundColor(captionBubbleTextColor.opacity(0.55))
+                    .tracking(0.4)
             }
+            Text(caption)
+                .font(OpenClickyResponseCaptionFont.resolved(voiceResponseCaptionFontRawValue).swiftUIFont(size: 11, weight: .semibold))
+                .foregroundColor(captionBubbleTextColor)
+                .lineLimit(5)
+                .multilineTextAlignment(.leading)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(captionBubbleBackgroundColor.opacity(normalizedVoiceResponseCaptionOpacity))
+                .shadow(color: captionBubbleShadowColor.opacity(normalizedVoiceResponseCaptionOpacity), radius: 8, x: 0, y: 2)
+        )
+        .frame(maxWidth: 340, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+        .position(x: bubblePosition.x, y: bubblePosition.y)
+        .transition(.opacity)
+        .transaction { transaction in
+            transaction.animation = nil
+        }
     }
 
-    private func estimatedExternalCaptionBubbleSize(for caption: String) -> CGSize {
+    private func estimatedExternalCaptionBubbleSize(for caption: String, providerBadge: String? = nil) -> CGSize {
         let trimmed = caption.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return CGSize(width: 72, height: 28) }
 
@@ -1172,7 +1181,8 @@ struct BlueCursorView: View {
         let rawWidth = CGFloat(trimmed.count) * averageGlyphWidth + horizontalPadding
         let width = min(max(rawWidth, minWidth), maxWidth)
         let lineCount = max(1, Int(ceil(rawWidth / maxWidth)))
-        let height = CGFloat(min(lineCount, 5)) * 15 + 10
+        let badgeHeight: CGFloat = providerBadge == nil ? 0 : 12
+        let height = CGFloat(min(lineCount, 5)) * 15 + 10 + badgeHeight
         return CGSize(width: width, height: height)
     }
 

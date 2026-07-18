@@ -280,6 +280,10 @@ extension OpenClickyNotchPanelView {
                 systemImageName: activeVoiceIcon,
                 color: activeVoiceAccent
             )
+
+            // Terminal-first backend family: Apple / Codex / Claude with auto-discovery.
+            OpenClickyVoiceBackendSelector(companion: companionManager, style: .compact)
+                .help("Voice backend: Apple on-device, Codex, or Claude Agent SDK")
         }
         .padding(.leading, 2)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)

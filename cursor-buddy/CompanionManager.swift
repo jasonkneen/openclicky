@@ -624,8 +624,10 @@ final class CompanionManager: ObservableObject {
     private var circleSelectLivePartialTranscript: String = ""
     let circleSelectSession = CircleSelectSession()
     @Published private(set) var agentDockItems: [ClickyAgentDockItem] = []
-    // Response text is now displayed inline on the cursor overlay via
-    // streamingResponseText, so no separate response overlay manager is needed.
+    /// Cursor-following speech bubble with Apple/Codex/Claude selector chips.
+    /// Caption text still mirrors onto the full-screen cursor overlay when
+    /// voice-response captions are enabled; this panel is the interactive path.
+    let responseOverlayManager = CompanionResponseOverlayManager()
 
     /// Anthropic API key for direct Claude requests.
     /// Environment fallback supports Xcode schemes and local launch scripts.
@@ -1818,6 +1820,9 @@ final class CompanionManager: ObservableObject {
 
         applyVoiceResponseModelSettings(selectedVoiceResponseModel)
         switch selectedVoiceResponseModel.provider {
+        case .apple:
+            // On-device — nothing to warm.
+            break
         case .anthropic:
             // SDK is the primary Claude path — warm it whenever available.
             claudeAgentSDKAPI?.warmUp(systemPrompt: currentVoiceResponseSystemPrompt())
@@ -1828,6 +1833,22 @@ final class CompanionManager: ObservableObject {
         case .deepgram:
             deepgramVoiceAgentClient.warmUpConnection()
         }
+    }
+
+    /// Coarse family for the bubble / notch selector (Apple / Codex / Claude).
+    var selectedVoiceBackendFamily: OpenClickyVoiceBackendFamily? {
+        let model = OpenClickyModelCatalog.voiceResponseModel(withID: selectedModel)
+        if OpenClickyModelCatalog.isSpeechModelID(model.id) {
+            return nil
+        }
+        return model.provider.voiceBackendFamily
+    }
+
+    /// Select a terminal-first backend family, mapping to its default model.
+    /// Unavailable families are ignored so selection stays discovery-gated.
+    func setSelectedVoiceBackendFamily(_ family: OpenClickyVoiceBackendFamily) {
+        guard OpenClickyProviderDiscovery.isAvailable(family) else { return }
+        setSelectedModel(family.defaultModelID)
     }
 
     func setSelectedComputerUseModel(_ model: String) {
@@ -1842,6 +1863,8 @@ final class CompanionManager: ObservableObject {
 
     func applyVoiceResponseModelSettings(_ modelOption: OpenClickyModelOption) {
         switch modelOption.provider {
+        case .apple:
+            break
         case .anthropic:
             claudeAPI.model = modelOption.id
             claudeAPI.maxOutputTokens = modelOption.maxOutputTokens
@@ -2259,6 +2282,8 @@ final class CompanionManager: ObservableObject {
         }
         let selectedVoiceResponseModel = OpenClickyModelCatalog.voiceResponseModel(withID: selectedModel)
         switch selectedVoiceResponseModel.provider {
+        case .apple:
+            break
         case .anthropic:
             // SDK is the primary Claude path — warm it whenever available.
             if let claudeAgentSDKAPI {
@@ -4216,6 +4241,12 @@ final class CompanionManager: ObservableObject {
         }
 
         switch executionModel.provider {
+        case .apple:
+            fields["executionMethod"] = "AppleFoundationModelsVoiceClient.analyzeVoiceResponse"
+            fields["authMode"] = "apple_foundation_models"
+            fields["transport"] = "on_device"
+            fields["streamingMethod"] = "language_model_session_respond"
+            fields["provider"] = "apple_foundation_models"
         case .anthropic:
             if AppBundleConfiguration.anthropicAPIKey() != nil {
                 fields["executionMethod"] = "ClaudeAPI.analyzeImageStreaming"
@@ -4756,7 +4787,7 @@ final class CompanionManager: ObservableObject {
                     "inputPath": activeRealtimeInputPath
                 ]
             )
-            clearVoiceResponseCaption()
+            clearVoiceResponseCaptionAndInteractiveBubble()
             currentAudioPowerLevel = 0
             voiceState = .idle
         }
@@ -5194,7 +5225,7 @@ final class CompanionManager: ObservableObject {
         pendingRealtimeBidirectionalFinishSource = nil
         realtimeBidirectionalVoiceCaptureStartedAt = nil
         realtimeBidirectionalVoiceStartedAsInterrupt = false
-        clearVoiceResponseCaption()
+        clearVoiceResponseCaptionAndInteractiveBubble()
         currentAudioPowerLevel = 0
         wakeWordAudioDucker.restore(reason: "realtime_released_\(reason)")
         voiceState = .idle
@@ -9727,7 +9758,7 @@ final class CompanionManager: ObservableObject {
         visualGuidanceOverlayClearTasks.values.forEach { $0.cancel() }
         visualGuidanceOverlayClearTasks.removeAll()
         cursorOverlayState.visualGuidanceOverlays.removeAll()
-        clearVoiceResponseCaption()
+        clearVoiceResponseCaptionAndInteractiveBubble()
         latestVoiceResponseCard = nil
 
         speakShortSystemResponse(
@@ -15069,7 +15100,7 @@ final class CompanionManager: ObservableObject {
         openAIRealtimeSpeechClient.stopPlayback()
         deepgramVoiceAgentClient.stopPlayback()
         voiceTTSClient.stopPlayback()
-        clearVoiceResponseCaption()
+        clearVoiceResponseCaptionAndInteractiveBubble()
         if !buddyDictationManager.isDictationInProgress {
             currentAudioPowerLevel = 0
             voiceState = .idle
@@ -15451,8 +15482,14 @@ final class CompanionManager: ObservableObject {
     }
 
     func updateVoiceResponseCaption(_ text: String, force: Bool = false) {
-        guard force || voiceResponseCaptionsEnabled else { return }
+        // Interactive bubble always tracks spoken replies so the provider
+        // selector is reachable without opening Settings.
         let caption = Self.voiceResponseCaptionText(from: text)
+        if !caption.isEmpty {
+            presentInteractiveResponseBubble(with: caption)
+        }
+
+        guard force || voiceResponseCaptionsEnabled else { return }
         guard !caption.isEmpty else { return }
         externalProxyClearTask?.cancel()
         externalProxyClearTask = nil
@@ -15461,11 +15498,34 @@ final class CompanionManager: ObservableObject {
         cursorOverlayState.externalPrimaryCaptionAccentHex = nil
     }
 
+    /// Show/update the interactive provider bubble. Mid-stream updates cancel
+    /// any pending auto-hide; a fresh hold is scheduled after each update so
+    /// only inactivity (not an earlier chunk's timer) can dismiss it.
+    private func presentInteractiveResponseBubble(with caption: String) {
+        responseOverlayManager.bind(companion: self)
+        if !responseOverlayManager.isVisible {
+            responseOverlayManager.showOverlayAndBeginStreaming(clearText: true)
+        }
+        // updateStreamingText cancels any pending hide from prior chunks.
+        responseOverlayManager.updateStreamingText(caption)
+        // Reschedule hold from this latest chunk only (cancel-before-schedule).
+        responseOverlayManager.finishStreaming(holdSeconds: ResponseOverlayAutoHidePolicy.defaultHoldSeconds)
+    }
+
+    /// Clears the cursor-following caption only. Does NOT dismiss the interactive
+    /// provider-selector bubble — that has its own longer auto-hide hold so the
+    /// user can still switch Apple/Codex/Claude after speech ends.
     private func clearVoiceResponseCaption() {
         externalProxyClearTask?.cancel()
         externalProxyClearTask = nil
         cursorOverlayState.externalPrimaryCaptionText = nil
         cursorOverlayState.externalPrimaryCaptionAccentHex = nil
+    }
+
+    /// Hard dismiss for interrupt/cancel paths — drops cursor caption and bubble.
+    private func clearVoiceResponseCaptionAndInteractiveBubble() {
+        clearVoiceResponseCaption()
+        responseOverlayManager.hideOverlay()
     }
 
     func scheduleVoiceResponseCaptionClear(after delay: TimeInterval = 2.2) {
@@ -15477,6 +15537,7 @@ final class CompanionManager: ObservableObject {
             try? await Task.sleep(nanoseconds: nanoseconds)
             await MainActor.run {
                 guard let self, self.cursorOverlayState.externalPrimaryCaptionText == currentCaption else { return }
+                // Cursor caption only — keep the interactive bubble alive for its own hold.
                 self.clearVoiceResponseCaption()
             }
         }
@@ -15584,10 +15645,10 @@ final class CompanionManager: ObservableObject {
                             extra: fields
                         )
                     }
-                    self.clearVoiceResponseCaption()
+                    self.clearVoiceResponseCaptionAndInteractiveBubble()
                     return
                 }
-                self.clearVoiceResponseCaption()
+                self.clearVoiceResponseCaptionAndInteractiveBubble()
                 speakResponseFailureFallback(error)
                 if let route {
                     var stageFields = extra

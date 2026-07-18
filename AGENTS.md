@@ -55,12 +55,14 @@ Do not introduce a hard dependency on a Cloudflare Worker for the final app.
 
 Two independent layers — keep them straight:
 
-1. **Provider selection (driven by Settings).** Every model in `OpenClickyModelCatalog` carries a `provider` (`.anthropic` / `.openAI` / `.codex` / `.deepgram`). `CompanionManager.analyzeVoiceResponse` and the element-pointing path switch on the selected model's provider to choose the backend family:
+1. **Provider selection (driven by Settings + bubble/notch selector).** Every model in `OpenClickyModelCatalog` carries a `provider` (`.apple` / `.anthropic` / `.openAI` / `.codex` / `.deepgram`). `CompanionManager.analyzeVoiceResponse` and the element-pointing path switch on the selected model's provider to choose the backend family:
+   - `.apple` -> on-device Apple Foundation Models (`AppleFoundationModelsVoiceClient`; free, no API key; text-only)
    - `.anthropic` -> Claude (`ClaudeAgentSDKAPI` then `ClaudeAPI`)
-   - `.openAI` -> `OpenAIAPI`
+   - `.openAI` -> `OpenAIAPI` (with Codex app-server first for non-speech models)
    - `.codex` -> `CodexVoiceSession` / `CodexPointDetector` (selecting e.g. `gpt-5.5` means Codex handles it)
    - `.deepgram` -> Deepgram Voice Agent
-2. **Within-provider ordering (money rule).** For the Claude branch, the Claude Agent SDK is the PRIMARY path because it uses the local Claude Code sign-in already paid for. Direct `ClaudeAPI` HTTP is FALLBACK ONLY (SDK nil or throws). Never short-circuit to direct REST for latency or capability reasons — direct REST bills per token. The OpenAI/Codex branch follows the same shape: Codex app server first, OpenAI key fallback. EXEMPTION: realtime speech models (`gpt-realtime-2.1-mini` default, `gpt-realtime-2.1`, `gpt-realtime-1.5`; legacy `gpt-realtime-2` aliases to mini) use the direct Realtime API path only.
+   Coarse family chips (Apple / Codex / Claude) live on the response bubble and notch via `OpenClickyVoiceBackendSelector` + `OpenClickyProviderDiscovery` (auto-detect installed CLI / on-device availability — do not package runtimes).
+2. **Within-provider ordering (money rule).** For the Claude branch, the Claude Agent SDK is the PRIMARY path because it uses the local Claude Code sign-in already paid for. Direct `ClaudeAPI` HTTP is FALLBACK ONLY (SDK nil or throws). Never short-circuit to direct REST for latency or capability reasons — direct REST bills per token. The OpenAI/Codex branch follows the same shape: Codex app server first, OpenAI key fallback. Apple is always free/local. EXEMPTION: realtime speech models (`gpt-realtime-2.1-mini` default, `gpt-realtime-2.1`, `gpt-realtime-1.5`; legacy `gpt-realtime-2` aliases to mini) use the direct Realtime API path only.
 
 Do not delete `ClaudeAPI.swift` or the HTTP path — it is the deliberate fallback. Before editing any Claude/OpenAI call site, confirm the order is SDK/app-server -> key fallback.
 

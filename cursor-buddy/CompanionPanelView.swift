@@ -409,6 +409,18 @@ struct CompanionPanelView: View {
                 detail: isClaudeCodeDetected ? "Detected for local Claude Code sign-in reuse." : "Not detected. Anthropic key setup stays in Advanced Providers.",
                 status: isClaudeCodeDetected ? "Detected" : "Optional"
             )
+
+            firstRunSetupRow(
+                systemImageName: "apple.logo",
+                title: "Apple On-Device",
+                detail: isAppleFoundationDetected
+                    ? "Apple Intelligence is ready for private on-device replies."
+                    : "Requires macOS 26 with Apple Intelligence. Optional — use Claude or Codex instead.",
+                status: isAppleFoundationDetected ? "Ready" : "Optional"
+            )
+
+            OpenClickyVoiceBackendSelector(companion: companionManager, style: .panel)
+                .padding(.top, 2)
         }
         .padding(10)
         .background(
@@ -432,11 +444,15 @@ struct CompanionPanelView: View {
     }
 
     private var isCodexRuntimeDetected: Bool {
-        !CodexRuntimeLocator.codexExecutableCandidates().isEmpty
+        OpenClickyProviderDiscovery.codexAvailability().isAvailable
     }
 
     private var isClaudeCodeDetected: Bool {
-        ClaudeAgentSDKAPI.findExecutable() != nil
+        OpenClickyProviderDiscovery.claudeAvailability().isAvailable
+    }
+
+    private var isAppleFoundationDetected: Bool {
+        OpenClickyProviderDiscovery.appleAvailability().isAvailable
     }
 
     private func firstRunSetupRow(
