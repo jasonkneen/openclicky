@@ -76,7 +76,9 @@ nonisolated enum CodexRuntimeLocator {
     static func bundledCodexExecutableURL(bundle: Bundle = .main, fileManager: FileManager = .default) -> URL? {
         guard let runtime = bundle.url(forResource: "CodexRuntime", withExtension: nil) else { return nil }
         let executable = runtime.appendingPathComponent("bin/codex", isDirectory: false)
-        return fileManager.isExecutableFile(atPath: executable.path) ? executable : nil
+        guard fileManager.isExecutableFile(atPath: executable.path),
+              wrapperHasVendoredCodexBinary(executable, fileManager: fileManager) else { return nil }
+        return executable
     }
 
     static func sourceCodexExecutableURL(fileManager: FileManager = .default) -> URL? {
@@ -84,7 +86,25 @@ nonisolated enum CodexRuntimeLocator {
         let executable = sourceResources
             .appendingPathComponent("CodexRuntime", isDirectory: true)
             .appendingPathComponent("bin/codex", isDirectory: false)
-        return fileManager.isExecutableFile(atPath: executable.path) ? executable : nil
+        guard fileManager.isExecutableFile(atPath: executable.path),
+              wrapperHasVendoredCodexBinary(executable, fileManager: fileManager) else { return nil }
+        return executable
+    }
+
+    /// `bin/codex` is a shell wrapper that execs `vendor/<arch>/codex/codex`.
+    /// The vendor payload is not in git, so a checkout or stripped bundle can
+    /// carry an executable wrapper whose target is missing — every launch then
+    /// dies at exec. Only treat the wrapper as a usable runtime when its
+    /// vendored binary is actually present.
+    static func wrapperHasVendoredCodexBinary(_ wrapperURL: URL, fileManager: FileManager = .default) -> Bool {
+        let vendoredBinary = wrapperURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("vendor", isDirectory: true)
+            .appendingPathComponent(currentCodexVendorArchitecture(), isDirectory: true)
+            .appendingPathComponent("codex", isDirectory: true)
+            .appendingPathComponent("codex", isDirectory: false)
+        return fileManager.isExecutableFile(atPath: vendoredBinary.path)
     }
 
     static func installedCodexAppExecutableURLs(fileManager: FileManager = .default) -> [URL] {

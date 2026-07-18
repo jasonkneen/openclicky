@@ -224,8 +224,8 @@ final class OpenClickyLocalInferenceRuntimeManager: ObservableObject {
 }
 
 enum OpenClickyLocalModelStore {
-    static let openClickyModelsDirectoryEnvironmentKey = "OPENCLICKY_LOCAL_MODELS_DIR"
-    static let osaurusModelsDirectoryEnvironmentKey = "OSU_MODELS_DIR"
+    nonisolated static let openClickyModelsDirectoryEnvironmentKey = "OPENCLICKY_LOCAL_MODELS_DIR"
+    nonisolated static let osaurusModelsDirectoryEnvironmentKey = "OSU_MODELS_DIR"
 
     static let downloadFilenameExtensions: Set<String> = [
         "json",

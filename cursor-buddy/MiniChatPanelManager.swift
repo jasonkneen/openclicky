@@ -12,9 +12,12 @@ import Combine
 import OpenClickyCore
 import OpenClickyUI
 
-/// Lightweight UserDefaults-backed store for archived session IDs.
-/// Lives here (not in CompanionManager.swift) so the additive patch
-/// keeps that file's diff minimal.
+/// Store for archived session IDs (UserDefaults) and session transcript
+/// snapshots (JSON files under Application Support). Snapshots carry full
+/// transcripts and grow past the 4 MB CFPreferences write limit — cfprefsd
+/// rejects oversized writes, silently losing the archive — so they must not
+/// live in UserDefaults. Lives here (not in CompanionManager.swift) so the
+/// additive patch keeps that file's diff minimal.
 enum ChatWorkspaceArchiveStore {
   struct Snapshot: Codable, Sendable {
     let id: UUID
@@ -29,9 +32,19 @@ enum ChatWorkspaceArchiveStore {
   }
 
   private static let key = "openClickyArchivedSessions"
-  private static let snapshotsKey = "openClickyArchivedSessionSnapshots"
-  private static let relaunchableSnapshotsKey = "openClickyRelaunchableAgentSessionSnapshots"
+  private static let legacySnapshotsDefaultsKey = "openClickyArchivedSessionSnapshots"
+  private static let legacyRelaunchableSnapshotsDefaultsKey = "openClickyRelaunchableAgentSessionSnapshots"
   private static let snapshotPersistenceQueue = DispatchQueue(label: "com.openclicky.chatWorkspaceArchiveStore.snapshots", qos: .utility)
+
+  private static var snapshotsFileURL: URL {
+    OpenClickyJSONFileStore.openClickyDirectory(subpath: ["ChatArchive"])
+      .appendingPathComponent("archived-session-snapshots.json", isDirectory: false)
+  }
+
+  private static var relaunchableSnapshotsFileURL: URL {
+    OpenClickyJSONFileStore.openClickyDirectory(subpath: ["ChatArchive"])
+      .appendingPathComponent("relaunchable-session-snapshots.json", isDirectory: false)
+  }
 
   static func load() -> Set<UUID> {
     guard let raw = UserDefaults.standard.array(forKey: key) as? [String] else { return [] }
@@ -43,8 +56,10 @@ enum ChatWorkspaceArchiveStore {
   }
 
   static func loadSnapshots() -> [Snapshot] {
-    guard let data = UserDefaults.standard.data(forKey: snapshotsKey) else { return [] }
-    return (try? JSONDecoder().decode([Snapshot].self, from: data)) ?? []
+    if let snapshots = OpenClickyJSONFileStore.read([Snapshot].self, from: snapshotsFileURL) {
+      return snapshots
+    }
+    return migrateLegacyDefaultsSnapshots(defaultsKey: legacySnapshotsDefaultsKey, to: snapshotsFileURL)
   }
 
   @MainActor
@@ -73,8 +88,8 @@ enum ChatWorkspaceArchiveStore {
   }
 
   static func loadRelaunchableSnapshots() -> [Snapshot] {
-    guard let data = UserDefaults.standard.data(forKey: relaunchableSnapshotsKey) else { return [] }
-    let snapshots = (try? JSONDecoder().decode([Snapshot].self, from: data)) ?? []
+    let snapshots = OpenClickyJSONFileStore.read([Snapshot].self, from: relaunchableSnapshotsFileURL)
+      ?? migrateLegacyDefaultsSnapshots(defaultsKey: legacyRelaunchableSnapshotsDefaultsKey, to: relaunchableSnapshotsFileURL)
     return snapshots.sorted { left, right in
       let leftDate = left.latestActivityAt ?? left.entries.last?.createdAt ?? left.createdAt ?? .distantPast
       let rightDate = right.latestActivityAt ?? right.entries.last?.createdAt ?? right.createdAt ?? .distantPast
@@ -101,14 +116,12 @@ enum ChatWorkspaceArchiveStore {
         wasRelaunchResumeCandidate: session.isRelaunchResumeCandidate
       )
     }
-    guard let data = try? JSONEncoder().encode(snapshots) else { return }
-    UserDefaults.standard.set(data, forKey: relaunchableSnapshotsKey)
+    try? OpenClickyJSONFileStore.write(snapshots, to: relaunchableSnapshotsFileURL)
   }
 
   static func removeRelaunchableSnapshot(for sessionID: UUID) {
     let snapshots = loadRelaunchableSnapshots().filter { $0.id != sessionID }
-    guard let data = try? JSONEncoder().encode(snapshots) else { return }
-    UserDefaults.standard.set(data, forKey: relaunchableSnapshotsKey)
+    try? OpenClickyJSONFileStore.write(snapshots, to: relaunchableSnapshotsFileURL)
   }
 
   private static func saveSnapshot(_ snapshot: Snapshot) {
@@ -118,8 +131,22 @@ enum ChatWorkspaceArchiveStore {
   }
 
   private static func saveSnapshots(_ snapshots: [Snapshot]) {
-    guard let data = try? JSONEncoder().encode(snapshots) else { return }
-    UserDefaults.standard.set(data, forKey: snapshotsKey)
+    try? OpenClickyJSONFileStore.write(snapshots, to: snapshotsFileURL)
+  }
+
+  /// One-time migration for snapshots persisted in UserDefaults before they
+  /// moved to files. The defaults key is removed only after the file write
+  /// succeeds, so a failed migration retries on the next load.
+  private static func migrateLegacyDefaultsSnapshots(defaultsKey: String, to fileURL: URL) -> [Snapshot] {
+    guard let data = UserDefaults.standard.data(forKey: defaultsKey),
+          let snapshots = try? JSONDecoder().decode([Snapshot].self, from: data) else {
+      return []
+    }
+    do {
+      try OpenClickyJSONFileStore.write(snapshots, to: fileURL)
+      UserDefaults.standard.removeObject(forKey: defaultsKey)
+    } catch {}
+    return snapshots
   }
 }
 

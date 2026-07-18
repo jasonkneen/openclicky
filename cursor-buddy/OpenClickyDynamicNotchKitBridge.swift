@@ -471,11 +471,46 @@ final class OpenClickyDynamicNotchKitBridge {
             ?? NSScreen.screens.first
     }
 
+    /// Tracks whether a bounded hide already resumed its continuation, so the
+    /// late loser of the hide-vs-timeout race becomes a no-op.
+    @MainActor
+    private final class HideRaceState {
+        private var resumed = false
+        func tryResume() -> Bool {
+            if resumed { return false }
+            resumed = true
+            return true
+        }
+    }
+
+    /// DynamicNotchKit's `hide()` resumes its continuation from the close
+    /// animation task, and a newer show/hide cancels that task — the
+    /// continuation then never resumes ("hide() leaked its continuation") and
+    /// anything awaiting it suspends forever. Race the hide against a timeout
+    /// with unstructured tasks (structured concurrency would still block on
+    /// the wedged child at scope exit) so the bridge's state machine always
+    /// makes progress; a timed-out hide is corrected by the next expand or
+    /// compact.
+    private func hideNotchBounded() async {
+        let notch = self.notch
+        let race = HideRaceState()
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            Task { @MainActor in
+                await notch.hide()
+                if race.tryResume() { continuation.resume() }
+            }
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                if race.tryResume() { continuation.resume() }
+            }
+        }
+    }
+
     private func prepareNotchForPresentation(on screen: NSScreen) async {
         targetScreen = screen
         if let currentScreen = notch.windowController?.window?.screen,
            currentScreen.displayID != screen.displayID {
-            await notch.hide()
+            await hideNotchBounded()
             presentationState = .hidden
             presentationScreenID = nil
         }
@@ -657,7 +692,7 @@ final class OpenClickyDynamicNotchKitBridge {
 
     private func hideNotchIfNeeded() async {
         guard presentationState != .hidden || notch.windowController?.window?.isVisible == true else { return }
-        await notch.hide()
+        await hideNotchBounded()
         presentationState = .hidden
         presentationScreenID = nil
     }
