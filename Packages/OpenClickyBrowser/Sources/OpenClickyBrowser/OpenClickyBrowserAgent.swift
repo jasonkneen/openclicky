@@ -24,6 +24,7 @@ final class OpenClickyBrowserAgentRunner {
     private static let planReminderInterval = 5
 
     private let apiKey: String
+    private let baseURL: String
     private let modelName: String
     private weak var browserModel: OpenClickyBrowserWorkspaceModelProtocol?
 
@@ -292,8 +293,11 @@ final class OpenClickyBrowserAgentRunner {
         ]
     ]
 
-    init(apiKey: String, modelName: String, browserModel: OpenClickyBrowserWorkspaceModelProtocol) {
+    init(apiKey: String, baseURL: String = "https://api.anthropic.com", modelName: String, browserModel: OpenClickyBrowserWorkspaceModelProtocol) {
         self.apiKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.baseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "https://api.anthropic.com"
+            : baseURL
         self.modelName = modelName
         self.browserModel = browserModel
     }
@@ -936,7 +940,7 @@ final class OpenClickyBrowserAgentRunner {
     // MARK: - Networking
     
     private func callClaudeAPI(systemPrompt: String, messages: [[String: Any]]) async throws -> [String: Any] {
-        let apiURL = URL(string: "https://api.anthropic.com/v1/messages")!
+        let apiURL = URL(string: "\(baseURL)/v1/messages")!
         var request = URLRequest(url: apiURL)
         request.httpMethod = "POST"
         request.timeoutInterval = 60

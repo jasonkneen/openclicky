@@ -427,7 +427,7 @@ final class OpenClickyExternalControlBridgeServer: @unchecked Sendable {
         let targetBase: String
         let apiKey: String?
         if request.path == "/v1/messages" {
-            targetBase = "https://api.anthropic.com"
+            targetBase = AppBundleConfiguration.anthropicBaseURL()
             apiKey = AppBundleConfiguration.anthropicAPIKey()
         } else {
             targetBase = "https://api.openai.com"
