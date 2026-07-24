@@ -50,6 +50,7 @@ final class ClaudeAgentSDKAPI {
     private var warmupRequestID: String?
     private var activeBridgeModel: String?
     private var activeBridgeSystemPromptHash: Int?
+    private var activeBridgeProviderFingerprint: Int?
     // Allows a cold bridge to start normally while ensuring a wedged SDK
     // request cannot leave the voice lane suspended forever.
     private static let requestTimeoutNanoseconds: UInt64 = 120_000_000_000
@@ -92,13 +93,19 @@ final class ClaudeAgentSDKAPI {
             .split(separator: ":")
             .map { URL(fileURLWithPath: String($0)).appendingPathComponent("claude", isDirectory: false) }
 
+        // Canonical native-install locations are checked before a raw PATH scan.
+        // Third-party tools (terminal wrappers, IDE-bundled copies, etc.) commonly
+        // prepend their own bin directory onto PATH ahead of the real install;
+        // their `claude` is often a thin shim built for interactive terminal use
+        // and can misbehave when driven through the SDK's non-interactive
+        // stdin/stdout protocol. Prefer the user's actual Claude Code install.
         let fixedCandidates = [
             fileManager.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin/claude", isDirectory: false),
             URL(fileURLWithPath: "/opt/homebrew/bin/claude", isDirectory: false),
             URL(fileURLWithPath: "/usr/local/bin/claude", isDirectory: false)
         ]
 
-        return (pathCandidates + fixedCandidates).first { candidate in
+        return (fixedCandidates + pathCandidates).first { candidate in
             fileManager.isExecutableFile(atPath: candidate.path)
         }
     }
@@ -208,6 +215,7 @@ final class ClaudeAgentSDKAPI {
         bridgeError = nil
         activeBridgeModel = nil
         activeBridgeSystemPromptHash = nil
+        activeBridgeProviderFingerprint = nil
         terminateBridgeProcess(process)
         failPendingRequests(error)
     }
@@ -308,12 +316,27 @@ final class ClaudeAgentSDKAPI {
         })
     }
 
+    /// Fingerprints the configured Anthropic-compatible provider (base URL + a
+    /// hash of the key, never the key itself) so a live persistent bridge is
+    /// torn down and respawned if the user reconfigures the provider (e.g.
+    /// switches from one Anthropic-compatible endpoint to another) instead of
+    /// silently keeping the old provider's environment for the life of the
+    /// warm subprocess.
+    private static func currentProviderFingerprint() -> Int {
+        var hasher = Hasher()
+        hasher.combine(AppBundleConfiguration.anthropicBaseURL())
+        hasher.combine(AppBundleConfiguration.anthropicAPIKey())
+        return hasher.finalize()
+    }
+
     private func ensureBridge() throws {
         let promptHash = Self.persistentBridgeSystemPrompt.hashValue
+        let providerFingerprint = Self.currentProviderFingerprint()
         if let bridgeProcess,
            bridgeProcess.isRunning,
            activeBridgeModel == model,
            activeBridgeSystemPromptHash == promptHash,
+           activeBridgeProviderFingerprint == providerFingerprint,
            bridgeInput != nil {
             return
         }
@@ -395,6 +418,7 @@ final class ClaudeAgentSDKAPI {
         bridgeError = errorPipe.fileHandleForReading
         activeBridgeModel = model
         activeBridgeSystemPromptHash = promptHash
+        activeBridgeProviderFingerprint = providerFingerprint
 
         OpenClickyMessageLogStore.shared.append(
             lane: "voice",
@@ -422,7 +446,7 @@ final class ClaudeAgentSDKAPI {
         var environment = ProcessInfo.processInfo.environment
         let nodeDirectory = nodeExecutableURL.deletingLastPathComponent().path
         let existingPath = environment["PATH"] ?? ""
-        let baselinePath = "/Users/jkneen/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        let baselinePath = "\(fileManager.homeDirectoryForCurrentUser.path)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
         environment["PATH"] = [nodeDirectory, existingPath, baselinePath]
             .filter { !$0.isEmpty }
             .joined(separator: ":")
@@ -437,6 +461,21 @@ final class ClaudeAgentSDKAPI {
             fileManager: fileManager
         ).joined(separator: ":")
         environment["CLAUDE_AGENT_SDK_CLIENT_APP"] = "openclicky/1.0"
+
+        // Force this child process onto OpenClicky's configured Anthropic-compatible
+        // provider (e.g. MiniMax via ANTHROPIC_BASE_URL in secrets.env), overriding
+        // any ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN or logged-in `claude` session
+        // that may already exist in the surrounding OS environment. This only
+        // affects this one subprocess — it does not touch the user's own
+        // interactive `claude` CLI sessions or their ~/.claude credentials.
+        environment.removeValue(forKey: "ANTHROPIC_AUTH_TOKEN")
+        environment["ANTHROPIC_BASE_URL"] = AppBundleConfiguration.anthropicBaseURL()
+        if let anthropicAPIKey = AppBundleConfiguration.anthropicAPIKey(), !anthropicAPIKey.isEmpty {
+            environment["ANTHROPIC_API_KEY"] = anthropicAPIKey
+        } else {
+            environment.removeValue(forKey: "ANTHROPIC_API_KEY")
+        }
+
         return environment
     }
 
@@ -635,6 +674,7 @@ final class ClaudeAgentSDKAPI {
         bridgeError = nil
         activeBridgeModel = nil
         activeBridgeSystemPromptHash = nil
+        activeBridgeProviderFingerprint = nil
 
         let error = NSError(
             domain: "ClaudeAgentSDKAPI",

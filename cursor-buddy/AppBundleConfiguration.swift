@@ -102,7 +102,47 @@ nonisolated enum AppBundleConfiguration {
         ) ?? localDevelopmentEnvironmentValue(forKey: "ANTHROPIC_API_KEY")
 
         guard let configuredAnthropicAPIKey else { return nil }
+        // A custom ANTHROPIC_BASE_URL (e.g. a MiniMax or other Anthropic-compatible
+        // provider) implies keys won't follow Anthropic's own "sk-ant-api" prefix.
+        if usesCustomAnthropicBaseURL {
+            return configuredAnthropicAPIKey
+        }
         return configuredAnthropicAPIKey.hasPrefix("sk-ant-api") ? configuredAnthropicAPIKey : nil
+    }
+
+    static let defaultAnthropicBaseURL = "https://api.anthropic.com"
+
+    /// Base URL for Anthropic-compatible /v1/messages requests. Lets OpenClicky
+    /// point at a compatible provider (e.g. MiniMax) instead of api.anthropic.com.
+    /// Falls back to the default on anything that isn't a well-formed absolute
+    /// http(s) URL with a host, since callers build request URLs from this with
+    /// a force-unwrapped `URL(string:)!` — a malformed value must never reach them.
+    static func anthropicBaseURL() -> String {
+        let configured = stringValue(
+            forKey: "AnthropicBaseURL",
+            environmentKeys: ["ANTHROPIC_BASE_URL"]
+        ) ?? localDevelopmentEnvironmentValue(forKey: "ANTHROPIC_BASE_URL")
+
+        guard let configured, !configured.isEmpty else { return defaultAnthropicBaseURL }
+
+        var trimmed = configured
+        while trimmed.hasSuffix("/") {
+            trimmed.removeLast()
+        }
+
+        guard let components = URLComponents(string: trimmed),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              let host = components.host,
+              !host.isEmpty else {
+            return defaultAnthropicBaseURL
+        }
+
+        return trimmed
+    }
+
+    static var usesCustomAnthropicBaseURL: Bool {
+        anthropicBaseURL() != defaultAnthropicBaseURL
     }
 
     static func openAIAPIKey() -> String? {
