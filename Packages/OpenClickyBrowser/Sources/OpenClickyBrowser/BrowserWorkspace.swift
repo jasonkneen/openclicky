@@ -2014,6 +2014,7 @@ private final class OpenClickyBrowserWorkspaceModel: ObservableObject, OpenClick
             let modelID = delegate?.getSelectedComputerUseModelID() ?? ""
             let usesAnthropicBrowserModel = delegate?.selectedComputerUseModelUsesAnthropic() ?? false
             let apiKey = delegate?.getAnthropicAPIKey() ?? ""
+            let anthropicBaseURL = delegate?.getAnthropicBaseURL() ?? "https://api.anthropic.com"
             let sdkAvailable = self.hasAgentSDK()
 
             // The CUA agent can run whenever we have a usable provider — the
@@ -2035,7 +2036,7 @@ private final class OpenClickyBrowserWorkspaceModel: ObservableObject, OpenClick
                 browserAgentStatus = "Starting browser agent…"
                 let history = browserAgentPriorTurns
                 Task {
-                    let agent = OpenClickyBrowserAgentRunner(apiKey: apiKey, modelName: effectiveModel, browserModel: self)
+                    let agent = OpenClickyBrowserAgentRunner(apiKey: apiKey, baseURL: anthropicBaseURL, modelName: effectiveModel, browserModel: self)
                     await MainActor.run { self.activeBrowserAgentRunner = agent }
                     await agent.run(prompt: prompt, priorTurns: history)
                     await MainActor.run {

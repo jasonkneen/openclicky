@@ -873,6 +873,10 @@ extension CompanionManager: BrowserWorkspaceAgentDelegate {
         return AppBundleConfiguration.anthropicAPIKey() ?? ""
     }
 
+    public func getAnthropicBaseURL() -> String {
+        return AppBundleConfiguration.anthropicBaseURL()
+    }
+
     public func getSelectedComputerUseModelID() -> String {
         return selectedComputerUseModel
     }
