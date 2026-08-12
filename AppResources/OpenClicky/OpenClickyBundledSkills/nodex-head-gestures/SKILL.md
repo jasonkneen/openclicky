@@ -53,8 +53,10 @@ Treat timeout as no for risky actions and as the conservative default for ordina
 If head gestures are unavailable but Nodex is installed:
 
 ```bash
-nodex ask "Should I run the focused tests?" --log --default no
+nodex ask "Should I run the focused tests?" --default no
 ```
+
+Add `--log` only when the prompt does not contain secrets or sensitive personal data.
 
 Use `--voice kokoro` only if the user asked for Kokoro or the local Nodex setup is known to support it.
 

@@ -10,7 +10,7 @@ Install Nodex separately and make sure the commands are on `PATH`:
 
 ```bash
 nodex doctor
-nodex-motion ask "Should OpenClicky continue?" --motion-only
+nodex-motion ask "Should OpenClicky continue?" --motion-only --timeout 25 --default no
 ```
 
 The first `nodex-motion` run may trigger macOS Motion & Fitness permission. AirPods must be connected to the Mac, and gesture support depends on the headphone model and macOS version.
