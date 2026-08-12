@@ -66,7 +66,7 @@ printf '%s\n' "$health"
 pass 'health endpoint'
 
 if [[ -z "$BRIDGE_TOKEN" ]]; then
-  warn 'no bridge token found (OPENCLICKY_BRIDGE_TOKEN env var or Keychain item); authenticated endpoints will return 401'
+  fail 'no bridge token found (set OPENCLICKY_BRIDGE_TOKEN or ensure the app has generated the Keychain item openClickyExternalControlBridgeToken); authenticated endpoints will return 401'
 fi
 
 printf '\n== MCP/tool descriptors ==\n'
