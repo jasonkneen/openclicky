@@ -39,7 +39,7 @@ class ElementLocationDetector {
     init(apiKey: String, model: String = "claude-sonnet-4-6") {
         let modelOption = OpenClickyModelCatalog.computerUseModel(withID: model)
         self.apiKey = apiKey
-        self.apiURL = URL(string: "https://api.anthropic.com/v1/messages")!
+        self.apiURL = URL(string: "\(AppBundleConfiguration.anthropicBaseURL())/v1/messages")!
         self.model = modelOption.id
         self.maxOutputTokens = modelOption.maxOutputTokens
 

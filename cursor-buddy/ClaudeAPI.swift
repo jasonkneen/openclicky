@@ -31,7 +31,7 @@ class ClaudeAPI {
 
     init(apiKey: String?, model: String = "claude-sonnet-4-6", maxOutputTokens: Int = 64_000) {
         self.apiKey = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.apiURL = URL(string: "https://api.anthropic.com/v1/messages")!
+        self.apiURL = URL(string: "\(AppBundleConfiguration.anthropicBaseURL())/v1/messages")!
         self.model = model
         self.maxOutputTokens = maxOutputTokens
 
