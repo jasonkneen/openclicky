@@ -117,7 +117,7 @@ final class AssemblyAIStreamingTranscriptionProvider: BuddyTranscriptionProvider
     }
 }
 
-private final class AssemblyAIStreamingTranscriptionSession: StreamingWebSocketTranscriptionSession, @unchecked Sendable, BuddyStreamingTranscriptionSession {
+private nonisolated final class AssemblyAIStreamingTranscriptionSession: StreamingWebSocketTranscriptionSession, @unchecked Sendable, BuddyStreamingTranscriptionSession {
     private struct MessageEnvelope: Decodable {
         let type: String
     }
