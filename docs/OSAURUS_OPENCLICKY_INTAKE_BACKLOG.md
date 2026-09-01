@@ -30,7 +30,7 @@ caveat; it does not change the OpenClicky direction.
 ## Active Intake Principles
 
 1. Preserve OpenClicky brand and surfaces.
-2. Prefer OpenClicky's existing design tokens in `Packages/OpenClickyUI` and local
+2. Prefer OpenClicky's existing design tokens in `Packages/OCUI` and local
    panel/HUD patterns.
 3. Keep provider routing aligned with the money rule: SDK/app-server first, direct
    API-key fallback only.
@@ -253,10 +253,10 @@ OpenClicky should keep its visual style, but Osaurus has useful rendering mechan
     and compact notch presentation.
 - [ ] Evaluate adding `Highlightr` for syntax highlighting.
   - Osaurus uses `https://github.com/raspu/Highlightr` from `2.3.0`.
-  - OpenClicky already has a first-party `Packages/OpenClickyMarkdown` package. It
+  - OpenClicky already has a first-party `Packages/OCMarkdown` package. It
     renders OpenClicky-owned Markdown documents and fenced code blocks, but it is
     not yet a streaming chat renderer or syntax highlighter.
-  - First task is to extend/reuse `OpenClickyMarkdown` for chat blocks before
+  - First task is to extend/reuse `OCMarkdown` for chat blocks before
     adding another dependency.
   - Start with code blocks only. Do not add a broad editor dependency unless the HUD
     needs editing.
@@ -333,7 +333,7 @@ OpenClicky should keep its visual style, but Osaurus has useful rendering mechan
 4. Split Settings into Basic, Advanced, and Runtime Lab.
 5. Add an OpenClicky runtime discovery file writer.
 6. Add a small OpenClicky message-block model for the Agent HUD.
-7. Extend `Packages/OpenClickyMarkdown` for HUD chat/code rendering behind the
+7. Extend `Packages/OCMarkdown` for HUD chat/code rendering behind the
    current OpenClicky style.
 8. Add richer tool-call rows and artifact cards.
 9. Add App Intents over the existing OpenClicky bridge.

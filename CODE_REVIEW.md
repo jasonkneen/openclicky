@@ -26,12 +26,12 @@ There are also genuine strengths worth preserving: secret redaction is thorough,
 These are trust-boundary breaches or definite-cost bugs. Fix before shipping the affected features.
 
 ### C1. Browser agent `evaluate` = arbitrary JS on untrusted pages, no sandbox/allow-list/confirm
-**Files:** `Packages/OpenClickyBrowser/.../OpenClickyBrowserAgent.swift:268-296` (tool), `:798-810` (`executeEvaluate`), `:847-869` (`evaluateJavaScript`); system prompt at `:295-300`.
+**Files:** `Packages/OCBrowser/.../OpenClickyBrowserAgent.swift:268-296` (tool), `:798-810` (`executeEvaluate`), `:847-869` (`evaluateJavaScript`); system prompt at `:295-300`.
 The autonomous agent hands Claude an `evaluate` tool whose body is literally `webView.evaluateJavaScript(script)` on whatever page is loaded. Page content is injected verbatim into the same conversation as the trusted system prompt. A single malicious page → injected instruction → `evaluate` with attacker JS → exfiltrate `document.cookie`/`localStorage` or, after `navigate("file://…")`, read local files. `file://` navigation is explicitly accepted (`:744`). Combined with C2 this is a full session-hijack + local-file-read chain.
 **Fix:** remove the unrestricted `evaluate`, or gate every call behind a user-confirmation dialog showing the script + origin; enforce a navigation allow-list in `WKNavigationDelegate.decidePolicyFor` (currently **no** navigation policy exists at all); never run the agent on a `WKWebsiteDataStore` that holds imported cookies.
 
 ### C2. Wholesale Chrome cookie import into the shared default `WKWebsiteDataStore`
-**Files:** `Packages/OpenClickyBrowser/.../BrowserWorkspace.swift:1870-1889` (`importChromeCookies(.all)`), `:3008-3034` (decrypt → `WKWebsiteDataStore.default().httpCookieStore`), `:3134-3165` (Keychain `chromeSafeStoragePassword` → AES-CBC decrypt of v10/v11 cookies).
+**Files:** `Packages/OCBrowser/.../BrowserWorkspace.swift:1870-1889` (`importChromeCookies(.all)`), `:3008-3034` (decrypt → `WKWebsiteDataStore.default().httpCookieStore`), `:3134-3165` (Keychain `chromeSafeStoragePassword` → AES-CBC decrypt of v10/v11 cookies).
 Reads the Chrome Safe Storage secret from Keychain, decrypts **every** Chrome cookie (banking, email, SaaS — `.all` scope, `matchingHost: nil`), and writes them into the *default* data store — the same store every workspace `WKWebView` uses (`:3380-3385`, no per-task store). Reachable by C1's `evaluate`. Cookie-domain matching is also inverted (`:3198-3202` matches a `mail.example.com` cookie when the page is `example.com`).
 **Fix:** use a dedicated per-task `WKWebsiteDataStore` (never `.default()`); drop the `.all` scope; import only the active host with user confirmation; fix `matches()` to standard cookie-domain semantics; never combine with an unrestricted `evaluate`.
 
@@ -75,7 +75,7 @@ Every Codex path launches at maximum privilege with no human-in-the-loop. The vo
 
 **H10. Cursor-tracking `Timer` allocates a `Task { @MainActor }` on every 60 Hz tick** — `CompanionResponseOverlay.swift:103-109`: the timer is already on `RunLoop.main` (`.common`), so the `Task` wrap is ~60 needless allocations/sec for the lifetime of the streaming overlay. **Fix:** call `repositionPanelNearCursor()` directly.
 
-**H11. `Color(hex:)` is non-failable, silently returns black; all `?? fallback` paths are dead** — `Packages/OpenClickyCore/.../Theme.swift:172-184` (`scanHexInt64` return value unchecked); consumed by `OverlayWindow.swift:1111-1115` returning `Color?` so callers write `?? overlayCursorColor` that can never trigger. Malformed/empty hex → solid black instead of the intended accent. **Fix:** make `init?(hex:)` return nil on scan failure / bad length.
+**H11. `Color(hex:)` is non-failable, silently returns black; all `?? fallback` paths are dead** — `Packages/OCCore/.../Theme.swift:172-184` (`scanHexInt64` return value unchecked); consumed by `OverlayWindow.swift:1111-1115` returning `Color?` so callers write `?? overlayCursorColor` that can never trigger. Malformed/empty hex → solid black instead of the intended accent. **Fix:** make `init?(hex:)` return nil on scan failure / bad length.
 
 **H12. `NSScreen.screens.first!` force-unwrap on the notch screen path** — `OpenClickyDynamicNotchKitBridge.swift:433`. Hard crash if `NSScreen.screens` is momentarily empty (display reconfig, sleep/wake race, headless tests). **Fix:** return optional, callers early-return.
 
@@ -93,7 +93,7 @@ Every Codex path launches at maximum privilege with no human-in-the-loop. The vo
 
 **Concurrency / Sendable (4)**
 - M1. `OpenClickyRequestCompletionState` is `@unchecked Sendable` with an unsynchronised `var didComplete` (`CompanionManager.swift:242-244`). **Fix:** `@MainActor` it, or guard with `OSAllocatedUnfairLock`.
-- M2. LiquidGlass `NSView` subclasses not `@MainActor`-isolated despite mutating AppKit state (`Packages/OpenClickyUI/.../LiquidGlass.swift:104, 114, 236`). **Fix:** annotate `@MainActor`.
+- M2. LiquidGlass `NSView` subclasses not `@MainActor`-isolated despite mutating AppKit state (`Packages/OCUI/.../LiquidGlass.swift:104, 114, 236`). **Fix:** annotate `@MainActor`.
 - M3. `CodexVoiceSession` registers `pendingTurn` after the `turn/start` response — early notifications dropped, continuation can hang (`CodexVoiceSession.swift:210, 232-244`). **Fix:** pre-register/buffer by turnID.
 - M4. Project on `SWIFT_VERSION = 5.0`, no `SWIFT_STRICT_CONCURRENCY` (`project.pbxproj:504+`) — all `@unchecked Sendable`/race findings latent. **Fix:** set `minimal` now.
 
