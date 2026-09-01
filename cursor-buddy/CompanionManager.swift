@@ -22,6 +22,7 @@ import OCUI
 @preconcurrency import OCBrowser
 import OCMarkdown
 import OCMemory
+import OC3DCore
 
 enum CompanionVoiceState: String {
     case idle
