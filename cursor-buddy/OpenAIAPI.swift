@@ -13,7 +13,7 @@ class OpenAIAPI {
     var maxOutputTokens: Int
     private let session: URLSession
 
-    init(apiKey: String?, model: String = "gpt-5.4", maxOutputTokens: Int = 128_000) {
+    init(apiKey: String?, model: String = "gpt-5.6-sol", maxOutputTokens: Int = 128_000) {
         self.apiKey = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.apiURL = URL(string: "https://api.openai.com/v1/responses")!
         self.model = model

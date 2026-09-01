@@ -346,10 +346,10 @@ extension CompanionManager {
                 updateDraftText: { _ in
                     // Partial transcripts stay hidden; the cursor waveform is the active state.
                 },
-                submitDraftText: { [weak self] finalTranscript in
+                submitDraftText: { [weak self = self] finalTranscript in
                     self?.handleFinalVoiceTranscript(finalTranscript)
                 },
-                onWillStartRecording: { [weak self] in
+                onWillStartRecording: { [weak self = self] in
                     // Avoid chopping the previous reply if the user taps the
                     // mic button and releases before dictation really starts.
                     self?.interruptCurrentVoiceResponse()

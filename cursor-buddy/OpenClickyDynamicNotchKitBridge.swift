@@ -61,6 +61,20 @@ struct OpenClickyNotchContextSuggestion: Equatable {
 import DynamicNotchKit
 import Combine
 
+private enum OpenClickyNotchInputMethod: String {
+    case agent
+    case screen
+    case skills
+
+    var placeholder: String {
+        switch self {
+        case .agent: return "Describe the agent task…"
+        case .screen: return "What should OpenClicky check on screen?"
+        case .skills: return "What workflow needs a skill?"
+        }
+    }
+}
+
 @MainActor
 private final class OpenClickyDynamicNotchKitModel: ObservableObject {
     enum Mode {
@@ -125,6 +139,7 @@ private final class OpenClickyDynamicNotchKitModel: ObservableObject {
     @Published var isNotchHovered = false
     @Published var isExpanded = false
     @Published var contextSuggestion: OpenClickyNotchContextSuggestion?
+    @Published var selectedInputMethod: OpenClickyNotchInputMethod?
     var hidesWhenClosed = false
     var onHiddenWhenClosed: (() -> Void)?
     /// Bumped to ask the expanded input row to take keyboard focus.
@@ -133,6 +148,41 @@ private final class OpenClickyDynamicNotchKitModel: ObservableObject {
 
     var hasDraftContent: Bool {
         !draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !draftAttachments.isEmpty
+    }
+
+    var inputPlaceholder: String {
+        selectedInputMethod?.placeholder ?? "Ask OpenClicky…"
+    }
+
+    func toggleInputMethod(_ method: OpenClickyNotchInputMethod) {
+        selectedInputMethod = selectedInputMethod == method ? nil : method
+        isInputFocused = true
+        inputFocusRequest &+= 1
+    }
+
+    func promptForSelectedInputMethod(_ instruction: String) -> String {
+        switch selectedInputMethod {
+        case .agent:
+            return """
+            Start an OpenClicky background agent for the following instruction. Use the current screen as context when relevant.
+
+            User instruction: \(instruction)
+            """
+        case .screen:
+            return """
+            Use OpenClicky's current screen context to answer the following instruction. Inspect what is visibly present and do not infer unseen UI.
+
+            User instruction: \(instruction)
+            """
+        case .skills:
+            return """
+            \(skillQuickPrompt())
+
+            User instruction: \(instruction)
+            """
+        case nil:
+            return instruction
+        }
     }
 
     /// Collapse the notch only when the pointer has left it and the input is
@@ -919,45 +969,39 @@ private struct OpenClickyDynamicNotchKitExpandedView: View {
                     model.openMainPanel()
                 }
 
+                Divider()
+                    .frame(height: 18)
+                    .overlay(.white.opacity(0.14))
+
                 OpenClickyDynamicNotchKitChip(
                     title: "Agent",
                     systemImage: "terminal.fill",
-                    accentColor: Color(nsColor: model.activityAccentColor)
+                    accentColor: Color(nsColor: model.activityAccentColor),
+                    isSelected: model.selectedInputMethod == .agent
                 ) {
-                    runQuickPrompt("Start an OpenClicky agent using the current screen as context.")
+                    model.toggleInputMethod(.agent)
                 }
 
                 OpenClickyDynamicNotchKitChip(
                     title: "Screen",
                     systemImage: "rectangle.and.text.magnifyingglass",
-                    accentColor: Color(nsColor: model.activityAccentColor)
+                    accentColor: Color(nsColor: model.activityAccentColor),
+                    isSelected: model.selectedInputMethod == .screen
                 ) {
-                    runQuickPrompt(OpenClickyQuickActionPrompts.screen)
+                    model.toggleInputMethod(.screen)
                 }
 
                 OpenClickyDynamicNotchKitChip(
                     title: "Skills",
                     systemImage: "hammer.fill",
-                    accentColor: Color(nsColor: model.activityAccentColor)
+                    accentColor: Color(nsColor: model.activityAccentColor),
+                    isSelected: model.selectedInputMethod == .skills
                 ) {
-                    runQuickPrompt(model.skillQuickPrompt())
+                    model.toggleInputMethod(.skills)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-    }
-
-    private func runQuickPrompt(_ prompt: String) {
-        model.mode = .collapsed
-        model.agentLiveActivity = OpenClickyAgentLiveActivity(
-            isActive: true,
-            runningCount: max(1, model.agentLiveActivity.runningCount),
-            primaryTitle: "Starting OpenClicky",
-            detail: nil,
-            phaseLabel: "Starting"
-        )
-        model.submitText(prompt)
-        model.closeNotch()
     }
 
     private func contextSuggestionView(_ suggestion: OpenClickyNotchContextSuggestion) -> some View {
@@ -1103,7 +1147,7 @@ private struct OpenClickyDynamicNotchKitInputRow: View {
                     .font(.system(size: 11, weight: .heavy))
                     .foregroundStyle(Color(nsColor: model.activityAccentColor))
 
-                TextField("Ask OpenClicky…", text: $model.draftText, axis: .vertical)
+                TextField(model.inputPlaceholder, text: $model.draftText, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(primaryTextColor.opacity(0.95))
@@ -1262,7 +1306,8 @@ private struct OpenClickyDynamicNotchKitInputRow: View {
     private func submit() {
         let trimmed = model.draftText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !model.draftAttachments.isEmpty else { return }
-        let prompt = Self.composePrompt(trimmed, attachments: model.draftAttachments)
+        let instruction = Self.composePrompt(trimmed, attachments: model.draftAttachments)
+        let prompt = model.promptForSelectedInputMethod(instruction)
         let send = model.submitText
         DispatchQueue.main.async {
             model.draftText = ""
@@ -1294,6 +1339,7 @@ private struct OpenClickyDynamicNotchKitChip: View {
     let title: String
     let systemImage: String
     let accentColor: Color
+    var isSelected = false
     let action: () -> Void
 
     var body: some View {
@@ -1303,13 +1349,14 @@ private struct OpenClickyDynamicNotchKitChip: View {
                 .labelStyle(.titleAndIcon)
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
-                .foregroundStyle(.white.opacity(0.94))
+                .foregroundStyle(.white.opacity(isSelected ? 1 : 0.82))
                 .padding(.horizontal, 9)
                 .padding(.vertical, 6)
-                .background(accentColor.opacity(0.22), in: Capsule())
-                .overlay(Capsule().strokeBorder(.white.opacity(0.10), lineWidth: 1))
+                .background(isSelected ? accentColor.opacity(0.48) : .white.opacity(0.08), in: Capsule())
+                .overlay(Capsule().strokeBorder(isSelected ? accentColor.opacity(0.9) : .white.opacity(0.10), lineWidth: 1))
         }
         .buttonStyle(.plain)
+        .accessibilityValue(isSelected ? "Selected" : "Not selected")
     }
 }
 

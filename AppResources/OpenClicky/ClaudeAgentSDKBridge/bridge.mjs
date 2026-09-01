@@ -227,7 +227,7 @@ try {
   const allowDangerousPermissions = booleanFromEnv("OPENCLICKY_CLAUDE_ALLOW_DANGEROUS_PERMISSIONS");
 
   const options = {
-    model: process.env.OPENCLICKY_CLAUDE_MODEL || "claude-sonnet-4-6",
+    model: process.env.OPENCLICKY_CLAUDE_MODEL || "sonnet-5",
     maxTokens: integerFromEnv("OPENCLICKY_CLAUDE_MAX_OUTPUT_TOKENS", 64000),
     cwd: process.env.OPENCLICKY_CLAUDE_CWD || process.cwd(),
     systemPrompt: process.env.OPENCLICKY_CLAUDE_SYSTEM_PROMPT || "You are OpenClicky.",

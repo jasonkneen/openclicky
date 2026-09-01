@@ -617,27 +617,30 @@ struct OpenClickySettingsView: View {
                 }
             }
 
-            settingsGroup("Local listening") {
-                localSpeechModelStatusRow
+            if isLocalVoiceRoute {
+                settingsGroup("Local listening") {
+                    localSpeechModelStatusRow
 
-                basicLocalListeningActionRow
+                    basicLocalListeningActionRow
 
-                if OpenClickyModelCatalog.isSpeechModelID(companionManager.selectedModel) {
-                    warningRow(
-                        title: "Realtime bypasses local STT",
-                        subtitle: "GPT Realtime listens directly to the microphone. Use the local listening route when you want Parakeet to transcribe first."
+                    if let localSpeechError = localSpeechModelManager.lastErrorMessage,
+                       !localSpeechError.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        warningRow(
+                            title: "Parakeet model",
+                            subtitle: localSpeechError
+                        )
+                    }
+                }
+            } else if isRealtimeVoiceRoute {
+                settingsGroup("Realtime voice") {
+                    valueRow(
+                        title: "Local listening hidden",
+                        subtitle: "Realtime is selected, so OpenClicky sends microphone audio directly to the Realtime model instead of configuring Parakeet or Apple Speech here.",
+                        systemImageName: "waveform.badge.mic"
                     )
                     actionRow(title: "Use local listening route", systemImageName: "waveform.badge.mic") {
                         useLocalListeningRoute()
                     }
-                }
-
-                if let localSpeechError = localSpeechModelManager.lastErrorMessage,
-                   !localSpeechError.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    warningRow(
-                        title: "Parakeet model",
-                        subtitle: localSpeechError
-                    )
                 }
             }
 
@@ -912,6 +915,117 @@ struct OpenClickySettingsView: View {
         localSpeechModelManager.isSelectedModelReady ? .parakeet : .appleSpeech
     }
 
+    private var selectedVoiceModelOption: OpenClickyModelOption {
+        OpenClickyModelCatalog.voiceResponseModel(withID: companionManager.selectedModel)
+    }
+
+    private var isRealtimeVoiceRoute: Bool {
+        OpenClickyModelCatalog.isSpeechModelID(companionManager.selectedModel)
+    }
+
+    private var isDeepgramVoiceAgentRoute: Bool {
+        selectedVoiceModelOption.provider == .deepgram
+    }
+
+    private var isLocalVoiceRoute: Bool {
+        !isRealtimeVoiceRoute
+            && (companionManager.activeProfile.id == OpenClickyProfileCatalog.local.id
+                || companionManager.buddyDictationManager.transcriptionProviderID == BuddyTranscriptionProviderID.parakeet.rawValue
+                || companionManager.buddyDictationManager.transcriptionProviderID == BuddyTranscriptionProviderID.appleSpeech.rawValue)
+            && companionManager.selectedTTSProvider == .microsoftEdge
+    }
+
+    private var shouldShowLocalListeningControls: Bool {
+        isLocalVoiceRoute
+    }
+
+    private var shouldShowTranscriptionProviderControls: Bool {
+        !isRealtimeVoiceRoute && !isDeepgramVoiceAgentRoute
+    }
+
+    private var shouldShowPlaybackProviderControls: Bool {
+        !isRealtimeVoiceRoute && !isDeepgramVoiceAgentRoute
+    }
+
+    private var visibleTranscriptionProviders: [BuddyTranscriptionProviderID] {
+        let providers = BuddyTranscriptionProviderFactory.providerIDsForSelectionGrid()
+        if isLocalVoiceRoute {
+            return providers.filter { provider in
+                switch provider {
+                case .automatic, .parakeet, .appleSpeech:
+                    return true
+                case .assemblyAI, .deepgram, .openAI:
+                    return false
+                }
+            }
+        }
+        return providers.filter { $0 != .parakeet }
+    }
+
+    private var visiblePlaybackProviders: [OpenClickyTTSProvider] {
+        if isLocalVoiceRoute {
+            return [.microsoftEdge]
+        }
+        return OpenClickyTTSProvider.allCases.filter { $0 != .openAIRealtime }
+    }
+
+    private var selectedTranscriptionProviderID: BuddyTranscriptionProviderID {
+        BuddyTranscriptionProviderID(rawValue: companionManager.buddyDictationManager.transcriptionProviderID)
+            ?? .automatic
+    }
+
+    private var shouldShowOpenAIKey: Bool {
+        !isLocalVoiceRoute
+            && (selectedVoiceModelOption.provider == .openAI
+                || selectedTranscriptionProviderID == .openAI)
+    }
+
+    private var shouldShowListeningProviderSecrets: Bool {
+        isDeepgramVoiceAgentRoute
+            || shouldShowAssemblyAIKey
+            || shouldShowDeepgramKey
+    }
+
+    private var shouldShowPlaybackProviderSecrets: Bool {
+        shouldShowElevenLabsKey || shouldShowCartesiaKey
+    }
+
+    private var shouldShowAssemblyAIKey: Bool {
+        !isRealtimeVoiceRoute
+            && !isLocalVoiceRoute
+            && selectedTranscriptionProviderID == .assemblyAI
+    }
+
+    private var shouldShowDeepgramKey: Bool {
+        isDeepgramVoiceAgentRoute
+            || (!isRealtimeVoiceRoute
+                && !isLocalVoiceRoute
+                && (selectedTranscriptionProviderID == .deepgram
+                    || companionManager.selectedTTSProvider == .deepgram))
+    }
+
+    private var shouldShowElevenLabsKey: Bool {
+        !isRealtimeVoiceRoute
+            && !isLocalVoiceRoute
+            && companionManager.selectedTTSProvider == .elevenLabs
+    }
+
+    private var shouldShowCartesiaKey: Bool {
+        !isRealtimeVoiceRoute
+            && !isLocalVoiceRoute
+            && companionManager.selectedTTSProvider == .cartesia
+    }
+
+    private var shouldShowClaudeKey: Bool {
+        !isLocalVoiceRoute
+            && (selectedVoiceModelOption.provider == .anthropic
+                || OpenClickyModelCatalog.computerUseModel(withID: companionManager.selectedComputerUseModel).provider == .anthropic)
+    }
+
+    private var shouldShowCoreProviderKeys: Bool {
+        shouldShowOpenAIKey || shouldShowClaudeKey
+    }
+
     private var advancedVoiceProviderPanel: some View {
         VStack(alignment: .leading, spacing: 14) {
             voiceRouteOverview
@@ -929,12 +1043,12 @@ struct OpenClickySettingsView: View {
                     select: { companionManager.setSelectedModel($0) }
                 )
 
-                if OpenClickyModelCatalog.voiceResponseModel(withID: companionManager.selectedModel).provider == .openAI,
-                   OpenClickyModelCatalog.isSpeechModelID(companionManager.selectedModel) {
+                if selectedVoiceModelOption.provider == .openAI,
+                   isRealtimeVoiceRoute {
                     openAIRealtimeVoicePicker
                 }
 
-                if OpenClickyModelCatalog.voiceResponseModel(withID: companionManager.selectedModel).provider == .deepgram {
+                if isDeepgramVoiceAgentRoute {
                     Text("Deepgram Voice Agent uses one WebSocket for listening, thinking, and speaking; it reuses the Deepgram key configured in Advanced Providers.")
                         .font(appUIFont(size: subtextFontSize, weight: .regular))
                         .foregroundColor(.secondary)
@@ -962,65 +1076,71 @@ struct OpenClickySettingsView: View {
                 }
             }
 
-            settingsGroup("Transcription provider") {
-                if OpenClickyModelCatalog.isSpeechModelID(companionManager.selectedModel) {
+            if shouldShowTranscriptionProviderControls {
+                settingsGroup(isLocalVoiceRoute ? "Local listening" : "Listening provider") {
+                    valueRow(
+                        title: "Current provider",
+                        subtitle: companionManager.buddyDictationManager.transcriptionProviderDisplayName,
+                        systemImageName: "waveform"
+                    )
+
+                    if let transcriptionError = companionManager.buddyDictationManager.lastErrorMessage,
+                       !transcriptionError.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        warningRow(
+                            title: "Transcription error",
+                            subtitle: transcriptionError
+                        )
+                    }
+
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+                        ForEach(visibleTranscriptionProviders) { provider in
+                            optionButton(
+                                title: provider.label,
+                                subtitle: provider.subtitle,
+                                isSelected: companionManager.buddyDictationManager.transcriptionProviderID == provider.rawValue,
+                                action: { companionManager.setVoiceTranscriptionProvider(provider.rawValue) }
+                            )
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 12)
+                }
+            } else if isRealtimeVoiceRoute {
+                settingsGroup("Realtime input") {
                     valueRow(
                         title: "Current input path",
-                        subtitle: "GPT Realtime is selected, so OpenClicky streams microphone audio directly to Realtime instead of using Whisper or another speech-to-text provider.",
+                        subtitle: "Realtime owns listening, thinking, and speech output, so separate STT providers are hidden.",
                         systemImageName: "waveform.badge.mic"
                     )
                 }
-
-                valueRow(
-                    title: "Current provider",
-                    subtitle: OpenClickyModelCatalog.isSpeechModelID(companionManager.selectedModel)
-                        ? "Bypassed while GPT Realtime is the response voice model"
-                        : companionManager.buddyDictationManager.transcriptionProviderDisplayName,
-                    systemImageName: "waveform"
-                )
-
-                if let transcriptionError = companionManager.buddyDictationManager.lastErrorMessage,
-                   !transcriptionError.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    warningRow(
-                        title: "Transcription error",
-                        subtitle: transcriptionError
-                    )
-                }
-
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
-                    ForEach(BuddyTranscriptionProviderFactory.providerIDsForSelectionGrid()) { provider in
-                        optionButton(
-                            title: provider.label,
-                            subtitle: provider.subtitle,
-                            isSelected: companionManager.buddyDictationManager.transcriptionProviderID == provider.rawValue,
-                            action: { companionManager.setVoiceTranscriptionProvider(provider.rawValue) }
-                        )
-                    }
-                }
             }
 
-            settingsGroup("Playback") {
-                Text(OpenClickyModelCatalog.isSpeechModelID(companionManager.selectedModel)
-                    ? "GPT Realtime is selected as the response voice model, so it owns playback for voice replies."
-                    : "Choose the separate TTS provider used when a normal text model generates OpenClicky's reply.")
-                    .font(appUIFont(size: subtextFontSize, weight: .regular))
-                    .foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            if shouldShowPlaybackProviderControls {
+                settingsGroup(isLocalVoiceRoute ? "Local playback" : "Playback") {
+                    Text(isLocalVoiceRoute
+                        ? "Local profile keeps remote playback providers hidden. Microsoft Edge voice is the lightweight default."
+                        : "Choose the separate TTS provider used when a normal text model generates OpenClicky's reply.")
+                        .font(appUIFont(size: subtextFontSize, weight: .regular))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 14)
+                        .padding(.top, 11)
 
-                if !OpenClickyModelCatalog.isSpeechModelID(companionManager.selectedModel) {
-                    Picker("Playback engine", selection: Binding(
-                        get: { companionManager.selectedTTSProvider },
-                        set: { companionManager.setTTSProvider($0) }
-                    )) {
-                        ForEach(OpenClickyTTSProvider.allCases.filter { $0 != .openAIRealtime }) { provider in
-                            Text(provider.displayName).tag(provider)
+                    if visiblePlaybackProviders.count > 1 {
+                        Picker("Playback engine", selection: Binding(
+                            get: { companionManager.selectedTTSProvider },
+                            set: { companionManager.setTTSProvider($0) }
+                        )) {
+                            ForEach(visiblePlaybackProviders) { provider in
+                                Text(provider.displayName).tag(provider)
+                            }
                         }
+                        .pickerStyle(.segmented)
+                        .padding(.horizontal, 14)
+                        .padding(.bottom, 8)
                     }
-                    .pickerStyle(.segmented)
-                    .padding(.horizontal, 4)
-                }
 
-                switch companionManager.selectedTTSProvider {
+                    switch companionManager.selectedTTSProvider {
                 case .openAIRealtime:
                     EmptyView()
                 case .elevenLabs:
@@ -1091,6 +1211,7 @@ struct OpenClickySettingsView: View {
                             set: { userMicrosoftEdgeVoiceID = $0; companionManager.setMicrosoftEdgeVoiceID($0) }
                         )
                     )
+                    }
                 }
             }
         }
@@ -1163,28 +1284,42 @@ struct OpenClickySettingsView: View {
         VStack(alignment: .leading, spacing: 14) {
             advancedVoiceProviderPanel
 
-            settingsGroup("OpenAI and Claude") {
-                secureFieldRow(
-                    title: "Codex/OpenAI API key",
-                    subtitle: "Used for Agent Mode overrides and GPT Realtime voice when a key is needed.",
-                    systemImageName: "key",
-                    placeholder: "OpenAI key",
-                    text: Binding(
-                        get: { userCodexAgentAPIKey },
-                        set: { userCodexAgentAPIKey = $0; companionManager.setCodexAgentAPIKey($0) }
-                    )
-                )
+            if shouldShowCoreProviderKeys {
+                settingsGroup("Core provider keys") {
+                    if shouldShowOpenAIKey {
+                        secureFieldRow(
+                            title: "Codex/OpenAI API key",
+                            subtitle: "Used by the selected OpenAI voice route or Whisper listening provider when a key is needed.",
+                            systemImageName: "key",
+                            placeholder: "OpenAI key",
+                            text: Binding(
+                                get: { userCodexAgentAPIKey },
+                                set: { userCodexAgentAPIKey = $0; companionManager.setCodexAgentAPIKey($0) }
+                            )
+                        )
+                    }
 
-                secureFieldRow(
-                    title: "Anthropic API key",
-                    subtitle: "Optional key for Claude voice and pointing providers.",
-                    systemImageName: "key",
-                    placeholder: "Anthropic key",
-                    text: Binding(
-                        get: { userAnthropicAPIKey },
-                        set: { userAnthropicAPIKey = $0; companionManager.setAnthropicAPIKey($0) }
+                    if shouldShowClaudeKey {
+                        secureFieldRow(
+                            title: "Anthropic API key",
+                            subtitle: "Optional key for the selected Claude voice or pointing provider.",
+                            systemImageName: "key",
+                            placeholder: "Anthropic key",
+                            text: Binding(
+                                get: { userAnthropicAPIKey },
+                                set: { userAnthropicAPIKey = $0; companionManager.setAnthropicAPIKey($0) }
+                            )
+                        )
+                    }
+                }
+            } else if isLocalVoiceRoute {
+                settingsGroup("Current provider keys") {
+                    valueRow(
+                        title: "No cloud voice keys needed",
+                        subtitle: "Local voice uses Parakeet or Apple Speech for listening and Microsoft Edge playback, so remote provider keys stay hidden until you choose a remote route.",
+                        systemImageName: "checkmark.shield"
                     )
-                )
+                }
             }
 
             settingsGroup("Hosted endpoints") {
@@ -1216,54 +1351,68 @@ struct OpenClickySettingsView: View {
                 )
             }
 
-            detailedLocalListeningGroup
-
-            settingsGroup("Listening providers") {
-                secureFieldRow(
-                    title: "AssemblyAI listening key",
-                    subtitle: "Used by the AssemblyAI streaming transcription provider.",
-                    systemImageName: "key",
-                    placeholder: "AssemblyAI key",
-                    text: Binding(
-                        get: { userAssemblyAIAPIKey },
-                        set: { userAssemblyAIAPIKey = $0; companionManager.setAssemblyAIAPIKey($0) }
-                    )
-                )
-
-                secureFieldRow(
-                    title: "Deepgram listening key",
-                    subtitle: "Used by Deepgram streaming transcription, Aura TTS, and Deepgram Voice Agent.",
-                    systemImageName: "key",
-                    placeholder: "Deepgram key",
-                    text: Binding(
-                        get: { userDeepgramAPIKey },
-                        set: { userDeepgramAPIKey = $0; companionManager.setDeepgramAPIKey($0) }
-                    )
-                )
+            if shouldShowLocalListeningControls {
+                detailedLocalListeningGroup
             }
 
-            settingsGroup("Playback providers") {
-                secureFieldRow(
-                    title: "ElevenLabs API key",
-                    subtitle: "Used for spoken OpenClicky replies when ElevenLabs is selected.",
-                    systemImageName: "key",
-                    placeholder: "ElevenLabs key",
-                    text: Binding(
-                        get: { userElevenLabsAPIKey },
-                        set: { userElevenLabsAPIKey = $0; companionManager.setElevenLabsAPIKey($0) }
-                    )
-                )
+            if shouldShowListeningProviderSecrets {
+                settingsGroup("Listening provider keys") {
+                    if shouldShowAssemblyAIKey {
+                        secureFieldRow(
+                            title: "AssemblyAI listening key",
+                            subtitle: "Used by the selected AssemblyAI streaming transcription provider.",
+                            systemImageName: "key",
+                            placeholder: "AssemblyAI key",
+                            text: Binding(
+                                get: { userAssemblyAIAPIKey },
+                                set: { userAssemblyAIAPIKey = $0; companionManager.setAssemblyAIAPIKey($0) }
+                            )
+                        )
+                    }
 
-                secureFieldRow(
-                    title: "Cartesia API key",
-                    subtitle: "Used for spoken OpenClicky replies when Cartesia is selected.",
-                    systemImageName: "key",
-                    placeholder: "Cartesia key",
-                    text: Binding(
-                        get: { userCartesiaAPIKey },
-                        set: { userCartesiaAPIKey = $0; companionManager.setCartesiaAPIKey($0) }
-                    )
-                )
+                    if shouldShowDeepgramKey {
+                        secureFieldRow(
+                            title: "Deepgram key",
+                            subtitle: "Used by the selected Deepgram listening, Aura TTS, or Voice Agent route.",
+                            systemImageName: "key",
+                            placeholder: "Deepgram key",
+                            text: Binding(
+                                get: { userDeepgramAPIKey },
+                                set: { userDeepgramAPIKey = $0; companionManager.setDeepgramAPIKey($0) }
+                            )
+                        )
+                    }
+                }
+            }
+
+            if shouldShowPlaybackProviderSecrets {
+                settingsGroup("Playback provider keys") {
+                    if shouldShowElevenLabsKey {
+                        secureFieldRow(
+                            title: "ElevenLabs API key",
+                            subtitle: "Used for spoken OpenClicky replies when ElevenLabs is selected.",
+                            systemImageName: "key",
+                            placeholder: "ElevenLabs key",
+                            text: Binding(
+                                get: { userElevenLabsAPIKey },
+                                set: { userElevenLabsAPIKey = $0; companionManager.setElevenLabsAPIKey($0) }
+                            )
+                        )
+                    }
+
+                    if shouldShowCartesiaKey {
+                        secureFieldRow(
+                            title: "Cartesia API key",
+                            subtitle: "Used for spoken OpenClicky replies when Cartesia is selected.",
+                            systemImageName: "key",
+                            placeholder: "Cartesia key",
+                            text: Binding(
+                                get: { userCartesiaAPIKey },
+                                set: { userCartesiaAPIKey = $0; companionManager.setCartesiaAPIKey($0) }
+                            )
+                        )
+                    }
+                }
             }
 
             settingsGroup("Agent Mode Model") {

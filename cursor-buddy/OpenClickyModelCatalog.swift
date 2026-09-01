@@ -70,7 +70,7 @@ nonisolated enum OpenClickyVoiceBackendFamily: String, CaseIterable, Equatable, 
         case .codex:
             return OpenClickyModelCatalog.defaultCodexActionsModelID
         case .claude:
-            return "claude-haiku-4-5"
+            return OpenClickyModelCatalog.defaultAnthropicResponseModelID
         }
     }
 }
@@ -95,7 +95,8 @@ nonisolated enum OpenClickyModelCatalog {
     /// hears the user, routes direct computer-use locally, and delegates
     /// background work to the configured Codex model.
     static let defaultVoiceResponseModelID = defaultSpeechModelID
-    static let defaultCodexActionsModelID = "gpt-5.5"
+    static let defaultAnthropicResponseModelID = "fable-5"
+    static let defaultCodexActionsModelID = "gpt-5.6-sol"
     /// On-device Apple Foundation Models (macOS 26+ / Apple Intelligence).
     static let appleFoundationModelID = "apple-foundation"
     /// Text/vision model used when a live speech model needs screenshots,
@@ -103,7 +104,7 @@ nonisolated enum OpenClickyModelCatalog {
     static let defaultVoiceAnalysisModelID = defaultCodexActionsModelID
     /// Heavier model used when the voice responder delegates a coding/agent task.
     /// Coding work goes here; the voice path stays on the fast model.
-    static let defaultDelegationModelID = "claude-sonnet-4-6"
+    static let defaultDelegationModelID = "sonnet-5"
     static let defaultComputerUseModelID = defaultCodexActionsModelID
 
     /// Resolves the delegation model — falls back to a sensible coder
@@ -123,13 +124,12 @@ nonisolated enum OpenClickyModelCatalog {
         // hard generation ceiling. Long spoken explanations can stream
         // sentence-by-sentence through TTS without being cut off.
         OpenClickyModelOption(id: appleFoundationModelID, label: "Apple On-Device", provider: .apple, maxOutputTokens: 64_000),
-        OpenClickyModelOption(id: "claude-haiku-4-5", label: "Claude Haiku", provider: .anthropic, maxOutputTokens: 64_000),
-        OpenClickyModelOption(id: "claude-sonnet-4-6", label: "Claude Sonnet", provider: .anthropic, maxOutputTokens: 64_000),
-        OpenClickyModelOption(id: "claude-opus-4-6", label: "Claude Opus", provider: .anthropic, maxOutputTokens: 128_000),
-        OpenClickyModelOption(id: "gpt-5.5", label: "GPT-5.5", provider: .openAI, maxOutputTokens: 128_000),
-        OpenClickyModelOption(id: "gpt-5.4", label: "GPT-5.4", provider: .openAI, maxOutputTokens: 128_000),
-        OpenClickyModelOption(id: "gpt-5.4-mini", label: "GPT-5.4 Mini", provider: .openAI, maxOutputTokens: 128_000),
-        OpenClickyModelOption(id: "gpt-5.2", label: "GPT-5.2", provider: .openAI, maxOutputTokens: 128_000)
+        OpenClickyModelOption(id: "fable-5", label: "Fable 5", provider: .anthropic, maxOutputTokens: 64_000),
+        OpenClickyModelOption(id: "sonnet-5", label: "Sonnet 5", provider: .anthropic, maxOutputTokens: 64_000),
+        OpenClickyModelOption(id: "opus-5", label: "Opus 5", provider: .anthropic, maxOutputTokens: 128_000),
+        OpenClickyModelOption(id: "gpt-5.6-sol", label: "GPT-5.6 Sol", provider: .openAI, maxOutputTokens: 128_000),
+        OpenClickyModelOption(id: "gpt-5.6-terra", label: "GPT-5.6 Terra", provider: .openAI, maxOutputTokens: 128_000),
+        OpenClickyModelOption(id: "gpt-5.6-luna", label: "GPT-5.6 Luna", provider: .openAI, maxOutputTokens: 128_000)
     ]
 
     static let speechModels: [OpenClickyModelOption] = [
@@ -148,23 +148,19 @@ nonisolated enum OpenClickyModelCatalog {
     static let responseVoiceModels: [OpenClickyModelOption] = speechModels + voiceResponseModels
 
     static let computerUseModels: [OpenClickyModelOption] = [
-        OpenClickyModelOption(id: "claude-sonnet-4-6", label: "Claude Sonnet", provider: .anthropic, maxOutputTokens: 64_000),
-        OpenClickyModelOption(id: "claude-opus-4-6", label: "Claude Opus", provider: .anthropic, maxOutputTokens: 128_000),
+        OpenClickyModelOption(id: "sonnet-5", label: "Sonnet 5", provider: .anthropic, maxOutputTokens: 64_000),
+        OpenClickyModelOption(id: "opus-5", label: "Opus 5", provider: .anthropic, maxOutputTokens: 128_000),
         OpenClickyModelOption(id: "gpt-realtime-2.1-mini", label: "GPT Realtime 2.1 mini", provider: .openAI, maxOutputTokens: 128_000),
         OpenClickyModelOption(id: "gpt-realtime-2.1", label: "GPT Realtime 2.1", provider: .openAI, maxOutputTokens: 128_000),
-        OpenClickyModelOption(id: "gpt-5.5", label: "GPT-5.5", provider: .codex, maxOutputTokens: 128_000),
-        OpenClickyModelOption(id: "gpt-5.4", label: "GPT-5.4", provider: .codex, maxOutputTokens: 128_000),
-        OpenClickyModelOption(id: "gpt-5.4-mini", label: "GPT-5.4 Mini", provider: .codex, maxOutputTokens: 128_000),
-        OpenClickyModelOption(id: "gpt-5.2", label: "GPT-5.2", provider: .codex, maxOutputTokens: 128_000)
+        OpenClickyModelOption(id: "gpt-5.6-sol", label: "GPT-5.6 Sol", provider: .codex, maxOutputTokens: 128_000),
+        OpenClickyModelOption(id: "gpt-5.6-terra", label: "GPT-5.6 Terra", provider: .codex, maxOutputTokens: 128_000),
+        OpenClickyModelOption(id: "gpt-5.6-luna", label: "GPT-5.6 Luna", provider: .codex, maxOutputTokens: 128_000)
     ]
 
     static let codexActionsModels: [OpenClickyModelOption] = [
-        OpenClickyModelOption(id: "gpt-5.5", label: "GPT-5.5", provider: .openAI, maxOutputTokens: 128_000),
-        OpenClickyModelOption(id: "gpt-5.4", label: "GPT-5.4", provider: .openAI, maxOutputTokens: 128_000),
-        OpenClickyModelOption(id: "gpt-5.4-mini", label: "GPT-5.4 Mini", provider: .openAI, maxOutputTokens: 128_000),
-        OpenClickyModelOption(id: "gpt-5.3-codex", label: "GPT-5.3 Codex", provider: .openAI, maxOutputTokens: 128_000),
-        OpenClickyModelOption(id: "gpt-5.2-codex", label: "GPT-5.2 Codex", provider: .openAI, maxOutputTokens: 128_000),
-        OpenClickyModelOption(id: "gpt-5.2", label: "GPT-5.2", provider: .openAI, maxOutputTokens: 128_000)
+        OpenClickyModelOption(id: "gpt-5.6-sol", label: "GPT-5.6 Sol", provider: .openAI, maxOutputTokens: 128_000),
+        OpenClickyModelOption(id: "gpt-5.6-terra", label: "GPT-5.6 Terra", provider: .openAI, maxOutputTokens: 128_000),
+        OpenClickyModelOption(id: "gpt-5.6-luna", label: "GPT-5.6 Luna", provider: .openAI, maxOutputTokens: 128_000)
     ]
     // Local MLX models are intentionally NOT offered for Agent Mode: the local
     // endpoint (mlx_lm at 127.0.0.1:32124) only speaks /v1/chat/completions,
@@ -180,6 +176,16 @@ nonisolated enum OpenClickyModelCatalog {
         switch trimmed.lowercased() {
         case "gpt-realtime-2", "gpt-realtime-2.0", "gpt-realtime-2-mini":
             return defaultSpeechModelID
+        case "claude-haiku-4-5", "claude-haiku-4-6", "haiku-5", "fable", "claude-fable-5":
+            return defaultAnthropicResponseModelID
+        case "claude-sonnet-4-6", "sonnet", "claude-sonnet-5":
+            return "sonnet-5"
+        case "claude-opus-4-6", "opus", "claude-opus-5":
+            return "opus-5"
+        case "gpt-5.5", "gpt-5.4", "gpt-5.3-codex", "gpt-5.2-codex", "gpt-5.2":
+            return defaultCodexActionsModelID
+        case "gpt-5.4-mini":
+            return "gpt-5.6-luna"
         default:
             return trimmed
         }

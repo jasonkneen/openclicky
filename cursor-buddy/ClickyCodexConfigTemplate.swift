@@ -105,9 +105,14 @@ struct ClickyCodexConfigTemplate: Equatable {
                 "",
                 "[mcp_servers.cuaDriver]",
                 "command = \"\(escape(cuaDriverMCPCommand))\"",
-                "args = [\"mcp\"]",
+                // Keep the driver inside OpenClicky's macOS permission
+                // identity. Current Cua Driver releases otherwise proxy to a
+                // separately installed CuaDriver.app, which splits TCC grants
+                // and makes the bundled runtime unusable on a clean install.
+                "args = [\"mcp\", \"--direct\", \"--embedded\", \"--no-overlay\"]",
                 "",
                 "[mcp_servers.cuaDriver.env]",
+                "CUA_DRIVER_EMBEDDED = \"1\"",
                 "CUA_DRIVER_TELEMETRY_ENABLED = \"false\"",
                 "CUA_TELEMETRY_ENABLED = \"false\""
             ])

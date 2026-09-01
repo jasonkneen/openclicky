@@ -36,7 +36,7 @@ class ElementLocationDetector {
         (1366, 768,  1366.0 / 768.0)   // ~16:9  = 1.779 (external monitors, ultrawide fallback)
     ]
 
-    init(apiKey: String, model: String = "claude-sonnet-4-6") {
+    init(apiKey: String, model: String = "sonnet-5") {
         let modelOption = OpenClickyModelCatalog.computerUseModel(withID: model)
         self.apiKey = apiKey
         self.apiURL = URL(string: "\(AppBundleConfiguration.anthropicBaseURL())/v1/messages")!

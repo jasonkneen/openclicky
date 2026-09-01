@@ -393,13 +393,18 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
     }
 
     var isRelaunchResumeCandidate: Bool {
+        guard let lastSubmittedPrompt,
+              !Self.isContextOnlyPrompt(lastSubmittedPrompt) else {
+            return false
+        }
+
         switch status {
         case .starting, .running:
             return true
         case .failed:
-            return lastSubmittedPrompt != nil
+            return true
         case .ready:
-            return progressStage != .completed && lastSubmittedPrompt != nil
+            return progressStage != .completed
         case .stopped:
             return false
         }
@@ -430,7 +435,7 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
         lastSubmittedPrompt
     }
     private var currentLeasePaths: [String] = []
-    private static let codexRuntimeCompatibilityFallbackModel = "gpt-5.4-mini"
+    private static let codexRuntimeCompatibilityFallbackModel = "gpt-5.6-luna"
     private static let assistantDeltaFlushDelayNanoseconds: UInt64 = 180_000_000
 
     init(
@@ -503,8 +508,21 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
         progressStage = (!canResume && hasFinishedAgentResponse) ? .completed : .idle
         lastErrorMessage = nil
         stopReason = "restored_after_relaunch"
-        wasRestoredAfterRelaunch = canResume
+        wasRestoredAfterRelaunch = canResume && !Self.isContextOnlyPrompt(restoredPrompt ?? "")
         status = restoredEntries.isEmpty ? .stopped : .ready
+    }
+
+    private static func isContextOnlyPrompt(_ prompt: String) -> Bool {
+        let normalized = prompt
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+
+        return normalized == "using the current screen as context"
+            || normalized == "use the current screen as context"
+            || normalized == "using current screen as context"
+            || normalized == "use current screen as context"
     }
 
     func resumeInterruptedTaskAfterRelaunch() {
@@ -563,7 +581,7 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
 
     private func queueFollowUp(_ prompt: String) {
         queuedFollowUpPrompts.append(prompt)
-        appendActivityStatusLine("Queued follow-up: \(Self.spokenSnippet(from: prompt, maxLength: 90))")
+        appendActivityStatusLine("Follow-up queued")
     }
 
     private func startPromptTurn(_ prompt: String, screenContext: CodexAgentScreenContext? = nil) {
@@ -609,7 +627,11 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
                 "screenContextAttached": screenContext != nil
             ]
         )
-        appendActivityStatusLine("Queued request: \(Self.spokenSnippet(from: prompt, maxLength: 90))")
+        // The task title and transcript already preserve the user's request.
+        // Echoing it here made the parked status look like OpenClicky was
+        // forwarding the instruction to somebody else, and made fallback TTS
+        // literally say "queued request". Keep activity status action-based.
+        appendActivityStatusLine("Starting task")
         status = .starting
         progressStage = .starting
         let sessionID = id
@@ -1338,15 +1360,36 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
     }
 
     private static func extractLikelyFilePaths(from text: String) -> [String] {
-        let pattern = #"(?:~|/)?(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.(?:swift|m|mm|h|cpp|c|js|ts|tsx|jsx|json|toml|yaml|yml|md|txt|plist|xcodeproj|pbxproj)"#
+        guard !isLogEvidencePrompt(text) else { return [] }
+
+        let pattern = #"((?:~|/)?(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.(?:xcodeproj|pbxproj|swift|plist|json|toml|yaml|tsx|jsx|cpp|yml|txt|md|mm|ts|js|h|c|m))(?![A-Za-z0-9._-])"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
         let nsText = text as NSString
         let matches = regex.matches(in: text, range: NSRange(location: 0, length: nsText.length))
         return matches.compactMap { match in
             guard match.range.location != NSNotFound else { return nil }
-            let candidate = nsText.substring(with: match.range)
+            let candidateRange = match.range(at: 1)
+            guard candidateRange.location != NSNotFound else { return nil }
+            let candidate = nsText.substring(with: candidateRange)
             return isLikelyRealFilePath(candidate) ? candidate : nil
         }
+    }
+
+    private static func isLogEvidencePrompt(_ text: String) -> Bool {
+        let lowered = text.lowercased()
+        let logSignals = [
+            "[openclickylog]",
+            "openclicky.conversation.turn",
+            "openclicky.agent_task.",
+            "codex.rpc.message",
+            "\"itemtype\":\"agentmessage\"",
+            "\"commandpreview\"",
+            "analyze the pasted openclicky logs as evidence"
+        ]
+        let signalCount = logSignals.reduce(0) { count, signal in
+            lowered.contains(signal) ? count + 1 : count
+        }
+        return signalCount >= 2
     }
 
     private static func isLikelyRealFilePath(_ candidate: String) -> Bool {
@@ -1489,6 +1532,11 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
                 normalized.contains("authrequired")
                 || normalized.contains("no authorization: bearer header")
                 || normalized.contains("data did not match any variant of untagged enum jsonrpcmessage")
+                || (
+                    normalized.contains("http/request failed")
+                    && normalized.contains("127.0.0.1:")
+                    && normalized.contains("/mcp")
+                )
             ) {
             return true
         }
@@ -1874,7 +1922,7 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
         }
 
         if let anthropicAPIKey = AppBundleConfiguration.anthropicAPIKey() {
-            let fastAnthropicModel = "claude-haiku-4-5"
+            let fastAnthropicModel = OpenClickyModelCatalog.defaultAnthropicResponseModelID
             do {
                 let api = ClaudeAPI(
                     apiKey: anthropicAPIKey,
@@ -1915,7 +1963,7 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
         }
 
         if let openAIAPIKey = AppBundleConfiguration.openAIAPIKey() {
-            let fastOpenAIModel = "gpt-5.4-mini"
+            let fastOpenAIModel = "gpt-5.6-luna"
             do {
                 let api = OpenAIAPI(
                     apiKey: openAIAPIKey,
@@ -2388,6 +2436,10 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
 
 #if DEBUG
 extension CodexAgentSession {
+    static func testExtractLikelyFilePaths(from text: String) -> [String] {
+        extractLikelyFilePaths(from: text)
+    }
+
     func setTestStatus(_ status: CodexAgentSessionStatus) {
         self.status = status
     }

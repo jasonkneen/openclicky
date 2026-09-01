@@ -298,6 +298,9 @@ struct ConversationSidebarView: View {
   }
 
   private func newChat() {
-    _ = companion.createAndSelectNewCodexAgentSession()
+    Task { @MainActor in
+      await Task.yield()
+      _ = companion.createAndSelectNewCodexAgentSession()
+    }
   }
 }

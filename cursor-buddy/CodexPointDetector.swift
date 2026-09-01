@@ -10,7 +10,7 @@ import CoreGraphics
 import Foundation
 
 final class CodexPointDetector {
-    private static let codexRuntimeCompatibilityFallbackModel = "gpt-5.4-mini"
+    private static let codexRuntimeCompatibilityFallbackModel = "gpt-5.6-luna"
 
     private let model: String
     private let fileManager: FileManager
@@ -231,7 +231,7 @@ final class CodexPointDetector {
     }
 
     #if DEBUG
-    static func testCodexExecArguments(model: String = "gpt-5.4") -> [String] {
+    static func testCodexExecArguments(model: String = "gpt-5.6-sol") -> [String] {
         let directory = URL(fileURLWithPath: "/tmp/OpenClickyCodexPointDetectorTest", isDirectory: true)
         return codexExecArguments(
             model: model,

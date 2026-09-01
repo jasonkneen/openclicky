@@ -577,7 +577,10 @@ struct CodexHUDView: View {
                     }
 
                     Button(action: {
-                        companionManager.createAndSelectNewCodexAgentSession()
+                        Task { @MainActor in
+                            await Task.yield()
+                            companionManager.createAndSelectNewCodexAgentSession()
+                        }
                     }) {
                         Label("New", systemImage: "plus.message.fill")
                             .font(appUIFont(size: max(10, subtextFontSize - 1), weight: .semibold))

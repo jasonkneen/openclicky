@@ -156,6 +156,38 @@ struct OpenClickyComputerUseTests {
         #expect(CompanionManager.testNativeKeyPress(from: "Press command k in Spotify.")?.modifiers == ["command"])
     }
 
+    @Test func conversationalPageNavigationStaysInsideTheVoiceComputerUseTurn() throws {
+        #expect(CompanionManager.testNativeKeyPress(from: "To the next page.")?.key == "pagedown")
+        #expect(CompanionManager.testNativeKeyPress(from: "Can you take me to the next page?")?.key == "pagedown")
+        #expect(CompanionManager.testNativeKeyPress(from: "Go to the previous page.")?.key == "pageup")
+        #expect(CompanionManager.testNativeKeyPress(from: "Scroll one page up.")?.key == "pageup")
+    }
+
+    @Test func conversationalComputerUseClickRequestsStayOnDirectActionRoute() throws {
+        let referential = CompanionManager.testNativeClick(
+            from: "OK, can you do computer use then and click that?"
+        )
+        #expect(referential?.targetPhrase == nil)
+        #expect(referential?.prefersLastPointedElement == true)
+
+        let explicitComputerUse = CompanionManager.testNativeClick(
+            from: "Okay, use computer use to click that."
+        )
+        #expect(explicitComputerUse?.prefersLastPointedElement == true)
+
+        let correctedTarget = CompanionManager.testNativeClick(
+            from: "Oh, no, no. Click on my basket."
+        )
+        #expect(correctedTarget?.targetPhrase == "my basket")
+        #expect(correctedTarget?.prefersLastPointedElement == false)
+
+        #expect(
+            CompanionManager.testWebOpenTarget(
+                from: "yeah, open the browser and go to amazon dot co dot uk"
+            )?.url == "https://amazon.co.uk"
+        )
+    }
+
     @MainActor @Test func compositeAppCommandsPreserveTheFollowUpAction() throws {
         let spotifyAction = CompanionManager.testCompositeAppAction(
             from: "Open Spotify and play AC/DC Back in Black."
@@ -256,7 +288,7 @@ struct OpenClickyComputerUseTests {
         #expect(apple.provider.voiceBackendFamily == .apple)
         #expect(apple.maxOutputTokens >= 64_000)
         #expect(OpenClickyVoiceBackendFamily.apple.defaultModelID == OpenClickyModelCatalog.appleFoundationModelID)
-        #expect(OpenClickyVoiceBackendFamily.claude.defaultModelID == "claude-haiku-4-5")
+        #expect(OpenClickyVoiceBackendFamily.claude.defaultModelID == "fable-5")
         #expect(OpenClickyVoiceBackendFamily.codex.defaultModelID == OpenClickyModelCatalog.defaultCodexActionsModelID)
         #expect(OpenClickyVoiceBackendFamily.allCases.count == 3)
 
@@ -321,7 +353,7 @@ struct OpenClickyComputerUseTests {
         let resolved = OpenClickyModelCatalog.voiceResponseModel(withID: "definitely-not-a-real-model-id")
         #expect(resolved.id == OpenClickyModelCatalog.defaultVoiceResponseModelID)
         #expect(OpenClickyModelCatalog.isSpeechModelID(resolved.id))
-        #expect(resolved.id != "claude-haiku-4-5")
+        #expect(resolved.id != "fable-5")
     }
 
     @Test func realtimeTwoUsesLowReasoningEffortForVoiceLatency() throws {
@@ -347,15 +379,15 @@ struct OpenClickyComputerUseTests {
     }
 
     @Test func nonSpeechModelsRemainSelectedForVoiceAnalysis() throws {
-        #expect(OpenClickyModelCatalog.voiceAnalysisModel(withID: "gpt-5.5").id == "gpt-5.5")
-        #expect(OpenClickyModelCatalog.codexVoiceSessionModel(withID: "gpt-5.5").id == "gpt-5.5")
+        #expect(OpenClickyModelCatalog.voiceAnalysisModel(withID: "gpt-5.6-sol").id == "gpt-5.6-sol")
+        #expect(OpenClickyModelCatalog.codexVoiceSessionModel(withID: "gpt-5.6-sol").id == "gpt-5.6-sol")
     }
 
     @Test func realtimeVoiceUsesRealtimeForComputerUsePointing() throws {
         #expect(
             CompanionManager.testComputerUsePointingResolver(
                 selectedVoiceModelID: "gpt-realtime-2.1-mini",
-                selectedComputerUseModelID: "gpt-5.5"
+                selectedComputerUseModelID: "gpt-5.6-sol"
             ) == "openai_realtime"
         )
     }
@@ -365,7 +397,7 @@ struct OpenClickyComputerUseTests {
         #expect(model.provider == .openAI)
         #expect(
             CompanionManager.testComputerUsePointingResolver(
-                selectedVoiceModelID: "gpt-5.5",
+                selectedVoiceModelID: "gpt-5.6-sol",
                 selectedComputerUseModelID: "gpt-realtime-2.1-mini"
             ) == "openai_realtime"
         )
@@ -374,20 +406,20 @@ struct OpenClickyComputerUseTests {
     @Test func nonRealtimeVoiceKeepsSelectedComputerUsePointingResolver() throws {
         #expect(
             CompanionManager.testComputerUsePointingResolver(
-                selectedVoiceModelID: "gpt-5.5",
-                selectedComputerUseModelID: "gpt-5.5"
+                selectedVoiceModelID: "gpt-5.6-sol",
+                selectedComputerUseModelID: "gpt-5.6-sol"
             ) == "codex_cli"
         )
         #expect(
             CompanionManager.testComputerUsePointingResolver(
-                selectedVoiceModelID: "claude-haiku-4-5",
-                selectedComputerUseModelID: "gpt-5.5"
+                selectedVoiceModelID: "fable-5",
+                selectedComputerUseModelID: "gpt-5.6-sol"
             ) == "codex_cli"
         )
         #expect(
             CompanionManager.testComputerUsePointingResolver(
-                selectedVoiceModelID: "claude-haiku-4-5",
-                selectedComputerUseModelID: "claude-sonnet-4-6"
+                selectedVoiceModelID: "fable-5",
+                selectedComputerUseModelID: "sonnet-5"
             ) == "anthropic_api"
         )
     }

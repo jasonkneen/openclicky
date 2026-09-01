@@ -29,7 +29,7 @@ class ClaudeAPI {
     var maxOutputTokens: Int
     private let session: URLSession
 
-    init(apiKey: String?, model: String = "claude-sonnet-4-6", maxOutputTokens: Int = 64_000) {
+    init(apiKey: String?, model: String = "sonnet-5", maxOutputTokens: Int = 64_000) {
         self.apiKey = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.apiURL = URL(string: "\(AppBundleConfiguration.anthropicBaseURL())/v1/messages")!
         self.model = model

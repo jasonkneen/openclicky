@@ -765,12 +765,15 @@ extension OpenClickyNotchPanelView {
     private func specialistAgentTile(_ agent: OpenClickyAgentDefinition) -> some View {
         let accent = specialistAgentAccentColor(agent)
         return Button {
-            let session = companionManager.createAndSelectNewCodexAgentSession(asAgent: agent)
-            agentPanelSelection = .sessions
-            expandedAgentSessionID = nil
-            agentSessionFilter = .active
-            companionManager.selectCodexAgentSession(session.id)
-            notifyPanelSizeChanged()
+            Task { @MainActor in
+                await Task.yield()
+                let session = companionManager.createAndSelectNewCodexAgentSession(asAgent: agent)
+                agentPanelSelection = .sessions
+                expandedAgentSessionID = nil
+                agentSessionFilter = .active
+                companionManager.selectCodexAgentSession(session.id)
+                notifyPanelSizeChanged()
+            }
         } label: {
             HStack(spacing: 8) {
                 ZStack {
@@ -1127,12 +1130,15 @@ extension OpenClickyNotchPanelView {
     }
 
     private func runSkillDiscoveryNow() {
-        automationStore.ensureSkillDiscoveryAutomationInstalled()
-        if let agent = agentStore.agent(slug: OpenClickyAgentStore.skillDiscoveryAgentSlug) {
-            let session = companionManager.createAndSelectNewCodexAgentSession(asAgent: agent)
-            session.submitPromptFromUI(OpenClickyAutomationStore.skillDiscoveryAutomationPrompt, screenContext: nil)
-        } else {
-            companionManager.submitAgentPromptFromUI(OpenClickyAutomationStore.skillDiscoveryAutomationPrompt)
+        Task { @MainActor in
+            await Task.yield()
+            automationStore.ensureSkillDiscoveryAutomationInstalled()
+            if let agent = agentStore.agent(slug: OpenClickyAgentStore.skillDiscoveryAgentSlug) {
+                let session = companionManager.createAndSelectNewCodexAgentSession(asAgent: agent)
+                session.submitPromptFromUI(OpenClickyAutomationStore.skillDiscoveryAutomationPrompt, screenContext: nil)
+            } else {
+                companionManager.submitAgentPromptFromUI(OpenClickyAutomationStore.skillDiscoveryAutomationPrompt)
+            }
         }
     }
 

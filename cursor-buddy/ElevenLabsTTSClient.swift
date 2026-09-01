@@ -534,12 +534,17 @@ final class StreamingTTSSession {
     private var jobChain: Task<Void, Error>?
     private var didFireStartCallback = false
     private var scheduledFrameCount: AVAudioFramePosition = 0
+    private var scheduledSpeechChunkCount = 0
     private(set) var isCancelled = false
     private var sentenceCount = 0
-    /// Sentence-by-sentence TTS fetches can complete just-in-time. Keep
-    /// only a tiny PCM cushion before starting normal streamed speech:
-    /// the voice path is supposed to start speaking as soon as the first
-    /// sentence is synthesised, not wait for most of the model response.
+    /// Sentence fetches run in parallel but can finish unevenly. Starting
+    /// after only the first chunk lets AVAudioPlayerNode run dry before the
+    /// next network response arrives, which sounds like words are skipping.
+    /// Buffer a second normal speech chunk when one is available; finish()
+    /// still force-starts single-sentence replies without extra delay.
+    static let minimumSpeechChunksBeforePlayback = 2
+    /// Keep a small duration floor as well, so two unusually tiny fragments
+    /// do not start an under-buffered queue.
     /// Explicit pre-baked fillers still play immediately because they
     /// exist to cover latency.
     private static let minimumBufferedSecondsBeforePlayback: Double = 0.25
@@ -955,6 +960,7 @@ final class StreamingTTSSession {
                 )
                 if frames > 0 {
                     self.scheduledFrameCount += frames
+                    self.scheduledSpeechChunkCount += 1
                 }
                 self.maybeStartBufferedPlaybackIfReady()
             }
@@ -974,7 +980,10 @@ final class StreamingTTSSession {
         }
 
         let bufferedSeconds = Double(scheduledFrameCount) / sampleRate
-        guard force || bufferedSeconds >= Self.minimumBufferedSecondsBeforePlayback else {
+        guard force || (
+            scheduledSpeechChunkCount >= Self.minimumSpeechChunksBeforePlayback
+                && bufferedSeconds >= Self.minimumBufferedSecondsBeforePlayback
+        ) else {
             return
         }
 

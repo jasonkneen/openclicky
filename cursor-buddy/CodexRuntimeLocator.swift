@@ -91,20 +91,24 @@ nonisolated enum CodexRuntimeLocator {
         return executable
     }
 
-    /// `bin/codex` is a shell wrapper that execs `vendor/<arch>/codex/codex`.
+    /// `bin/codex` is a shell wrapper that execs the vendored native Codex binary.
     /// The vendor payload is not in git, so a checkout or stripped bundle can
     /// carry an executable wrapper whose target is missing — every launch then
     /// dies at exec. Only treat the wrapper as a usable runtime when its
     /// vendored binary is actually present.
     static func wrapperHasVendoredCodexBinary(_ wrapperURL: URL, fileManager: FileManager = .default) -> Bool {
-        let vendoredBinary = wrapperURL
+        let vendorRoot = wrapperURL
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .appendingPathComponent("vendor", isDirectory: true)
             .appendingPathComponent(currentCodexVendorArchitecture(), isDirectory: true)
-            .appendingPathComponent("codex", isDirectory: true)
-            .appendingPathComponent("codex", isDirectory: false)
-        return fileManager.isExecutableFile(atPath: vendoredBinary.path)
+        let candidates = [
+            vendorRoot.appendingPathComponent("bin/codex", isDirectory: false),
+            vendorRoot
+                .appendingPathComponent("codex", isDirectory: true)
+                .appendingPathComponent("codex", isDirectory: false)
+        ]
+        return candidates.contains { fileManager.isExecutableFile(atPath: $0.path) }
     }
 
     static func installedCodexAppExecutableURLs(fileManager: FileManager = .default) -> [URL] {
@@ -185,13 +189,15 @@ nonisolated enum CodexRuntimeLocator {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
         let architecture = currentCodexVendorArchitecture()
-        let vendorPath = runtimeDirectory
+        let vendorRoot = runtimeDirectory
             .appendingPathComponent("vendor", isDirectory: true)
             .appendingPathComponent(architecture, isDirectory: true)
-            .appendingPathComponent("path", isDirectory: true)
-            .path
+        let bundledToolDirectories = ["codex-path", "path"]
+            .map { vendorRoot.appendingPathComponent($0, isDirectory: true) }
+            .filter { FileManager.default.fileExists(atPath: $0.path) }
+            .map(\.path)
         let basePath = existingPath ?? "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
-        return "\(vendorPath):\(basePath)"
+        return (bundledToolDirectories + [basePath]).joined(separator: ":")
     }
 
     static func parsedVersion(from versionOutput: String) -> CodexRuntimeVersion? {

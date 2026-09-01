@@ -268,8 +268,11 @@ private struct AgentEditorView: View {
   }
 
   private func launch() {
-    if let fresh = store.agent(slug: agent.slug) {
-      _ = companion.createAndSelectNewCodexAgentSession(asAgent: fresh)
+    Task { @MainActor in
+      await Task.yield()
+      if let fresh = store.agent(slug: agent.slug) {
+        _ = companion.createAndSelectNewCodexAgentSession(asAgent: fresh)
+      }
     }
   }
 

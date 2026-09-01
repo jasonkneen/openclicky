@@ -47,8 +47,8 @@ nonisolated enum OpenClickyProfileCatalog {
         displayName: "Local",
         sttProvider: BuddyTranscriptionProviderID.parakeet.rawValue,
         // Anthropic provider -> Claude Agent SDK first (local Code sign-in,
-        // no per-token key) per the money rule. Haiku keeps it fast/cheap.
-        responseModelID: "claude-haiku-4-5",
+        // no per-token key) per the money rule. Fable keeps it fast/cheap.
+        responseModelID: OpenClickyModelCatalog.defaultAnthropicResponseModelID,
         ttsProvider: OpenClickyTTSProvider.microsoftEdge.rawValue,
         activationMode: OpenClickyVoiceActivationMode.pushToTalk.rawValue,
         ttsVoiceID: nil,
@@ -72,7 +72,7 @@ nonisolated enum OpenClickyProfileCatalog {
         id: "quality",
         displayName: "Quality",
         sttProvider: BuddyTranscriptionProviderID.deepgram.rawValue,
-        responseModelID: OpenClickyModelCatalog.defaultDelegationModelID, // claude-sonnet
+        responseModelID: OpenClickyModelCatalog.defaultDelegationModelID, // sonnet
         ttsProvider: OpenClickyTTSProvider.elevenLabs.rawValue,
         activationMode: OpenClickyVoiceActivationMode.pushToTalk.rawValue,
         ttsVoiceID: nil,

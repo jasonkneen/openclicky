@@ -56,7 +56,7 @@ final class ClaudeAgentSDKAPI {
     private static let requestTimeoutNanoseconds: UInt64 = 120_000_000_000
 
     init?(
-        model: String = "claude-haiku-4-5",
+        model: String = "fable-5",
         maxOutputTokens: Int = 64_000,
         fileManager: FileManager = .default,
         workingDirectory: URL? = nil

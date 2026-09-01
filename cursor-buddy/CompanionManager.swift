@@ -4396,7 +4396,9 @@ final class CompanionManager: ObservableObject {
             clearDetectedElementLocation()
             liveHandledComputerUseFingerprints.removeAll()
 
-            pendingKeyboardShortcutStartTask = Task {
+            pendingKeyboardShortcutStartTask = Task { [weak self] in
+                guard let buddyDictationManager = self?.buddyDictationManager else { return }
+
                 await buddyDictationManager.startPushToTalkFromKeyboardShortcut(
                     currentDraftText: "",
                     updateDraftText: { [weak self] partialTranscript in
@@ -5016,6 +5018,25 @@ final class CompanionManager: ObservableObject {
                         return true
                     }
                     self.suppressNextVoiceAgentStartAcknowledgement = false
+                    if toolName == "openclicky_use_computer" {
+                        let instruction = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !instruction.isEmpty else { return false }
+                        OpenClickyMessageLogStore.shared.append(
+                            lane: "computer-use",
+                            direction: "internal",
+                            event: "voice.realtime_bidirectional.computer_tool_route_unresolved",
+                            fields: [
+                                "transcript": instruction,
+                                "toolName": toolName,
+                                "executor": self.selectedComputerUseBackend.executorID,
+                                "route": "\(self.selectedComputerUseBackend.executorID).unresolved",
+                                "requestID": self.activeRequestTiming?.requestID ?? "none"
+                            ]
+                        )
+                        self.speakShortSystemResponse("what should I do on the computer?")
+                        self.recordRealtimeVoiceRouteFingerprint(Self.realtimeVoiceRouteFingerprint(instruction))
+                        return true
+                    }
                     if toolName == "openclicky_use_screen_context" {
                         let instruction = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !instruction.isEmpty else { return false }
@@ -12144,6 +12165,10 @@ final class CompanionManager: ObservableObject {
     private static func parallelAgentInstructions(from instruction: String) -> [String] {
         let cleanedInstruction = SpokenText.cleanedAgentTaskInstruction(instruction)
         guard !cleanedInstruction.isEmpty else { return [] }
+        guard logEvidenceAnalysisInstruction(from: cleanedInstruction) == nil,
+              !isRawTransportDiagnosticEvent(cleanedInstruction) else {
+            return [cleanedInstruction]
+        }
         guard shouldSplitAgentInstruction(cleanedInstruction) else { return [cleanedInstruction] }
 
         let pieces = splitAgentInstructionClauses(cleanedInstruction)
@@ -12247,6 +12272,26 @@ final class CompanionManager: ObservableObject {
     private static func logEvidenceAnalysisInstruction(from transcript: String) -> String? {
         let candidate = SpokenText.normalizedCommandCandidate(from: transcript)
         guard !candidate.isEmpty else { return nil }
+
+        // Focused Xcode console text can arrive through the text-mode screen
+        // bridge. That is context, not a user request. In particular, local
+        // transcription diagnostics are followed by the entire OpenClicky log
+        // stream; treating that dump as an implicit task creates a parked
+        // "Runtime Event Filter" agent and narrates its queue/failure state.
+        // Keep explicit user requests plus pasted logs working, but never turn
+        // this known console preamble into a task on its own.
+        let normalizedOpening = candidate
+            .prefix(160)
+            .lowercased()
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        if candidate.count >= 5_000,
+           candidate.localizedCaseInsensitiveContains("[OpenClickyLog]"),
+           normalizedOpening.hasPrefix("error transcription: using")
+            || normalizedOpening.hasPrefix("transcription: using") {
+            return nil
+        }
 
         let logEvidenceSignals = [
             "[OpenClickyLog]",
@@ -13091,6 +13136,34 @@ final class CompanionManager: ObservableObject {
     private static func nativeKeyPressRequest(from transcript: String) -> OpenClickyNativeKeyPressRequest? {
         let candidate = SpokenText.normalizedCommandCandidate(from: transcript)
         guard !candidate.isEmpty else { return nil }
+
+        // Voice follow-ups often omit the imperative after OpenClicky has
+        // already established the focused document, for example "to the next
+        // page." Treat these as direct navigation actions inside the current
+        // voice turn instead of letting them fall through to visual chat.
+        let pageNavigationPatterns: [(pattern: String, key: String)] = [
+            (#"(?i)^\s*(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:(?:go|move|take\s+me|skip)(?:\s+to)?\s+)?(?:to\s+)?(?:the\s+)?next\s+page[\.\!\?]*\s*$"#, "pagedown"),
+            (#"(?i)^\s*(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:(?:go|move|take\s+me)(?:\s+to)?\s+)?(?:to\s+)?(?:the\s+)?(?:previous|prior)\s+page[\.\!\?]*\s*$"#, "pageup"),
+            (#"(?i)^\s*(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:scroll|move)\s+(?:a\s+|one\s+)?page\s+(down|up)[\.\!\?]*\s*$"#, "")
+        ]
+        for navigation in pageNavigationPatterns {
+            guard let regex = try? NSRegularExpression(pattern: navigation.pattern) else { continue }
+            let range = NSRange(candidate.startIndex..<candidate.endIndex, in: candidate)
+            guard let match = regex.firstMatch(in: candidate, range: range) else { continue }
+            let key: String
+            if navigation.key.isEmpty,
+               match.numberOfRanges > 1,
+               let directionRange = Range(match.range(at: 1), in: candidate) {
+                key = candidate[directionRange].lowercased() == "down" ? "pagedown" : "pageup"
+            } else {
+                key = navigation.key
+            }
+            return OpenClickyNativeKeyPressRequest(
+                key: key,
+                modifiers: [],
+                targetDescription: candidate
+            )
+        }
 
         let patterns = [
             #"(?i)^\s*(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:press|hit|tap)\s+(.+?)(?:\s+(?:in|into)\s+(?:the\s+)?(?:focused\s+)?(?:window|app|field))?[\.\!\?]*\s*$"#,
@@ -16077,6 +16150,11 @@ extension CompanionManager {
         return (request.key, request.modifiers)
     }
 
+    static func testNativeClick(from transcript: String) -> (targetPhrase: String?, prefersLastPointedElement: Bool)? {
+        guard let request = nativeClickRequest(from: transcript) else { return nil }
+        return (request.targetPhrase, request.prefersLastPointedElement)
+    }
+
     static func testWebOpenTarget(from transcript: String) -> (url: String, browserAppName: String?)? {
         guard let request = webOpenRequest(from: transcript) else { return nil }
         return (request.url.absoluteString, request.browserAppName)
@@ -16290,10 +16368,12 @@ nonisolated enum SpokenText {
         var candidate = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let prefixPatterns = [
-            #"(?i)^\s*(?:hey|ok|okay|right|so)[\s,]+"#,
+            #"(?i)^\s*(?:hey|ok|okay|right|so|yeah|yep|well)[\s,]+"#,
+            #"(?i)^\s*(?:oh[\s,]+)?(?:no[\s,\.]+){1,3}"#,
             #"(?i)^\s*(?:clicky|openclicky)[\s,]+"#,
             #"(?i)^\s*i\s+(?:said|asked|told)\s+(?:for\s+you\s+to|you\s+to|to)\s+"#,
-            #"(?i)^\s*(?:let's|lets)\s+try\s+(?:that|this)\s+again[\s,]+"#
+            #"(?i)^\s*(?:let's|lets)\s+try\s+(?:that|this)\s+again[\s,]+"#,
+            #"(?i)^\s*(?:(?:can|could|would|will)\s+you\s+)?(?:do|use)\s+(?:the\s+)?computer[\s-]+use(?:\s+then)?\s+(?:to|and)\s+"#
         ]
 
         var didStripPrefix = true

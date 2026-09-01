@@ -4,9 +4,33 @@ import Testing
 
 @MainActor
 struct CodexAgentModeTests {
+    @Test func contextOnlySessionDoesNotAutoResumeAfterRelaunch() {
+        let session = CodexAgentSession(title: "Screen Context Use")
+        session.restoreInterruptedRelaunchState(
+            entries: [CodexTranscriptEntry(role: .user, text: "using the current screen as context")],
+            activeThreadID: "thread-before-relaunch",
+            lastSubmittedPrompt: "using the current screen as context",
+            canResume: true
+        )
+
+        #expect(!session.canResumeAfterRelaunch)
+        #expect(!session.isRelaunchResumeCandidate)
+
+        let actionableSession = CodexAgentSession(title: "Screen Fix")
+        actionableSession.restoreInterruptedRelaunchState(
+            entries: [CodexTranscriptEntry(role: .user, text: "Use the current screen as context and fix the visible warning")],
+            activeThreadID: "actionable-thread-before-relaunch",
+            lastSubmittedPrompt: "Use the current screen as context and fix the visible warning",
+            canResume: true
+        )
+
+        #expect(actionableSession.canResumeAfterRelaunch)
+        #expect(actionableSession.isRelaunchResumeCandidate)
+    }
+
     @Test func codexConfigRendersOpenAIResponsesContract() throws {
         let template = ClickyCodexConfigTemplate(
-            model: "gpt-5.4",
+            model: "gpt-5.6-terra",
             reasoningEffort: "medium",
             workerBaseURL: URL(string: "https://api.openai.com/v1")!,
             includeOpenAIDeveloperDocsMCP: true
@@ -14,7 +38,7 @@ struct CodexAgentModeTests {
 
         let rendered = template.render()
 
-        #expect(rendered.contains("model = \"gpt-5.4\""))
+        #expect(rendered.contains("model = \"gpt-5.6-terra\""))
         #expect(rendered.contains("model_provider = \"openai\""))
         #expect(rendered.contains("preferred_auth_method = \"chatgpt\""))
         #expect(ClickyCodexConfigTemplate.defaultModelProviderID == "openai")
@@ -31,7 +55,7 @@ struct CodexAgentModeTests {
 
     @Test func codexConfigCanPreferAPIKeyForDefaultOpenAIWhenConfigured() throws {
         let template = ClickyCodexConfigTemplate(
-            model: "gpt-5.4",
+            model: "gpt-5.6-terra",
             reasoningEffort: "medium",
             workerBaseURL: URL(string: "https://api.openai.com/v1")!,
             includeOpenAIDeveloperDocsMCP: false,
@@ -55,7 +79,7 @@ struct CodexAgentModeTests {
 
     @Test func codexConfigKeepsCustomResponsesBackendAPIKeyBackcompat() throws {
         let template = ClickyCodexConfigTemplate(
-            model: "gpt-5.4",
+            model: "gpt-5.6-terra",
             reasoningEffort: "medium",
             workerBaseURL: URL(string: "https://worker.example.test/openai")!,
             includeOpenAIDeveloperDocsMCP: false
@@ -91,7 +115,7 @@ struct CodexAgentModeTests {
 
     @Test func codexConfigRendersExistingCuaDriverMCPServerWhenAvailable() throws {
         let template = ClickyCodexConfigTemplate(
-            model: "gpt-5.5",
+            model: "gpt-5.6-sol",
             reasoningEffort: "medium",
             workerBaseURL: URL(string: "https://api.openai.com/v1")!,
             includeOpenAIDeveloperDocsMCP: false,
@@ -102,15 +126,16 @@ struct CodexAgentModeTests {
 
         #expect(rendered.contains("[mcp_servers.cuaDriver]"))
         #expect(rendered.contains("command = \"/Applications/CuaDriver.app/Contents/MacOS/cua-driver\""))
-        #expect(rendered.contains("args = [\"mcp\"]"))
+        #expect(rendered.contains("args = [\"mcp\", \"--direct\", \"--embedded\", \"--no-overlay\"]"))
         #expect(rendered.contains("[mcp_servers.cuaDriver.env]"))
+        #expect(rendered.contains("CUA_DRIVER_EMBEDDED = \"1\""))
         #expect(rendered.contains("CUA_DRIVER_TELEMETRY_ENABLED = \"false\""))
         #expect(rendered.contains("CUA_TELEMETRY_ENABLED = \"false\""))
     }
 
     @Test func codexConfigOmitsCuaDriverMCPServerWhenUnavailable() throws {
         let template = ClickyCodexConfigTemplate(
-            model: "gpt-5.5",
+            model: "gpt-5.6-sol",
             reasoningEffort: "medium",
             workerBaseURL: URL(string: "https://api.openai.com/v1")!,
             includeOpenAIDeveloperDocsMCP: false,
@@ -125,7 +150,7 @@ struct CodexAgentModeTests {
 
     @Test func codexConfigCanDisableComposioConnectMCPServer() throws {
         let template = ClickyCodexConfigTemplate(
-            model: "gpt-5.5",
+            model: "gpt-5.6-sol",
             reasoningEffort: "medium",
             workerBaseURL: URL(string: "https://api.openai.com/v1")!,
             includeOpenAIDeveloperDocsMCP: false,
@@ -140,7 +165,7 @@ struct CodexAgentModeTests {
 
     @Test func codexConfigCanEnableComposioConnectMCPServer() throws {
         let template = ClickyCodexConfigTemplate(
-            model: "gpt-5.5",
+            model: "gpt-5.6-sol",
             reasoningEffort: "medium",
             workerBaseURL: URL(string: "https://api.openai.com/v1")!,
             includeOpenAIDeveloperDocsMCP: false,
@@ -155,7 +180,7 @@ struct CodexAgentModeTests {
 
     @Test func codexConfigCanEnableOpenClickyControlMCPServer() throws {
         let template = ClickyCodexConfigTemplate(
-            model: "gpt-5.5",
+            model: "gpt-5.6-sol",
             reasoningEffort: "medium",
             workerBaseURL: URL(string: "https://api.openai.com/v1")!,
             includeOpenAIDeveloperDocsMCP: false,
@@ -230,11 +255,11 @@ struct CodexAgentModeTests {
     }
 
     @Test func codexRPCErrorMessageUnwrapsNestedJSONErrorPayload() throws {
-        let rawPayload = #"{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The 'gpt-5.5' model requires a newer version of Codex. Please upgrade to the latest app or CLI and try again."}}"#
+        let rawPayload = #"{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The 'gpt-5.6-sol' model requires a newer version of Codex. Please upgrade to the latest app or CLI and try again."}}"#
 
         let message = try #require(CodexRPCErrorMessage.readableMessage(from: rawPayload))
 
-        #expect(message == "The 'gpt-5.5' model requires a newer version of Codex. Please upgrade to the latest app or CLI and try again.")
+        #expect(message == "The 'gpt-5.6-sol' model requires a newer version of Codex. Please upgrade to the latest app or CLI and try again.")
         #expect(CodexAgentSession.shouldRetryWithCompatibilityFallback(message))
     }
 
@@ -378,6 +403,19 @@ struct CodexAgentModeTests {
         #expect(maybeInstruction?.contains("Analyze the pasted OpenClicky logs as evidence") == true)
     }
 
+    @MainActor @Test func focusedConsoleDumpDoesNotCreateRuntimeEventAgent() throws {
+        let consoleDump = "error Transcription: using Parakeet as fallback\n"
+            + String(repeating: "[OpenClickyLog][2026-08-29T18:56:07Z][agent/incoming] codex.rpc.message {\"method\":\"mcpServer/startupStatus/updated\"}\n", count: 50)
+
+        #expect(CompanionManager.implicitAgentTaskInstruction(from: consoleDump) == nil)
+    }
+
+    @Test func unavailableLocalMCPDoesNotFailRunningAgent() {
+        let stderr = #"2026-08-29T18:59:24Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when Client(HttpRequest(HttpRequest("http/request failed: error sending request for url (http://127.0.0.1:63467/mcp)")))"#
+
+        #expect(CodexAgentSession.testIsNonFatalCodexRuntimeStderrLine(stderr))
+    }
+
     @MainActor @Test func implicitAgentRoutingKeepsLongBackgroundWorkAsAgentTasks() throws {
         let maybeInstruction = CompanionManager.implicitAgentTaskInstruction(
             from: "Summarize this GitHub issue and make a plan."
@@ -428,6 +466,47 @@ struct CodexAgentModeTests {
             from: "Patch the voice route and update the tests for the same behavior."
         )
         #expect(combinedInstructions.count == 1)
+    }
+
+    @MainActor @Test func pastedOpenClickyLogsDoNotSplitIntoMultipleAgents() throws {
+        let pastedLogs = """
+        BUG FIX [OpenClickyLog][2026-08-29T18:05:48Z][agent/outgoing] openclicky.agent_task.auto_resume {"count":2,"titles":["Skill Discovery Pass","Conversation Log Learning Pass"],"trigger":"startup"}
+        [OpenClickyLog][2026-08-29T18:06:25Z][agent/outgoing] openclicky.conversation.turn {"textPreview":"The first probe tripped on quoting around the app-usage path; I’m rerunning it safely.","title":"Skill Discovery Pass"}
+        [OpenClickyLog][2026-08-29T18:06:29Z][agent/incoming] codex.rpc.message {"method":"item/started","paramsSummary":{"commandPreview":"/bin/zsh -lc \\"python3 - <<'PY' from pathlib import Path\\""}}
+        """
+
+        let splitInstructions = CompanionManager.testParallelAgentInstructions(from: pastedLogs)
+
+        #expect(splitInstructions.count == 1)
+        #expect(splitInstructions[0].contains("probe tripped on quoting around the app-usage path"))
+
+        let nestedAgentMessageLogs = """
+        Analyze the pasted OpenClicky logs as evidence, identify the issue, and make the smallest safe fix or durable note needed. Do not route the pasted log text as a direct local app command. Original request and log evidence: then act only if there’s a clear target.","title":"Workflow Setup","workingDirectory":"\\/Users\\/jkneen"}
+        [OpenClickyLog][2026-08-29T18:07:00Z][agent/incoming] codex.rpc.message {"method":"item/started","paramsSummary":{"commandPreview":"/bin/zsh -lc \\"tail -n 80 '\\/Users\\/jkneen\\/Library\\/Application Support\\/OpenClicky\\/Logs\\/messages-2026-08-29.jsonl'\\"","itemType":"commandExecution"}}
+        [OpenClickyLog][2026-08-29T18:07:00Z][agent/outgoing] openclicky.conversation.turn {"textPreview":"I’ll resolve “workflow” from the recent OpenClicky context first, then act only if there’s a clear target.","title":"Workflow Setup"}
+        """
+
+        let nestedSplitInstructions = CompanionManager.testParallelAgentInstructions(from: nestedAgentMessageLogs)
+
+        #expect(nestedSplitInstructions.count == 1)
+        #expect(nestedSplitInstructions[0].contains("then act only if there’s a clear target"))
+    }
+
+    @MainActor @Test func agentFileLeasesIgnoreLogEvidenceAndPartialExtensions() throws {
+        let logEvidence = """
+        Analyze the pasted OpenClicky logs as evidence, identify the issue, and make the smallest safe fix or durable note needed.
+        [OpenClickyLog][2026-08-29T18:07:00Z][agent/outgoing] openclicky.conversation.turn {"itemType":"agentMessage","commandPreview":"tail -n 80 messages-2026-08-29.jsonl","textPreview":"read SOUL.md and README.md"}
+        """
+
+        #expect(CodexAgentSession.testExtractLikelyFilePaths(from: logEvidence).isEmpty)
+
+        let normalPrompt = "Patch cursor-buddy/CompanionManager.swift and update README.md."
+        let paths = CodexAgentSession.testExtractLikelyFilePaths(from: normalPrompt)
+
+        #expect(paths.contains("cursor-buddy/CompanionManager.swift"))
+        #expect(paths.contains("README.md"))
+        #expect(!paths.contains("README.m"))
+        #expect(!paths.contains("openclicky.c"))
     }
 
     @MainActor @Test func agentDelegationPhrasesDoNotCancelCurrentAgent() throws {
@@ -544,6 +623,10 @@ struct CodexAgentModeTests {
     @MainActor @Test func preResponseFillerUsesNaturalThinkingBeat() throws {
         #expect(StreamingTTSSession.preResponseFillerDelayMilliseconds >= 300)
         #expect(StreamingTTSSession.preResponseFillerDelayMilliseconds <= 500)
+    }
+
+    @MainActor @Test func streamingTTSBuffersAcrossSentenceFetchJitter() throws {
+        #expect(StreamingTTSSession.minimumSpeechChunksBeforePlayback >= 2)
     }
 
     @MainActor @Test func quickScreenPromptEnforcesScreenThenSuggestionsThenFollowUp() throws {

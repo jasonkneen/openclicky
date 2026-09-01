@@ -52,7 +52,7 @@ struct OpenClickyProfileTests {
 
         #expect(defaults.string(forKey: OpenClickyProfileCatalog.activeProfileDefaultsKey) == "local")
         #expect(defaults.string(forKey: AppBundleConfiguration.userVoiceTranscriptionProviderDefaultsKey) == "parakeet")
-        #expect(defaults.string(forKey: OpenClickyProfileCatalog.voiceResponseModelDefaultsKey) == "claude-haiku-4-5")
+        #expect(defaults.string(forKey: OpenClickyProfileCatalog.voiceResponseModelDefaultsKey) == "fable-5")
         #expect(defaults.string(forKey: AppBundleConfiguration.userTTSProviderDefaultsKey) == "microsoft_edge")
         #expect(defaults.string(forKey: AppBundleConfiguration.userVoiceActivationModeDefaultsKey) == "push_to_talk")
     }

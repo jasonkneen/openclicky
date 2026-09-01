@@ -59,7 +59,7 @@ Two independent layers — keep them straight:
    - `.apple` -> on-device Apple Foundation Models (`AppleFoundationModelsVoiceClient`; free, no API key; text-only)
    - `.anthropic` -> Claude (`ClaudeAgentSDKAPI` then `ClaudeAPI`)
    - `.openAI` -> `OpenAIAPI` (with Codex app-server first for non-speech models)
-   - `.codex` -> `CodexVoiceSession` / `CodexPointDetector` (selecting e.g. `gpt-5.5` means Codex handles it)
+   - `.codex` -> `CodexVoiceSession` / `CodexPointDetector` (selecting e.g. `gpt-5.6-sol` means Codex handles it)
    - `.deepgram` -> Deepgram Voice Agent
    Coarse family chips (Apple / Codex / Claude) live on the response bubble and notch via `OpenClickyVoiceBackendSelector` + `OpenClickyProviderDiscovery` (auto-detect installed CLI / on-device availability — do not package runtimes).
 2. **Within-provider ordering (money rule).** For the Claude branch, the Claude Agent SDK is the PRIMARY path because it uses the local Claude Code sign-in already paid for. Direct `ClaudeAPI` HTTP is FALLBACK ONLY (SDK nil or throws). Never short-circuit to direct REST for latency or capability reasons — direct REST bills per token. The OpenAI/Codex branch follows the same shape: Codex app server first, OpenAI key fallback. Apple is always free/local. EXEMPTION: realtime speech models (`gpt-realtime-2.1-mini` default, `gpt-realtime-2.1`, `gpt-realtime-1.5`; legacy `gpt-realtime-2` aliases to mini) use the direct Realtime API path only.
