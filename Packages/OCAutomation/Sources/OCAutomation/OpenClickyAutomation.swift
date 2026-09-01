@@ -118,8 +118,13 @@ public struct CronExpression: Sendable {
 
   public func nextFireDate(after reference: Date) -> Date? {
     let calendar = Calendar(identifier: .gregorian)
-    var candidate = calendar.date(byAdding: .minute, value: 1, to: reference) ?? reference
-    candidate = calendar.date(bySetting: .second, value: 0, of: candidate) ?? candidate
+    // Truncate to the whole minute first, then step forward one minute.
+    // `date(bySetting: .second, value: 0, of:)` is a forward search, so applying
+    // it after the +1 minute step skipped a full minute whenever the reference
+    // had non-zero seconds (12:00:30 -> 12:02 instead of 12:01).
+    let wholeMinute = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: reference)
+    let floorMinute = calendar.date(from: wholeMinute) ?? reference
+    var candidate = calendar.date(byAdding: .minute, value: 1, to: floorMinute) ?? reference
     let limit = calendar.date(byAdding: .day, value: 366, to: reference) ?? reference
 
     while candidate < limit {

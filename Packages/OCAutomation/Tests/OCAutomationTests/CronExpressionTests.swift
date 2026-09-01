@@ -125,11 +125,10 @@ final class CronExpressionTests: XCTestCase {
     // MARK: Seconds handling
 
     func testReferenceWithNonZeroSecondsRoundsToNextWholeMinute() throws {
-        // `date(bySetting: .second, value: 0)` is a FORWARD search in Foundation,
-        // so from 12:00:30 the evaluator currently lands on 12:02 rather than 12:01.
-        // The production store ticks on a 30s timer with arbitrary wall-clock
-        // seconds, so this skips a real fire. Expected to fail until fixed.
-        XCTExpectFailure("nextFireDate skips a minute when the reference has non-zero seconds")
+        // Regression: `date(bySetting: .second, value: 0)` is a FORWARD search, so
+        // the evaluator used to land on 12:02 from 12:00:30. The production store
+        // ticks on a 30s timer with arbitrary wall-clock seconds, so that skipped
+        // real fires.
         let c = try XCTUnwrap(CronExpression("* * * * *"))
         let next = try XCTUnwrap(c.nextFireDate(after: date(2026, 1, 1, 12, 0, 30)))
         let k = comps(next)
@@ -137,7 +136,6 @@ final class CronExpressionTests: XCTestCase {
     }
 
     func testReferenceWithNonZeroSecondsDoesNotMissADailyFire() throws {
-        XCTExpectFailure("nextFireDate misses a whole day when the reference has non-zero seconds")
         let c = try XCTUnwrap(CronExpression("1 12 * * *"))
         let next = try XCTUnwrap(c.nextFireDate(after: date(2026, 1, 1, 12, 0, 30)))
         let k = comps(next)
