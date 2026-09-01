@@ -132,7 +132,7 @@ final class OpenClickyCameraCaptureController: NSObject, ObservableObject, AVCap
     func startCaptureSession() {
         Task {
             guard await requestCameraAccessIfNeeded() else { return }
-            captureQueue.async { [weak self] in
+            captureQueue.async { [weak self = self] in
                 self?.configureAndStartOnCaptureQueue()
             }
         }

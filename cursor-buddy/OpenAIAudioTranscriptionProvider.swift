@@ -126,7 +126,7 @@ private final class OpenAIAudioTranscriptionSession: BuddyStreamingTranscription
             self.hasRequestedFinalTranscript = true
 
             let bufferedPCM16AudioData = self.bufferedPCM16AudioData
-            self.transcriptionUploadTask = Task { [weak self] in
+            self.transcriptionUploadTask = Task { [weak self = self] in
                 await self?.transcribeBufferedAudio(bufferedPCM16AudioData)
             }
         }

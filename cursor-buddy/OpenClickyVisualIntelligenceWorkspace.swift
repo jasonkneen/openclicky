@@ -723,7 +723,7 @@ final class OpenClickyMeetingNotesController: ObservableObject {
                     images: images,
                     userPrompt: prompt,
                     source: "meeting_notes",
-                    onTextChunk: { [weak self] text in
+                    onTextChunk: { [weak self = self] text in
                         self?.liveInsightsText = text
                     }
                 )

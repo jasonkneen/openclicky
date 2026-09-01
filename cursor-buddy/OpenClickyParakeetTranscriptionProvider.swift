@@ -262,7 +262,7 @@ private final class OpenClickyParakeetTranscriptionSession: BuddyStreamingTransc
             self.hasRequestedFinalTranscript = true
 
             let bufferedPCM16AudioData = self.bufferedPCM16AudioData
-            self.transcriptionTask = Task { [weak self] in
+            self.transcriptionTask = Task { [weak self = self] in
                 await self?.transcribeBufferedAudio(bufferedPCM16AudioData)
             }
         }

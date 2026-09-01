@@ -241,7 +241,7 @@ private final class OpenClickyDynamicNotchKitModel: ObservableObject {
                 accepted = true
                 provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
                     guard let url = Self.url(from: item) else { return }
-                    Task { @MainActor [weak self] in
+                    Task { @MainActor [weak self = self] in
                         self?.appendDraftAttachment(url)
                     }
                 }
@@ -249,7 +249,7 @@ private final class OpenClickyDynamicNotchKitModel: ObservableObject {
                 accepted = true
                 provider.loadItem(forTypeIdentifier: UTType.url.identifier, options: nil) { item, _ in
                     guard let url = Self.url(from: item) else { return }
-                    Task { @MainActor [weak self] in
+                    Task { @MainActor [weak self = self] in
                         self?.appendDraftAttachment(url)
                     }
                 }
@@ -257,7 +257,7 @@ private final class OpenClickyDynamicNotchKitModel: ObservableObject {
                 accepted = true
                 provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
                     guard let data, let url = Self.persistClipboardImage(data) else { return }
-                    Task { @MainActor [weak self] in
+                    Task { @MainActor [weak self = self] in
                         self?.appendDraftAttachment(url)
                     }
                 }
@@ -265,7 +265,7 @@ private final class OpenClickyDynamicNotchKitModel: ObservableObject {
                 accepted = true
                 provider.loadDataRepresentation(forTypeIdentifier: UTType.png.identifier) { data, _ in
                     guard let data, let url = Self.persistClipboardImage(data) else { return }
-                    Task { @MainActor [weak self] in
+                    Task { @MainActor [weak self = self] in
                         self?.appendDraftAttachment(url)
                     }
                 }
@@ -273,7 +273,7 @@ private final class OpenClickyDynamicNotchKitModel: ObservableObject {
                 accepted = true
                 provider.loadDataRepresentation(forTypeIdentifier: UTType.jpeg.identifier) { data, _ in
                     guard let data, let url = Self.persistClipboardImage(data) else { return }
-                    Task { @MainActor [weak self] in
+                    Task { @MainActor [weak self = self] in
                         self?.appendDraftAttachment(url)
                     }
                 }
@@ -281,7 +281,7 @@ private final class OpenClickyDynamicNotchKitModel: ObservableObject {
                 accepted = true
                 provider.loadDataRepresentation(forTypeIdentifier: UTType.tiff.identifier) { data, _ in
                     guard let data, let url = Self.persistClipboardImage(data) else { return }
-                    Task { @MainActor [weak self] in
+                    Task { @MainActor [weak self = self] in
                         self?.appendDraftAttachment(url)
                     }
                 }
@@ -289,7 +289,7 @@ private final class OpenClickyDynamicNotchKitModel: ObservableObject {
                 accepted = true
                 provider.loadItem(forTypeIdentifier: UTType.plainText.identifier, options: nil) { item, _ in
                     guard let url = Self.fileURL(fromTextItem: item) else { return }
-                    Task { @MainActor [weak self] in
+                    Task { @MainActor [weak self = self] in
                         self?.appendDraftAttachment(url)
                     }
                 }
