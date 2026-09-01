@@ -1,25 +1,25 @@
-import AppKit
+import CoreGraphics
 import Foundation
 
-struct OpenClickyVisualGuidancePoint: Codable, Equatable, Hashable, Sendable {
-    var x: Double
-    var y: Double
+public struct OpenClickyVisualGuidancePoint: Codable, Equatable, Hashable, Sendable {
+    public var x: Double
+    public var y: Double
 
-    init(x: Double, y: Double) {
+    public init(x: Double, y: Double) {
         self.x = x
         self.y = y
     }
 
-    init(_ point: CGPoint) {
+    public init(_ point: CGPoint) {
         self.x = Double(point.x)
         self.y = Double(point.y)
     }
 
-    var cgPoint: CGPoint {
+    public var cgPoint: CGPoint {
         CGPoint(x: x, y: y)
     }
 
-    func clamped(to rect: CGRect) -> OpenClickyVisualGuidancePoint {
+    public func clamped(to rect: CGRect) -> OpenClickyVisualGuidancePoint {
         OpenClickyVisualGuidancePoint(
             x: min(max(x, Double(rect.minX)), Double(rect.maxX)),
             y: min(max(y, Double(rect.minY)), Double(rect.maxY))
@@ -27,31 +27,35 @@ struct OpenClickyVisualGuidancePoint: Codable, Equatable, Hashable, Sendable {
     }
 }
 
-struct OpenClickyVisualGuidanceRect: Codable, Equatable, Hashable, Sendable {
-    var x: Double
-    var y: Double
-    var width: Double
-    var height: Double
+public struct OpenClickyVisualGuidanceRect: Codable, Equatable, Hashable, Sendable {
+    public var x: Double
+    public var y: Double
+    public var width: Double
+    public var height: Double
 
-    init(x: Double, y: Double, width: Double, height: Double) {
+    public init(x: Double, y: Double, width: Double, height: Double) {
         self.x = x
         self.y = y
         self.width = width
         self.height = height
     }
 
-    init(_ rect: CGRect) {
-        self.x = Double(rect.origin.x)
-        self.y = Double(rect.origin.y)
-        self.width = Double(rect.width)
-        self.height = Double(rect.height)
+    public init(_ rect: CGRect) {
+        // Standardize first: CGRect.width/height are always positive while
+        // origin keeps the raw sign, so a negative-size rect used to produce a
+        // rect whose origin did not match its extent.
+        let standardized = rect.standardized
+        self.x = Double(standardized.origin.x)
+        self.y = Double(standardized.origin.y)
+        self.width = Double(standardized.width)
+        self.height = Double(standardized.height)
     }
 
-    var cgRect: CGRect {
+    public var cgRect: CGRect {
         CGRect(x: x, y: y, width: width, height: height)
     }
 
-    var normalized: OpenClickyVisualGuidanceRect {
+    public var normalized: OpenClickyVisualGuidanceRect {
         let minX = min(x, x + width)
         let minY = min(y, y + height)
         return OpenClickyVisualGuidanceRect(
@@ -62,7 +66,7 @@ struct OpenClickyVisualGuidanceRect: Codable, Equatable, Hashable, Sendable {
         )
     }
 
-    func clamped(to bounds: CGRect) -> OpenClickyVisualGuidanceRect {
+    public func clamped(to bounds: CGRect) -> OpenClickyVisualGuidanceRect {
         let rect = normalized.cgRect.intersection(bounds)
         guard !rect.isNull else {
             return OpenClickyVisualGuidanceRect(x: bounds.minX, y: bounds.minY, width: 0, height: 0)
@@ -71,18 +75,18 @@ struct OpenClickyVisualGuidanceRect: Codable, Equatable, Hashable, Sendable {
     }
 }
 
-enum OpenClickyVisualGuidanceOverlayKind: String, Codable, Equatable, Sendable {
+public enum OpenClickyVisualGuidanceOverlayKind: String, Codable, Equatable, Sendable {
     case scribble
     case rectangle
 }
 
-struct OpenClickyVisualGuidanceStyle: Codable, Equatable, Hashable, Sendable {
-    var accentHex: String?
-    var lineWidth: Double
-    var fillOpacity: Double
-    var caption: String?
+public struct OpenClickyVisualGuidanceStyle: Codable, Equatable, Hashable, Sendable {
+    public var accentHex: String?
+    public var lineWidth: Double
+    public var fillOpacity: Double
+    public var caption: String?
 
-    init(accentHex: String? = nil, lineWidth: Double = 5, fillOpacity: Double = 0.12, caption: String? = nil) {
+    public init(accentHex: String? = nil, lineWidth: Double = 5, fillOpacity: Double = 0.12, caption: String? = nil) {
         self.accentHex = accentHex
         self.lineWidth = max(1, min(lineWidth, 48))
         self.fillOpacity = max(0, min(fillOpacity, 0.65))
@@ -90,16 +94,16 @@ struct OpenClickyVisualGuidanceStyle: Codable, Equatable, Hashable, Sendable {
     }
 }
 
-struct OpenClickyVisualGuidanceOverlay: Identifiable, Codable, Equatable, Sendable {
-    var id: UUID
-    var kind: OpenClickyVisualGuidanceOverlayKind
-    var points: [OpenClickyVisualGuidancePoint]
-    var rect: OpenClickyVisualGuidanceRect?
-    var style: OpenClickyVisualGuidanceStyle
-    var duration: TimeInterval
-    var createdAt: Date
+public struct OpenClickyVisualGuidanceOverlay: Identifiable, Codable, Equatable, Sendable {
+    public var id: UUID
+    public var kind: OpenClickyVisualGuidanceOverlayKind
+    public var points: [OpenClickyVisualGuidancePoint]
+    public var rect: OpenClickyVisualGuidanceRect?
+    public var style: OpenClickyVisualGuidanceStyle
+    public var duration: TimeInterval
+    public var createdAt: Date
 
-    init(
+    public init(
         id: UUID = UUID(),
         kind: OpenClickyVisualGuidanceOverlayKind,
         points: [OpenClickyVisualGuidancePoint] = [],
@@ -117,7 +121,7 @@ struct OpenClickyVisualGuidanceOverlay: Identifiable, Codable, Equatable, Sendab
         self.createdAt = createdAt
     }
 
-    var screenBounds: CGRect {
+    public var screenBounds: CGRect {
         switch kind {
         case .rectangle:
             return rect?.normalized.cgRect ?? .null
@@ -129,14 +133,14 @@ struct OpenClickyVisualGuidanceOverlay: Identifiable, Codable, Equatable, Sendab
         }
     }
 
-    func clamped(to desktopBounds: CGRect) -> OpenClickyVisualGuidanceOverlay {
+    public func clamped(to desktopBounds: CGRect) -> OpenClickyVisualGuidanceOverlay {
         var overlay = self
         overlay.points = points.map { $0.clamped(to: desktopBounds) }
         overlay.rect = rect?.clamped(to: desktopBounds)
         return overlay
     }
 
-    var isRenderable: Bool {
+    public var isRenderable: Bool {
         switch kind {
         case .scribble:
             return points.count >= 2
@@ -149,7 +153,7 @@ struct OpenClickyVisualGuidanceOverlay: Identifiable, Codable, Equatable, Sendab
 }
 
 extension OpenClickyVisualGuidanceOverlay {
-    static func scribble(
+    public static func scribble(
         points: [CGPoint],
         accentHex: String? = nil,
         lineWidth: Double = 5,
@@ -166,7 +170,7 @@ extension OpenClickyVisualGuidanceOverlay {
         )
     }
 
-    static func rectangle(
+    public static func rectangle(
         rect: CGRect,
         accentHex: String? = nil,
         lineWidth: Double = 4,

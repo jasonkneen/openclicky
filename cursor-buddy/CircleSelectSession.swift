@@ -8,6 +8,7 @@
 //
 
 import AppKit
+import OCComputerUseCore
 import Foundation
 
 struct CircleSelectAmbientContext: Equatable, Sendable {

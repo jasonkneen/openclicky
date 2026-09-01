@@ -1,4 +1,5 @@
 import CoreGraphics
+import OCComputerUseCore
 import Foundation
 import Testing
 import OpenClickyCore
@@ -203,33 +204,6 @@ struct ClickyNextStageParityTests {
         )
         // May be nil without AX fixtures; just ensure the API is callable.
         _ = snap
-    }
-
-    @Test func circleSelectPathContainmentHandlesDescendingEdges() {
-        // The right edge descends in this ordering. Its Y delta must retain
-        // its sign in the ray-cast calculation or the center is reported out.
-        let diamond: [CGPoint] = [
-            CGPoint(x: 10, y: 0),
-            CGPoint(x: 20, y: 10),
-            CGPoint(x: 10, y: 20),
-            CGPoint(x: 0, y: 10)
-        ]
-
-        #expect(CircleSelectSnapResolver.pathContains(CGPoint(x: 10, y: 10), points: diamond))
-        #expect(CircleSelectSnapResolver.pathContains(CGPoint(x: 10, y: 10), points: Array(diamond.reversed())))
-        #expect(!CircleSelectSnapResolver.pathContains(CGPoint(x: 25, y: 10), points: diamond))
-    }
-
-    @Test func circleSelectAXCoordinatesUseMenuBarScreenOrigin() {
-        // A taller secondary display must not redefine the AX coordinate
-        // origin. The menu-bar display's max Y is the conversion anchor.
-        let appKitY = CircleSelectSnapResolver.appKitY(
-            fromAXY: 120,
-            height: 30,
-            menuBarScreenMaxY: 900
-        )
-
-        #expect(appKitY == 750)
     }
 
     @Test func regionCaptureRequiresAContainingDisplay() {

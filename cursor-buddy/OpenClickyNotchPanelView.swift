@@ -1,4 +1,5 @@
 import AppKit
+import OCComputerUseCore
 import OCAutomation
 import SwiftUI
 import UniformTypeIdentifiers

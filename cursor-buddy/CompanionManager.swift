@@ -8,6 +8,7 @@
 //
 
 @preconcurrency import AVFoundation
+import OCComputerUseCore
 import AppKit
 import Combine
 import CoreAudio

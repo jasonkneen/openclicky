@@ -8,6 +8,7 @@
 //
 
 import AppKit
+import OCComputerUseCore
 import Combine
 import SwiftUI
 import UniformTypeIdentifiers

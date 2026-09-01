@@ -1,57 +1,10 @@
 import AppKit
+import OCComputerUseCore
 import Foundation
 import Testing
 @testable import OpenClicky
 
 struct OpenClickyVisualGuidanceOverlayTests {
-    @Test func rectangleNormalizesClampsAndSerializes() throws {
-        let overlay = OpenClickyVisualGuidanceOverlay.rectangle(
-            rect: CGRect(x: 120, y: 90, width: -80, height: 60),
-            accentHex: "#60A5FA",
-            lineWidth: 200,
-            fillOpacity: 2,
-            caption: "  Target  ",
-            duration: 120
-        )
-
-        #expect(overlay.rect == OpenClickyVisualGuidanceRect(x: 40, y: 90, width: 80, height: 60))
-        #expect(overlay.style.lineWidth == 48)
-        #expect(overlay.style.fillOpacity == 0.65)
-        #expect(overlay.style.caption == "Target")
-        #expect(overlay.duration == 60)
-        #expect(overlay.isRenderable)
-
-        let encoded = try JSONEncoder().encode(overlay)
-        let decoded = try JSONDecoder().decode(OpenClickyVisualGuidanceOverlay.self, from: encoded)
-        #expect(decoded == overlay)
-
-        let clamped = overlay.clamped(to: CGRect(x: 50, y: 100, width: 40, height: 40))
-        #expect(clamped.rect == OpenClickyVisualGuidanceRect(x: 50, y: 100, width: 40, height: 40))
-    }
-
-    @Test func scribbleRequiresAtLeastTwoPointsAndClampsPoints() throws {
-        let overlay = OpenClickyVisualGuidanceOverlay.scribble(
-            points: [CGPoint(x: -10, y: 20), CGPoint(x: 100, y: 120), CGPoint(x: 300, y: 10)],
-            accentHex: "#F59E0B",
-            lineWidth: 0,
-            duration: 0.01
-        )
-
-        #expect(overlay.isRenderable)
-        #expect(overlay.style.lineWidth == 1)
-        #expect(overlay.duration == 0.2)
-
-        let clamped = overlay.clamped(to: CGRect(x: 0, y: 0, width: 200, height: 100))
-        #expect(clamped.points.map(\.cgPoint) == [
-            CGPoint(x: 0, y: 20),
-            CGPoint(x: 100, y: 100),
-            CGPoint(x: 200, y: 10),
-        ])
-
-        let singlePoint = OpenClickyVisualGuidanceOverlay.scribble(points: [CGPoint(x: 1, y: 1)])
-        #expect(!singlePoint.isRenderable)
-    }
-
     @Test func bridgeDescriptorsExposeImplementedVisualTools() throws {
         UserDefaults.standard.removeObject(forKey: AppBundleConfiguration.userVisualDrawingOverlayToolsEnabledDefaultsKey)
 

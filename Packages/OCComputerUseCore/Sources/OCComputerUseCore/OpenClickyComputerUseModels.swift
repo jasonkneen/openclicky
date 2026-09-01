@@ -1,13 +1,12 @@
-import AppKit
 import Foundation
 
-nonisolated enum OpenClickyComputerUseBackendID: String, CaseIterable, Identifiable, Sendable {
+nonisolated public enum OpenClickyComputerUseBackendID: String, CaseIterable, Identifiable, Sendable {
     case nativeSwift = "native_swift"
     case backgroundComputerUse = "background_computer_use"
 
-    var id: String { rawValue }
+    public var id: String { rawValue }
 
-    var label: String {
+    public var label: String {
         switch self {
         case .nativeSwift:
             return "Native CUA Swift"
@@ -16,7 +15,7 @@ nonisolated enum OpenClickyComputerUseBackendID: String, CaseIterable, Identifia
         }
     }
 
-    var subtitle: String {
+    public var subtitle: String {
         switch self {
         case .nativeSwift:
             return "Embedded OpenClicky control"
@@ -25,7 +24,7 @@ nonisolated enum OpenClickyComputerUseBackendID: String, CaseIterable, Identifia
         }
     }
 
-    var executorID: String {
+    public var executorID: String {
         switch self {
         case .nativeSwift:
             return "native_cua"
@@ -34,9 +33,9 @@ nonisolated enum OpenClickyComputerUseBackendID: String, CaseIterable, Identifia
         }
     }
 
-    static let fallback: OpenClickyComputerUseBackendID = .nativeSwift
+    public static let fallback: OpenClickyComputerUseBackendID = .nativeSwift
 
-    static func resolving(_ rawValue: String?) -> OpenClickyComputerUseBackendID {
+    public static func resolving(_ rawValue: String?) -> OpenClickyComputerUseBackendID {
         guard let rawValue,
               let backend = OpenClickyComputerUseBackendID(rawValue: rawValue) else {
             return fallback
@@ -51,38 +50,39 @@ nonisolated enum OpenClickyComputerUseBackendID: String, CaseIterable, Identifia
 /// CUA source reference: /Users/jkneen/Documents/GitHub/cua/libs/cua-driver
 /// License: MIT, Copyright (c) 2025 Cua AI, Inc.
 ///
-/// This file intentionally contains only OpenClicky-owned data contracts. The
-/// runtime adapters live in OpenClickyComputerUseRuntime.swift so model tests can
-/// stay pure and cheap.
-struct OpenClickyComputerUseWindowBounds: Sendable, Codable, Hashable {
-    let x: Double
-    let y: Double
-    let width: Double
-    let height: Double
+/// This file intentionally contains only data contracts. The runtime adapters
+/// (AppKit, Accessibility, ScreenCaptureKit, CGEvent) live in the host app so
+/// model tests can stay pure and cheap. Process-querying conveniences such as
+/// `bundleIdentifier` / `appName` are provided by the host as extensions.
+public struct OpenClickyComputerUseWindowBounds: Sendable, Codable, Hashable {
+    public let x: Double
+    public let y: Double
+    public let width: Double
+    public let height: Double
 
-    init(x: Double, y: Double, width: Double, height: Double) {
+    public init(x: Double, y: Double, width: Double, height: Double) {
         self.x = x
         self.y = y
         self.width = width
         self.height = height
     }
 
-    var agentContextFragment: String {
+    public var agentContextFragment: String {
         "x:\(Int(x)) y:\(Int(y)) width:\(Int(width)) height:\(Int(height))"
     }
 }
 
-struct OpenClickyComputerUseWindowInfo: Identifiable, Sendable, Codable, Hashable {
-    let id: Int
-    let pid: Int32
-    let owner: String
-    let name: String
-    let bounds: OpenClickyComputerUseWindowBounds
-    let zIndex: Int
-    let isOnScreen: Bool
-    let layer: Int
+public struct OpenClickyComputerUseWindowInfo: Identifiable, Sendable, Codable, Hashable {
+    public let id: Int
+    public let pid: Int32
+    public let owner: String
+    public let name: String
+    public let bounds: OpenClickyComputerUseWindowBounds
+    public let zIndex: Int
+    public let isOnScreen: Bool
+    public let layer: Int
 
-    init(
+    public init(
         id: Int,
         pid: Int32,
         owner: String,
@@ -102,7 +102,7 @@ struct OpenClickyComputerUseWindowInfo: Identifiable, Sendable, Codable, Hashabl
         self.layer = layer
     }
 
-    var displayTitle: String {
+    public var displayTitle: String {
         let trimmedOwner = owner.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -112,7 +112,7 @@ struct OpenClickyComputerUseWindowInfo: Identifiable, Sendable, Codable, Hashabl
         return "\(trimmedOwner) — \(trimmedName)"
     }
 
-    var captureLabel: String {
+    public var captureLabel: String {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedName.isEmpty {
             return "CUA Swift focused window (\(owner))"
@@ -120,31 +120,27 @@ struct OpenClickyComputerUseWindowInfo: Identifiable, Sendable, Codable, Hashabl
         return "CUA Swift focused window (\(owner) - \(trimmedName))"
     }
 
-    var focusedTargetSummary: String {
+    public var focusedTargetSummary: String {
         "\(displayTitle) · pid \(pid) · window \(id)"
     }
 
-    var bundleIdentifier: String? {
-        NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
-    }
-
-    var agentContextNote: String {
+    public var agentContextNote: String {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let titlePart = trimmedName.isEmpty ? "untitled" : trimmedName
         return "CUA Swift target window id \(id), pid \(pid), owner \(owner), title \(titlePart), bounds \(bounds.agentContextFragment), z-index \(zIndex)."
     }
 }
 
-struct OpenClickyComputerUseAppInfo: Identifiable, Sendable, Codable, Hashable {
-    var id: String { bundleId ?? "pid:\(pid):\(name)" }
+public struct OpenClickyComputerUseAppInfo: Identifiable, Sendable, Codable, Hashable {
+    public var id: String { bundleId ?? "pid:\(pid):\(name)" }
 
-    let pid: Int32
-    let bundleId: String?
-    let name: String
-    let running: Bool
-    let active: Bool
+    public let pid: Int32
+    public let bundleId: String?
+    public let name: String
+    public let running: Bool
+    public let active: Bool
 
-    init(pid: Int32, bundleId: String?, name: String, running: Bool, active: Bool) {
+    public init(pid: Int32, bundleId: String?, name: String, running: Bool, active: Bool) {
         self.pid = pid
         self.bundleId = bundleId
         self.name = name
@@ -153,13 +149,13 @@ struct OpenClickyComputerUseAppInfo: Identifiable, Sendable, Codable, Hashable {
     }
 }
 
-struct OpenClickyComputerUsePermissionStatus: Sendable, Codable, Hashable {
-    let accessibilityGranted: Bool
-    let screenRecordingGranted: Bool
-    let skyLightKeyboardPathAvailable: Bool
-    let fullDiskAccessLikelyGranted: Bool
+public struct OpenClickyComputerUsePermissionStatus: Sendable, Codable, Hashable {
+    public let accessibilityGranted: Bool
+    public let screenRecordingGranted: Bool
+    public let skyLightKeyboardPathAvailable: Bool
+    public let fullDiskAccessLikelyGranted: Bool
 
-    init(
+    public init(
         accessibilityGranted: Bool,
         screenRecordingGranted: Bool,
         skyLightKeyboardPathAvailable: Bool,
@@ -171,32 +167,32 @@ struct OpenClickyComputerUsePermissionStatus: Sendable, Codable, Hashable {
         self.fullDiskAccessLikelyGranted = fullDiskAccessLikelyGranted
     }
 
-    var accessibilitySummary: String {
+    public var accessibilitySummary: String {
         accessibilityGranted ? "AX ready" : "AX permission needed"
     }
 
-    var screenRecordingSummary: String {
+    public var screenRecordingSummary: String {
         screenRecordingGranted ? "screen ready" : "screen permission needed"
     }
 
-    var keyboardSummary: String {
+    public var keyboardSummary: String {
         skyLightKeyboardPathAvailable ? "SkyLight keyboard ready" : "public keyboard fallback"
     }
 
-    var fullDiskAccessSummary: String {
+    public var fullDiskAccessSummary: String {
         fullDiskAccessLikelyGranted ? "Full Disk Access likely ready" : "Full Disk Access not detected"
     }
 }
 
-struct OpenClickyComputerUseStatus: Sendable, Codable, Hashable {
-    let enabled: Bool
-    let permissions: OpenClickyComputerUsePermissionStatus
-    let runningAppCount: Int
-    let visibleWindowCount: Int
-    let focusedWindow: OpenClickyComputerUseWindowInfo?
-    let lastErrorMessage: String?
+public struct OpenClickyComputerUseStatus: Sendable, Codable, Hashable {
+    public let enabled: Bool
+    public let permissions: OpenClickyComputerUsePermissionStatus
+    public let runningAppCount: Int
+    public let visibleWindowCount: Int
+    public let focusedWindow: OpenClickyComputerUseWindowInfo?
+    public let lastErrorMessage: String?
 
-    init(
+    public init(
         enabled: Bool,
         permissions: OpenClickyComputerUsePermissionStatus,
         runningAppCount: Int,
@@ -212,11 +208,11 @@ struct OpenClickyComputerUseStatus: Sendable, Codable, Hashable {
         self.lastErrorMessage = lastErrorMessage
     }
 
-    var isReadyForComputerUse: Bool {
+    public var isReadyForComputerUse: Bool {
         enabled && permissions.accessibilityGranted && permissions.screenRecordingGranted
     }
 
-    var summary: String {
+    public var summary: String {
         guard enabled else { return "Disabled · enable in OpenClicky settings" }
 
         var parts = [
@@ -238,18 +234,18 @@ struct OpenClickyComputerUseStatus: Sendable, Codable, Hashable {
         return parts.joined(separator: " · ")
     }
 
-    var focusedTargetSummary: String {
+    public var focusedTargetSummary: String {
         focusedWindow?.focusedTargetSummary ?? "No target window refreshed yet"
     }
 }
 
-struct OpenClickyComputerUseWindowCapture: Sendable, Hashable {
-    let imageData: Data
-    let window: OpenClickyComputerUseWindowInfo
-    let screenshotWidthInPixels: Int
-    let screenshotHeightInPixels: Int
+public struct OpenClickyComputerUseWindowCapture: Sendable, Hashable {
+    public let imageData: Data
+    public let window: OpenClickyComputerUseWindowInfo
+    public let screenshotWidthInPixels: Int
+    public let screenshotHeightInPixels: Int
 
-    init(
+    public init(
         imageData: Data,
         window: OpenClickyComputerUseWindowInfo,
         screenshotWidthInPixels: Int,
@@ -261,9 +257,9 @@ struct OpenClickyComputerUseWindowCapture: Sendable, Hashable {
         self.screenshotHeightInPixels = screenshotHeightInPixels
     }
 
-    var label: String { window.captureLabel }
+    public var label: String { window.captureLabel }
 
-    var agentContextNote: String {
+    public var agentContextNote: String {
         let widthScale = window.bounds.width / Double(max(1, screenshotWidthInPixels))
         let heightScale = window.bounds.height / Double(max(1, screenshotHeightInPixels))
         return "\(window.agentContextNote) Image dimensions \(screenshotWidthInPixels)x\(screenshotHeightInPixels) pixels. Screenshot is a proportional downsample of the focused window, not full native display pixels; map screenshot pixel coordinates to window bounds with xScale \(Self.formatScale(widthScale)) and yScale \(Self.formatScale(heightScale))."
@@ -274,27 +270,59 @@ struct OpenClickyComputerUseWindowCapture: Sendable, Hashable {
     }
 }
 
-struct OpenClickyBackgroundComputerUseStatus: Sendable, Hashable {
-    let sourceRootPath: String
-    let sourceAvailable: Bool
-    let startScriptAvailable: Bool
-    let installedAppAvailable: Bool
-    let manifestPath: String
-    let manifestExists: Bool
-    let baseURL: String?
-    let startedAt: String?
-    let accessibilityGranted: Bool?
-    let screenRecordingGranted: Bool?
-    let instructionsReady: Bool?
-    let instructionsSummary: String?
-    let isStarting: Bool
-    let lastErrorMessage: String?
+public struct OpenClickyBackgroundComputerUseStatus: Sendable, Hashable {
+    public let sourceRootPath: String
+    public let sourceAvailable: Bool
+    public let startScriptAvailable: Bool
+    public let installedAppAvailable: Bool
+    public let manifestPath: String
+    public let manifestExists: Bool
+    public let baseURL: String?
+    public let startedAt: String?
+    public let accessibilityGranted: Bool?
+    public let screenRecordingGranted: Bool?
+    public let instructionsReady: Bool?
+    public let instructionsSummary: String?
+    public let isStarting: Bool
+    public let lastErrorMessage: String?
 
-    var isRuntimeReady: Bool {
+    public init(
+        sourceRootPath: String,
+        sourceAvailable: Bool,
+        startScriptAvailable: Bool,
+        installedAppAvailable: Bool,
+        manifestPath: String,
+        manifestExists: Bool,
+        baseURL: String?,
+        startedAt: String?,
+        accessibilityGranted: Bool?,
+        screenRecordingGranted: Bool?,
+        instructionsReady: Bool?,
+        instructionsSummary: String?,
+        isStarting: Bool,
+        lastErrorMessage: String?
+    ) {
+        self.sourceRootPath = sourceRootPath
+        self.sourceAvailable = sourceAvailable
+        self.startScriptAvailable = startScriptAvailable
+        self.installedAppAvailable = installedAppAvailable
+        self.manifestPath = manifestPath
+        self.manifestExists = manifestExists
+        self.baseURL = baseURL
+        self.startedAt = startedAt
+        self.accessibilityGranted = accessibilityGranted
+        self.screenRecordingGranted = screenRecordingGranted
+        self.instructionsReady = instructionsReady
+        self.instructionsSummary = instructionsSummary
+        self.isStarting = isStarting
+        self.lastErrorMessage = lastErrorMessage
+    }
+
+    public var isRuntimeReady: Bool {
         manifestExists && baseURL != nil && instructionsReady != false && lastErrorMessage == nil
     }
 
-    var summary: String {
+    public var summary: String {
         if isStarting {
             return "Starting runtime from \(sourceRootPath)"
         }
@@ -339,19 +367,43 @@ struct OpenClickyBackgroundComputerUseStatus: Sendable, Hashable {
     }
 }
 
-struct OpenClickyBackgroundComputerUseWindowCapture: Sendable, Hashable {
-    let imageData: Data
-    let windowID: String
-    let title: String
-    let bundleID: String
-    let pid: Int32
-    let baseURL: String
-    let stateToken: String
-    let imagePath: String?
-    let screenshotWidthInPixels: Int
-    let screenshotHeightInPixels: Int
+public struct OpenClickyBackgroundComputerUseWindowCapture: Sendable, Hashable {
+    public let imageData: Data
+    public let windowID: String
+    public let title: String
+    public let bundleID: String
+    public let pid: Int32
+    public let baseURL: String
+    public let stateToken: String
+    public let imagePath: String?
+    public let screenshotWidthInPixels: Int
+    public let screenshotHeightInPixels: Int
 
-    var displayTitle: String {
+    public init(
+        imageData: Data,
+        windowID: String,
+        title: String,
+        bundleID: String,
+        pid: Int32,
+        baseURL: String,
+        stateToken: String,
+        imagePath: String?,
+        screenshotWidthInPixels: Int,
+        screenshotHeightInPixels: Int
+    ) {
+        self.imageData = imageData
+        self.windowID = windowID
+        self.title = title
+        self.bundleID = bundleID
+        self.pid = pid
+        self.baseURL = baseURL
+        self.stateToken = stateToken
+        self.imagePath = imagePath
+        self.screenshotWidthInPixels = screenshotWidthInPixels
+        self.screenshotHeightInPixels = screenshotHeightInPixels
+    }
+
+    public var displayTitle: String {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedTitle.isEmpty {
             return bundleID
@@ -360,23 +412,17 @@ struct OpenClickyBackgroundComputerUseWindowCapture: Sendable, Hashable {
         return "\(bundleID) - \(trimmedTitle)"
     }
 
-    var appName: String {
-        let localizedName = NSRunningApplication(processIdentifier: pid)?.localizedName?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return localizedName?.isEmpty == false ? localizedName ?? bundleID : bundleID
-    }
-
-    var label: String {
+    public var label: String {
         "Background Computer Use window (\(displayTitle))"
     }
 
-    var agentContextNote: String {
+    public var agentContextNote: String {
         let imagePathNote = imagePath.map { "Screenshot path \($0)." } ?? "Screenshot path unavailable."
         return "BackgroundComputerUse target window \(windowID), pid \(pid), bundleID \(bundleID), title \(title), state token \(stateToken), runtime \(baseURL). Image dimensions \(screenshotWidthInPixels)x\(screenshotHeightInPixels) pixels. \(imagePathNote)"
     }
 }
 
-enum OpenClickyComputerUseError: Error, LocalizedError, Equatable {
+public enum OpenClickyComputerUseError: Error, LocalizedError, Equatable {
     case disabled
     case noTargetWindow
     case windowCaptureUnavailable
@@ -384,7 +430,7 @@ enum OpenClickyComputerUseError: Error, LocalizedError, Equatable {
     case unknownKey(String)
     case eventCreationFailed(String)
 
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case .disabled:
             return "Native CUA Swift computer use is disabled in OpenClicky settings."

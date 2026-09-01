@@ -8,12 +8,13 @@
 
 /* Begin PBXBuildFile section */
 		0C1316D624299542AA88F53B /* OCFoundation in Frameworks */ = {isa = PBXBuildFile; productRef = 0C06CB6EA4542C44288FF530 /* OCFoundation */; };
+		0C2F2A9E0130F946F18D4E73 /* OCAutomation in Frameworks */ = {isa = PBXBuildFile; productRef = 0C2AFE5F8114A34812946E6A /* OCAutomation */; };
 		24D85D612FBEE5D8004FEDAD /* OpenClickyBrowser in Frameworks */ = {isa = PBXBuildFile; productRef = 24D85D602FBEE5D8004FEDAD /* OpenClickyBrowser */; };
 		24D85D632FBEE5D8004FEDAD /* OpenClickyCore in Frameworks */ = {isa = PBXBuildFile; productRef = 24D85D622FBEE5D8004FEDAD /* OpenClickyCore */; };
 		24D85D652FBEE5D8004FEDAD /* OpenClickyMarkdown in Frameworks */ = {isa = PBXBuildFile; productRef = 24D85D642FBEE5D8004FEDAD /* OpenClickyMarkdown */; };
 		24D85D672FBEE5D8004FEDAD /* OpenClickyMemory in Frameworks */ = {isa = PBXBuildFile; productRef = 24D85D662FBEE5D8004FEDAD /* OpenClickyMemory */; };
 		24D85D692FBEE5D8004FEDAD /* OpenClickyUI in Frameworks */ = {isa = PBXBuildFile; productRef = 24D85D682FBEE5D8004FEDAD /* OpenClickyUI */; };
-		0C2F2A9E0130F946F18D4E73 /* OCAutomation in Frameworks */ = {isa = PBXBuildFile; productRef = 0C2AFE5F8114A34812946E6A /* OCAutomation */; };
+		0C50FB962A511A459F93442A /* OCComputerUseCore in Frameworks */ = {isa = PBXBuildFile; productRef = 0C4B7CBCAF678542B4813C36 /* OCComputerUseCore */; };
 		24E363952FB3400600B27AB1 /* GLTFSceneKit in Frameworks */ = {isa = PBXBuildFile; productRef = AA00BB042F6500040039DA55 /* GLTFSceneKit */; };
 		AA00BB032F6500030039DA55 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = AA00BB022F6500020039DA55 /* Sparkle */; };
 		AA00BB072F6500070039DA55 /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = AA00BB062F6500060039DA55 /* FluidAudio */; };
@@ -64,12 +65,13 @@
 
 /* Begin PBXFileReference section */
 		0C00E5337FDB5D4202A87769 /* OCFoundation */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = OCFoundation; sourceTree = "<group>"; };
+		0C14D1A08DC8E942718EB3A8 /* OCAutomation */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = OCAutomation; sourceTree = "<group>"; };
 		24D85D592FBEE591004FEDAD /* OpenClickyBrowser */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = OpenClickyBrowser; sourceTree = "<group>"; };
 		24D85D5A2FBEE591004FEDAD /* OpenClickyCore */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = OpenClickyCore; sourceTree = "<group>"; };
 		24D85D5B2FBEE591004FEDAD /* OpenClickyMarkdown */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = OpenClickyMarkdown; sourceTree = "<group>"; };
 		24D85D5C2FBEE591004FEDAD /* OpenClickyMemory */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = OpenClickyMemory; sourceTree = "<group>"; };
 		24D85D5D2FBEE591004FEDAD /* OpenClickyUI */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = OpenClickyUI; sourceTree = "<group>"; };
-		0C14D1A08DC8E942718EB3A8 /* OCAutomation */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = OCAutomation; sourceTree = "<group>"; };
+		0C4527C35649DA4BF7BF5EE6 /* OCComputerUseCore */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = OCComputerUseCore; sourceTree = "<group>"; };
 		28F22CBF2F56440300A0FC59 /* OpenClicky.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OpenClicky.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		28F22CCC2F56440300A0FC59 /* cursor-buddyTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "cursor-buddyTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		28F22CD62F56440300A0FC59 /* cursor-buddyUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "cursor-buddyUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -126,6 +128,7 @@
 				AA00BB032F6500030039DA55 /* Sparkle in Frameworks */,
 				24D85D692FBEE5D8004FEDAD /* OpenClickyUI in Frameworks */,
 				24D85D612FBEE5D8004FEDAD /* OpenClickyBrowser in Frameworks */,
+				0C50FB962A511A459F93442A /* OCComputerUseCore in Frameworks */,
 				0C2F2A9E0130F946F18D4E73 /* OCAutomation in Frameworks */,
 				0C1316D624299542AA88F53B /* OCFoundation in Frameworks */,
 			);
@@ -163,6 +166,7 @@
 				24D85D5B2FBEE591004FEDAD /* OpenClickyMarkdown */,
 				24D85D5C2FBEE591004FEDAD /* OpenClickyMemory */,
 				24D85D5D2FBEE591004FEDAD /* OpenClickyUI */,
+				0C4527C35649DA4BF7BF5EE6 /* OCComputerUseCore */,
 				0C14D1A08DC8E942718EB3A8 /* OCAutomation */,
 				0C00E5337FDB5D4202A87769 /* OCFoundation */,
 			);
@@ -243,6 +247,7 @@
 				24D85D642FBEE5D8004FEDAD /* OpenClickyMarkdown */,
 				24D85D662FBEE5D8004FEDAD /* OpenClickyMemory */,
 				24D85D682FBEE5D8004FEDAD /* OpenClickyUI */,
+				0C4B7CBCAF678542B4813C36 /* OCComputerUseCore */,
 				0C2AFE5F8114A34812946E6A /* OCAutomation */,
 				0C06CB6EA4542C44288FF530 /* OCFoundation */,
 				AA77D0022FBF00010039DA55 /* DynamicNotchKit */,
@@ -944,6 +949,10 @@
 			isa = XCSwiftPackageProductDependency;
 			productName = OCFoundation;
 		};
+		0C2AFE5F8114A34812946E6A /* OCAutomation */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = OCAutomation;
+		};
 		24D85D602FBEE5D8004FEDAD /* OpenClickyBrowser */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = OpenClickyBrowser;
@@ -964,9 +973,9 @@
 			isa = XCSwiftPackageProductDependency;
 			productName = OpenClickyUI;
 		};
-		0C2AFE5F8114A34812946E6A /* OCAutomation */ = {
+		0C4B7CBCAF678542B4813C36 /* OCComputerUseCore */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = OCAutomation;
+			productName = OCComputerUseCore;
 		};
 		AA00BB022F6500020039DA55 /* Sparkle */ = {
 			isa = XCSwiftPackageProductDependency;

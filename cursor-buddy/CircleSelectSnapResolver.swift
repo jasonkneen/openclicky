@@ -6,25 +6,22 @@
 //  target (AX element or CG window) inside that path so the selection can
 //  snap and hold until push-to-talk is released.
 //
+//  The pure scoring/geometry lives in OCComputerUseCore
+//  (CircleSelectSnapGeometry / CircleSelectSnapResult); this file owns the
+//  Accessibility, NSScreen and CGWindowList probes that feed it.
+//
 
 import AppKit
 import ApplicationServices
 import Foundation
-
-struct CircleSelectSnapResult: Equatable, Sendable {
-    var rect: CGRect
-    var label: String
-    var source: String
-    var role: String?
-}
+import OCComputerUseCore
 
 enum CircleSelectSnapResolver {
+    private typealias Geometry = CircleSelectSnapGeometry
+    private typealias ScoredCandidate = CircleSelectSnapGeometry.ScoredCandidate
+
     private static let maxAXNodes = 400
     private static let maxAXDepth = 10
-    private static let minElementSide: CGFloat = 18
-    private static let maxElementAreaFraction: CGFloat = 0.92
-    private static let minOverlapFraction: CGFloat = 0.22
-    private static let snapPadding: CGFloat = 6
 
     /// Prefer a concrete UI target inside `pathBounds` (optionally guided by partial speech).
     static func resolveSnap(
@@ -32,10 +29,10 @@ enum CircleSelectSnapResolver {
         pathBounds: CGRect,
         partialTranscript: String?
     ) -> CircleSelectSnapResult? {
-        guard pathBounds.width >= minElementSide, pathBounds.height >= minElementSide else { return nil }
+        guard pathBounds.width >= Geometry.minElementSide, pathBounds.height >= Geometry.minElementSide else { return nil }
 
         let pathArea = max(pathBounds.width * pathBounds.height, 1)
-        let speechTokens = meaningfulTokens(from: partialTranscript)
+        let speechTokens = Geometry.meaningfulTokens(from: partialTranscript)
 
         var candidates: [ScoredCandidate] = []
         candidates.append(contentsOf: accessibilityCandidates(
@@ -54,10 +51,10 @@ enum CircleSelectSnapResolver {
             return nil
         }
 
-        let padded = best.rect.insetBy(dx: -snapPadding, dy: -snapPadding)
+        let padded = best.rect.insetBy(dx: -Geometry.snapPadding, dy: -Geometry.snapPadding)
         let screen = NSScreen.screen(containingOrNearestTo: CGPoint(x: padded.midX, y: padded.midY))
         let clamped = screen.map { padded.intersection($0.frame) } ?? padded
-        guard clamped.width >= minElementSide, clamped.height >= minElementSide else { return nil }
+        guard clamped.width >= Geometry.minElementSide, clamped.height >= Geometry.minElementSide else { return nil }
 
         return CircleSelectSnapResult(
             rect: clamped,
@@ -68,14 +65,6 @@ enum CircleSelectSnapResolver {
     }
 
     // MARK: - Accessibility
-
-    private struct ScoredCandidate {
-        var rect: CGRect
-        var label: String
-        var source: String
-        var role: String?
-        var score: Double
-    }
 
     private static func accessibilityCandidates(
         pathPoints: [CGPoint],
@@ -97,13 +86,13 @@ enum CircleSelectSnapResolver {
             nodesVisited += 1
 
             if let frame = axFrameInAppKitCoordinates(element),
-               frame.width >= minElementSide,
-               frame.height >= minElementSide {
+               frame.width >= Geometry.minElementSide,
+               frame.height >= Geometry.minElementSide {
                 let intersection = frame.intersection(pathBounds)
                 if !intersection.isNull, intersection.width > 1, intersection.height > 1 {
                     let elementArea = max(frame.width * frame.height, 1)
                     // Skip near-full-window chrome that just swallows the circle.
-                    if elementArea / pathArea <= (1.0 / maxElementAreaFraction)
+                    if elementArea / pathArea <= (1.0 / Geometry.maxElementAreaFraction)
                         || pathArea / elementArea >= 0.15 {
                         let role = axString(element, attribute: kAXRoleAttribute as String) ?? ""
                         let title = [
@@ -114,7 +103,7 @@ enum CircleSelectSnapResolver {
                         .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
                         .first { !$0.isEmpty }
 
-                        let score = scoreCandidate(
+                        let score = Geometry.scoreCandidate(
                             frame: frame,
                             pathPoints: pathPoints,
                             pathBounds: pathBounds,
@@ -124,8 +113,8 @@ enum CircleSelectSnapResolver {
                             speechTokens: speechTokens
                         )
                         if score > 0 {
-                            let label = title.map { shortLabel($0) }
-                                ?? shortLabel(role.replacingOccurrences(of: "AX", with: ""))
+                            let label = title.map { Geometry.shortLabel($0) }
+                                ?? Geometry.shortLabel(role.replacingOccurrences(of: "AX", with: ""))
                             results.append(
                                 ScoredCandidate(
                                     rect: frame,
@@ -178,7 +167,7 @@ enum CircleSelectSnapResolver {
                 return nil
             }
             let overlap = (intersection.width * intersection.height) / pathArea
-            guard overlap >= minOverlapFraction else { return nil }
+            guard overlap >= Geometry.minOverlapFraction else { return nil }
 
             let title = window.name
             var score = Double(overlap) * 0.55
@@ -190,115 +179,16 @@ enum CircleSelectSnapResolver {
             } else {
                 score -= 0.15
             }
-            score += speechBoost(title: title, tokens: speechTokens)
+            score += Geometry.speechBoost(title: title, tokens: speechTokens)
             guard score >= 0.35 else { return nil }
             return ScoredCandidate(
                 rect: intersection.width * intersection.height > pathArea * 0.5 ? frame.intersection(pathBounds.insetBy(dx: -4, dy: -4)) : frame,
-                label: shortLabel(title.isEmpty ? window.owner : title),
+                label: Geometry.shortLabel(title.isEmpty ? window.owner : title),
                 source: "window",
                 role: "window",
                 score: score
             )
         }
-    }
-
-    private static func scoreCandidate(
-        frame: CGRect,
-        pathPoints: [CGPoint],
-        pathBounds: CGRect,
-        pathArea: CGFloat,
-        role: String,
-        title: String?,
-        speechTokens: Set<String>
-    ) -> Double {
-        let intersection = frame.intersection(pathBounds)
-        guard !intersection.isNull else { return 0 }
-        let intersectionArea = intersection.width * intersection.height
-        let elementArea = max(frame.width * frame.height, 1)
-
-        let coverageOfPath = intersectionArea / pathArea
-        let coverageOfElement = intersectionArea / elementArea
-        guard coverageOfPath >= minOverlapFraction || coverageOfElement >= 0.45 else { return 0 }
-
-        // Prefer elements mostly inside the freehand region.
-        var score = Double(coverageOfElement) * 0.55 + Double(coverageOfPath) * 0.25
-
-        let center = CGPoint(x: frame.midX, y: frame.midY)
-        if pathContains(center, points: pathPoints) || pathBounds.insetBy(dx: 8, dy: 8).contains(center) {
-            score += 0.18
-        }
-
-        let roleBoost: Double = {
-            let r = role.lowercased()
-            if r.contains("image") || r.contains("button") || r.contains("link") { return 0.16 }
-            if r.contains("statictext") || r.contains("text") || r.contains("heading") { return 0.12 }
-            if r.contains("group") || r.contains("cell") || r.contains("row") { return 0.08 }
-            if r.contains("window") || r.contains("scrollarea") { return -0.08 }
-            return 0.02
-        }()
-        score += roleBoost
-        score += speechBoost(title: title, tokens: speechTokens)
-
-        // Penalize enormous frames that dominate the screen.
-        if elementArea > pathArea * 4 {
-            score -= 0.25
-        }
-
-        return score
-    }
-
-    private static func speechBoost(title: String?, tokens: Set<String>) -> Double {
-        guard !tokens.isEmpty, let title, !title.isEmpty else { return 0 }
-        let titleTokens = meaningfulTokens(from: title)
-        let overlap = tokens.intersection(titleTokens)
-        if overlap.isEmpty { return 0 }
-        return min(0.28, 0.08 * Double(overlap.count))
-    }
-
-    private static func meaningfulTokens(from text: String?) -> Set<String> {
-        guard let text else { return [] }
-        let stop: Set<String> = [
-            "the", "a", "an", "this", "that", "these", "those", "what", "is", "are",
-            "please", "show", "me", "look", "at", "about", "and", "or", "to", "of",
-            "in", "on", "for", "with", "it", "my", "your", "can", "you", "here"
-        ]
-        return Set(
-            text
-                .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-                .lowercased()
-                .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
-                .map(String.init)
-                .filter { $0.count >= 3 && !stop.contains($0) }
-        )
-    }
-
-    private static func shortLabel(_ value: String) -> String {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.count <= 42 { return trimmed }
-        return String(trimmed.prefix(39)) + "..."
-    }
-
-    /// Ray-cast point-in-polygon for the freehand path (AppKit coords).
-    ///
-    /// This stays internal so the geometry can be exercised independently of
-    /// Accessibility fixtures in focused tests.
-    static func pathContains(_ point: CGPoint, points: [CGPoint]) -> Bool {
-        guard points.count >= 3 else { return false }
-        var inside = false
-        var j = points.count - 1
-        for i in 0..<points.count {
-            let pi = points[i]
-            let pj = points[j]
-            let crossesHorizontalRay = (pi.y > point.y) != (pj.y > point.y)
-            // `crossesHorizontalRay` guarantees a non-zero denominator. Keep
-            // its sign: replacing a descending edge's denominator with a
-            // positive epsilon moves its intersection far off-screen.
-            let intersects = crossesHorizontalRay
-                && (point.x < (pj.x - pi.x) * (point.y - pi.y) / (pj.y - pi.y) + pi.x)
-            if intersects { inside.toggle() }
-            j = i
-        }
-        return inside
     }
 
     // MARK: - AX helpers
@@ -360,16 +250,6 @@ enum CircleSelectSnapResolver {
         return CGRect(x: position.x, y: appKitY, width: size.width, height: size.height)
     }
 
-    /// Convert AX top-left Y + height into AppKit bottom-left Y using the
-    /// menu-bar display as the shared global-coordinate origin.
-    static func appKitY(
-        fromAXY axY: CGFloat,
-        height: CGFloat,
-        menuBarScreenMaxY: CGFloat
-    ) -> CGFloat {
-        menuBarScreenMaxY - axY - height
-    }
-
     /// Convert AX top-left Y + height into AppKit bottom-left Y.
     private static func globalAppKitY(fromAXY axY: CGFloat, height: CGFloat) -> CGFloat {
         // Accessibility coordinates use the top-left of the menu-bar display
@@ -379,7 +259,7 @@ enum CircleSelectSnapResolver {
         let menuBarScreenMaxY = NSScreen.screens.first?.frame.maxY
             ?? NSScreen.main?.frame.maxY
             ?? 0
-        return appKitY(
+        return Geometry.appKitY(
             fromAXY: axY,
             height: height,
             menuBarScreenMaxY: menuBarScreenMaxY

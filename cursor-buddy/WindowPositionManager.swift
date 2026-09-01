@@ -7,6 +7,7 @@
 //
 
 import AppKit
+import OCComputerUseCore
 import ApplicationServices
 import ScreenCaptureKit
 import SwiftUI
