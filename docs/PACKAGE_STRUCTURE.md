@@ -123,6 +123,44 @@ Swift target. A file must import the defining module to see a type's
 *members*, even when it never names the type — so files that only touch
 `someValue.property` still need the import.
 
+`SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` is also set on every app
+target, while SwiftPM targets default to *nonisolated*. Moving a type
+across the boundary therefore changes its isolation. The case that fails
+hard rather than warning is an app subclass of a package class: the
+subclass is MainActor-isolated by default and its overrides no longer
+match the nonisolated base, giving
+
+```text
+error: main actor-isolated instance method 'x' has different actor
+isolation from nonisolated overridden declaration
+```
+
+Mark such a subclass `nonisolated` when it genuinely runs off the main
+actor. The same applies to an app type conforming to a package protocol.
+
+## Verifying app-side compilation without Xcode
+
+`swiftc -parse` checks syntax only; it resolves no imports and sees no
+cross-module access levels or isolation, so it cannot catch a missing
+`public`, a `public` class that needed to be `open`, or the isolation
+mismatch above. Since app builds happen in Xcode, the way to check those
+before handing over is a throwaway SwiftPM package that depends on the
+extracted modules, reproduces the app's access patterns, and **compiles
+with the app target's flags**:
+
+```swift
+swiftSettings: [
+    .enableUpcomingFeature("MemberImportVisibility"),
+    .enableUpcomingFeature("InferIsolatedConformances"),
+    .unsafeFlags(["-default-isolation", "MainActor"]),
+]
+```
+
+Without those flags the check passes and proves nothing — the isolation
+error above only appeared once they were applied. Verify the flags reached
+the compiler (`swift build -v`) rather than assuming the manifest edit
+took.
+
 ## Verification
 
 Per `CLAUDE.md`, do not run `xcodebuild`; build the app in Xcode. Packages
