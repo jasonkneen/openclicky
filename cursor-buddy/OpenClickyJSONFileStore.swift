@@ -2,22 +2,16 @@
 //  OpenClickyJSONFileStore.swift
 //  OpenClicky
 //
-//  Shared helpers for OpenClicky's small JSON-file-backed stores. Several
-//  stores previously hand-rolled the same "resolve Application Support
-//  directory (with home-directory fallback), create it, encode/decode JSON
-//  atomically" boilerplate. Centralized here so new stores don't repeat it.
+//  The generic JSON-file persistence helpers now live in the OCFoundation
+//  package. This file keeps the one product-specific member — the shared
+//  "OpenClicky" directory under Application Support — in the app, where the
+//  product name belongs.
 //
 
 import Foundation
+import OCFoundation
 
-enum OpenClickyJSONFileStore {
-    /// The user's Application Support directory, falling back to
-    /// ~/Library/Application Support if FileManager can't resolve it.
-    nonisolated static func applicationSupportDirectory(fileManager: FileManager = .default) -> URL {
-        fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support", isDirectory: true)
-    }
-
+extension OpenClickyJSONFileStore {
     /// The shared "OpenClicky" directory under Application Support, with an
     /// optional relative subpath appended (e.g. ["Logs"], ["agents"]).
     nonisolated static func openClickyDirectory(fileManager: FileManager = .default, subpath: [String] = []) -> URL {
@@ -27,46 +21,5 @@ enum OpenClickyJSONFileStore {
             url = url.appendingPathComponent(component, isDirectory: true)
         }
         return url
-    }
-
-    @discardableResult
-    nonisolated static func ensureDirectoryExists(_ url: URL, fileManager: FileManager = .default) throws -> URL {
-        try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
-    }
-
-    nonisolated static var defaultEncoder: JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return encoder
-    }
-
-    nonisolated static var defaultDecoder: JSONDecoder {
-        JSONDecoder()
-    }
-
-    /// Encodes `value` and writes it atomically to `fileURL`, creating the
-    /// parent directory first.
-    nonisolated static func write<T: Encodable>(
-        _ value: T,
-        to fileURL: URL,
-        fileManager: FileManager = .default,
-        encoder: JSONEncoder = OpenClickyJSONFileStore.defaultEncoder
-    ) throws {
-        try ensureDirectoryExists(fileURL.deletingLastPathComponent(), fileManager: fileManager)
-        let data = try encoder.encode(value)
-        try data.write(to: fileURL, options: [.atomic])
-    }
-
-    /// Decodes `T` from `fileURL`, returning `nil` if the file is missing or
-    /// decoding fails.
-    nonisolated static func read<T: Decodable>(
-        _ type: T.Type,
-        from fileURL: URL,
-        fileManager: FileManager = .default,
-        decoder: JSONDecoder = OpenClickyJSONFileStore.defaultDecoder
-    ) -> T? {
-        guard let data = try? Data(contentsOf: fileURL) else { return nil }
-        return try? decoder.decode(T.self, from: data)
     }
 }

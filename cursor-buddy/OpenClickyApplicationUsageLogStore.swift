@@ -1,4 +1,5 @@
 import AppKit
+import OCFoundation
 import Foundation
 
 nonisolated final class OpenClickyApplicationUsageLogStore: @unchecked Sendable {

@@ -9,6 +9,7 @@
 import AppKit
 import SwiftUI
 import Combine
+import OCFoundation
 import OpenClickyCore
 import OpenClickyUI
 
