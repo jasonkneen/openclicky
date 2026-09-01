@@ -1,6 +1,6 @@
 //
 //  OpenClickyAutomation.swift
-//  OpenClicky
+//  OCAutomation
 //
 //  Scheduled prompt model + a self-contained 5-field cron evaluator.
 //  Cron supports: number, list (1,3,5), range (1-5), step (*/5), wildcard.
@@ -10,13 +10,13 @@
 
 import Foundation
 
-enum OpenClickyAutomationSchedule: Codable, Equatable {
+public enum OpenClickyAutomationSchedule: Codable, Equatable, Sendable {
   case interval(seconds: TimeInterval)
   case cron(String)
 
   enum CodingKeys: String, CodingKey { case kind, value }
 
-  init(from decoder: Decoder) throws {
+  public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
     let kind = try c.decode(String.self, forKey: .kind)
     switch kind {
@@ -31,7 +31,7 @@ enum OpenClickyAutomationSchedule: Codable, Equatable {
     }
   }
 
-  func encode(to encoder: Encoder) throws {
+  public func encode(to encoder: Encoder) throws {
     var c = encoder.container(keyedBy: CodingKeys.self)
     switch self {
     case .interval(let s):
@@ -43,7 +43,7 @@ enum OpenClickyAutomationSchedule: Codable, Equatable {
     }
   }
 
-  var displayString: String {
+  public var displayString: String {
     switch self {
     case .interval(let s):
       let minutes = Int(s) / 60
@@ -57,18 +57,18 @@ enum OpenClickyAutomationSchedule: Codable, Equatable {
   }
 }
 
-struct OpenClickyAutomation: Codable, Identifiable, Equatable {
-  var id: UUID
-  var name: String
-  var schedule: OpenClickyAutomationSchedule
-  var prompt: String
+public struct OpenClickyAutomation: Codable, Identifiable, Equatable, Sendable {
+  public var id: UUID
+  public var name: String
+  public var schedule: OpenClickyAutomationSchedule
+  public var prompt: String
   /// Optional specialist-agent slug. Nil = run via the default chat session.
-  var agentSlug: String?
-  var enabled: Bool
-  var lastRun: Date?
-  var nextRun: Date?
+  public var agentSlug: String?
+  public var enabled: Bool
+  public var lastRun: Date?
+  public var nextRun: Date?
 
-  init(id: UUID = UUID(), name: String, schedule: OpenClickyAutomationSchedule, prompt: String, agentSlug: String? = nil, enabled: Bool = true, lastRun: Date? = nil, nextRun: Date? = nil) {
+  public init(id: UUID = UUID(), name: String, schedule: OpenClickyAutomationSchedule, prompt: String, agentSlug: String? = nil, enabled: Bool = true, lastRun: Date? = nil, nextRun: Date? = nil) {
     self.id = id
     self.name = name
     self.schedule = schedule
@@ -79,7 +79,7 @@ struct OpenClickyAutomation: Codable, Identifiable, Equatable {
     self.nextRun = nextRun
   }
 
-  func computingNextRun(after reference: Date) -> Date? {
+  public func computingNextRun(after reference: Date) -> Date? {
     switch schedule {
     case .interval(let s):
       let base = lastRun ?? reference
@@ -93,14 +93,14 @@ struct OpenClickyAutomation: Codable, Identifiable, Equatable {
 
 // MARK: - Cron evaluator
 
-struct CronExpression {
+public struct CronExpression: Sendable {
   let minutes: Set<Int>
   let hours: Set<Int>
   let days: Set<Int>
   let months: Set<Int>
   let weekdays: Set<Int> // 1-7 (Sunday = 1, matches Calendar.weekday)
 
-  init?(_ raw: String) {
+  public init?(_ raw: String) {
     let parts = raw.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
     guard parts.count == 5 else { return nil }
     guard let m = Self.parse(parts[0], min: 0, max: 59),
@@ -116,7 +116,7 @@ struct CronExpression {
     self.weekdays = Set(dow.map { ($0 % 7) + 1 })
   }
 
-  func nextFireDate(after reference: Date) -> Date? {
+  public func nextFireDate(after reference: Date) -> Date? {
     let calendar = Calendar(identifier: .gregorian)
     var candidate = calendar.date(byAdding: .minute, value: 1, to: reference) ?? reference
     candidate = calendar.date(bySetting: .second, value: 0, of: candidate) ?? candidate

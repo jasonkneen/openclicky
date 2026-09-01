@@ -8,6 +8,7 @@
 //
 
 import SwiftUI
+import OCAutomation
 
 struct OpenClickyAutomationsSettingsSection: View {
   @ObservedObject var companion: CompanionManager

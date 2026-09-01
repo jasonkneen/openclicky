@@ -10,6 +10,7 @@
 //
 
 import AppKit
+import OCAutomation
 import Combine
 import Foundation
 
