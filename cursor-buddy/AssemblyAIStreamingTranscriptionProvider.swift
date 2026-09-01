@@ -6,6 +6,7 @@
 //
 
 import AVFoundation
+import OCAudioCore
 import Foundation
 
 struct AssemblyAIStreamingTranscriptionProviderError: LocalizedError {

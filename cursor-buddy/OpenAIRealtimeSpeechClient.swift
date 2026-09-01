@@ -4,6 +4,7 @@
 //
 
 import AVFoundation
+import OCAudioCore
 import Foundation
 
 // MARK: - OpenAIRealtimeSpeechClient

@@ -6,6 +6,7 @@
 //
 
 import AVFoundation
+import OCAudioCore
 import CoreML
 @preconcurrency import FluidAudio
 import Foundation

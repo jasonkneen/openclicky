@@ -1,6 +1,6 @@
 //
 //  StreamingWebSocketTranscriptionSession.swift
-//  cursor-buddy
+//  OCAudioCore
 //
 //  Shared WebSocket open/receive-loop/send/close scaffolding for streaming
 //  transcription providers (Deepgram, AssemblyAI). Protocol-specific
@@ -14,20 +14,20 @@ import Foundation
 /// Subclasses supply the provider-specific `URLRequest`, decode incoming
 /// frames, and react to receive failures; this class owns the connection
 /// lifecycle (open, receive loop, send, close).
-class StreamingWebSocketTranscriptionSession: NSObject, @unchecked Sendable {
+open class StreamingWebSocketTranscriptionSession: NSObject, @unchecked Sendable {
     private let urlSession: URLSession
     let sendQueue: DispatchQueue
 
-    private(set) var webSocketTask: URLSessionWebSocketTask?
+    public private(set) var webSocketTask: URLSessionWebSocketTask?
 
-    init(urlSession: URLSession, sendQueueLabel: String) {
+    public init(urlSession: URLSession, sendQueueLabel: String) {
         self.urlSession = urlSession
         self.sendQueue = DispatchQueue(label: sendQueueLabel)
     }
 
     /// Opens the WebSocket connection with the given request and starts the
     /// receive loop. Callers build `request` with their own auth headers.
-    func openWebSocket(with request: URLRequest) {
+    public func openWebSocket(with request: URLRequest) {
         let webSocketTask = urlSession.webSocketTask(with: request)
         self.webSocketTask = webSocketTask
         webSocketTask.resume()
@@ -59,17 +59,17 @@ class StreamingWebSocketTranscriptionSession: NSObject, @unchecked Sendable {
     }
 
     /// Override to decode and route an incoming text (or data-as-text) frame.
-    func handleIncomingText(_ text: String) {
+    open func handleIncomingText(_ text: String) {
         fatalError("\(Self.self) must override handleIncomingText(_:)")
     }
 
     /// Override to react to a WebSocket receive failure.
-    func handleReceiveFailure(_ error: Error) {
+    open func handleReceiveFailure(_ error: Error) {
         fatalError("\(Self.self) must override handleReceiveFailure(_:)")
     }
 
     /// Sends raw audio data on the send queue.
-    func sendAudioData(_ data: Data, onError: @escaping (Error) -> Void) {
+    public func sendAudioData(_ data: Data, onError: @escaping (Error) -> Void) {
         sendQueue.async { [weak self] in
             guard let self, let webSocketTask = self.webSocketTask else { return }
             webSocketTask.send(.data(data)) { error in
@@ -81,7 +81,7 @@ class StreamingWebSocketTranscriptionSession: NSObject, @unchecked Sendable {
     }
 
     /// Serializes and sends a JSON control message on the send queue.
-    func sendJSONMessage(_ payload: [String: Any], onError: @escaping (Error) -> Void) {
+    public func sendJSONMessage(_ payload: [String: Any], onError: @escaping (Error) -> Void) {
         guard let jsonData = try? JSONSerialization.data(withJSONObject: payload),
               let jsonString = String(data: jsonData, encoding: .utf8) else {
             return
@@ -98,7 +98,7 @@ class StreamingWebSocketTranscriptionSession: NSObject, @unchecked Sendable {
     }
 
     /// Closes the underlying WebSocket task.
-    func closeWebSocket(with closeCode: URLSessionWebSocketTask.CloseCode = .goingAway, reason: Data? = nil) {
+    public func closeWebSocket(with closeCode: URLSessionWebSocketTask.CloseCode = .goingAway, reason: Data? = nil) {
         webSocketTask?.cancel(with: closeCode, reason: reason)
     }
 }

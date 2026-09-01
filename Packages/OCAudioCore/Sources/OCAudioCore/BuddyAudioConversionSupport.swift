@@ -1,6 +1,6 @@
 //
 //  BuddyAudioConversionSupport.swift
-//  cursor-buddy
+//  OCAudioCore
 //
 //  Shared audio conversion helpers for voice transcription providers.
 //
@@ -8,12 +8,12 @@
 import AVFoundation
 import Foundation
 
-final class BuddyPCM16AudioConverter {
+public final class BuddyPCM16AudioConverter {
     private let targetAudioFormat: AVAudioFormat
     private var audioConverter: AVAudioConverter?
     private var currentInputFormatDescription: String?
 
-    init(targetSampleRate: Double) {
+    public init(targetSampleRate: Double) {
         self.targetAudioFormat = AVAudioFormat(
             commonFormat: .pcmFormatInt16,
             sampleRate: targetSampleRate,
@@ -22,7 +22,7 @@ final class BuddyPCM16AudioConverter {
         )!
     }
 
-    func convertToPCM16Data(from audioBuffer: AVAudioPCMBuffer) -> Data? {
+    public func convertToPCM16Data(from audioBuffer: AVAudioPCMBuffer) -> Data? {
         let inputFormatDescription = audioBuffer.format.settings.description
 
         if currentInputFormatDescription != inputFormatDescription {
@@ -69,8 +69,8 @@ final class BuddyPCM16AudioConverter {
     }
 }
 
-enum BuddyWAVFileBuilder {
-    static func buildWAVData(
+public enum BuddyWAVFileBuilder {
+    public static func buildWAVData(
         fromPCM16MonoAudio pcm16AudioData: Data,
         sampleRate: Int,
         channelCount: Int = 1,
