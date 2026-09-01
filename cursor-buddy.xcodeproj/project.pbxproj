@@ -371,6 +371,16 @@
 			mainGroup = 28F22CB62F56440300A0FC59;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				0C89D43588327048D7B81751 /* XCLocalSwiftPackageReference "Packages/OCBrowser" */,
+				0C82117744574745D88F0641 /* XCLocalSwiftPackageReference "Packages/OCCore" */,
+				0C9D1BE457D49347C7B7B602 /* XCLocalSwiftPackageReference "Packages/OCMarkdown" */,
+				0C9D7CFEFF20BB4E4FA18E95 /* XCLocalSwiftPackageReference "Packages/OCMemory" */,
+				0C8827C7B3BB1C4D6E97D67E /* XCLocalSwiftPackageReference "Packages/OCUI" */,
+				0C9E34EA83DCFA4140B30C0B /* XCLocalSwiftPackageReference "Packages/OCFoundation" */,
+				0CA167E660E7F04CFA8FD1D3 /* XCLocalSwiftPackageReference "Packages/OCAutomation" */,
+				0CA1EE613693614ED0BB16F7 /* XCLocalSwiftPackageReference "Packages/OCAudioCore" */,
+				0CA49FC715FB664546946C67 /* XCLocalSwiftPackageReference "Packages/OCComputerUseCore" */,
+				0CB7330D70CD3E4AE5A61048 /* XCLocalSwiftPackageReference "Packages/OC3D" */,
 				AA00BB012F6500010039DA55 /* XCRemoteSwiftPackageReference "Sparkle" */,
 				AA00BB052F6500050039DA55 /* XCRemoteSwiftPackageReference "GLTFSceneKit" */,
 				AA00BB082F6500080039DA55 /* XCRemoteSwiftPackageReference "FluidAudio" */,
@@ -922,6 +932,49 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		0C89D43588327048D7B81751 /* XCLocalSwiftPackageReference "Packages/OCBrowser" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/OCBrowser;
+		};
+		0C82117744574745D88F0641 /* XCLocalSwiftPackageReference "Packages/OCCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/OCCore;
+		};
+		0C9D1BE457D49347C7B7B602 /* XCLocalSwiftPackageReference "Packages/OCMarkdown" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/OCMarkdown;
+		};
+		0C9D7CFEFF20BB4E4FA18E95 /* XCLocalSwiftPackageReference "Packages/OCMemory" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/OCMemory;
+		};
+		0C8827C7B3BB1C4D6E97D67E /* XCLocalSwiftPackageReference "Packages/OCUI" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/OCUI;
+		};
+		0C9E34EA83DCFA4140B30C0B /* XCLocalSwiftPackageReference "Packages/OCFoundation" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/OCFoundation;
+		};
+		0CA167E660E7F04CFA8FD1D3 /* XCLocalSwiftPackageReference "Packages/OCAutomation" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/OCAutomation;
+		};
+		0CA1EE613693614ED0BB16F7 /* XCLocalSwiftPackageReference "Packages/OCAudioCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/OCAudioCore;
+		};
+		0CA49FC715FB664546946C67 /* XCLocalSwiftPackageReference "Packages/OCComputerUseCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/OCComputerUseCore;
+		};
+		0CB7330D70CD3E4AE5A61048 /* XCLocalSwiftPackageReference "Packages/OC3D" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/OC3D;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		AA00BB012F6500010039DA55 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -960,46 +1013,57 @@
 /* Begin XCSwiftPackageProductDependency section */
 		0C06CB6EA4542C44288FF530 /* OCFoundation */ = {
 			isa = XCSwiftPackageProductDependency;
+			package = 0C9E34EA83DCFA4140B30C0B /* XCLocalSwiftPackageReference "Packages/OCFoundation" */;
 			productName = OCFoundation;
 		};
 		0C2AFE5F8114A34812946E6A /* OCAutomation */ = {
 			isa = XCSwiftPackageProductDependency;
+			package = 0CA167E660E7F04CFA8FD1D3 /* XCLocalSwiftPackageReference "Packages/OCAutomation" */;
 			productName = OCAutomation;
 		};
 		0C4B7CBCAF678542B4813C36 /* OCComputerUseCore */ = {
 			isa = XCSwiftPackageProductDependency;
+			package = 0CA49FC715FB664546946C67 /* XCLocalSwiftPackageReference "Packages/OCComputerUseCore" */;
 			productName = OCComputerUseCore;
 		};
 		0C59CA0C825D0C4795B3A11F /* OC3DCore */ = {
 			isa = XCSwiftPackageProductDependency;
+			package = 0CB7330D70CD3E4AE5A61048 /* XCLocalSwiftPackageReference "Packages/OC3D" */;
 			productName = OC3DCore;
 		};
 		0C6CC327D920C644BC84F130 /* OCTripo */ = {
 			isa = XCSwiftPackageProductDependency;
+			package = 0CB7330D70CD3E4AE5A61048 /* XCLocalSwiftPackageReference "Packages/OC3D" */;
 			productName = OCTripo;
 		};
 		24D85D602FBEE5D8004FEDAD /* OCBrowser */ = {
 			isa = XCSwiftPackageProductDependency;
+			package = 0C89D43588327048D7B81751 /* XCLocalSwiftPackageReference "Packages/OCBrowser" */;
 			productName = OCBrowser;
 		};
 		24D85D622FBEE5D8004FEDAD /* OCCore */ = {
 			isa = XCSwiftPackageProductDependency;
+			package = 0C82117744574745D88F0641 /* XCLocalSwiftPackageReference "Packages/OCCore" */;
 			productName = OCCore;
 		};
 		24D85D642FBEE5D8004FEDAD /* OCMarkdown */ = {
 			isa = XCSwiftPackageProductDependency;
+			package = 0C9D1BE457D49347C7B7B602 /* XCLocalSwiftPackageReference "Packages/OCMarkdown" */;
 			productName = OCMarkdown;
 		};
 		24D85D662FBEE5D8004FEDAD /* OCMemory */ = {
 			isa = XCSwiftPackageProductDependency;
+			package = 0C9D7CFEFF20BB4E4FA18E95 /* XCLocalSwiftPackageReference "Packages/OCMemory" */;
 			productName = OCMemory;
 		};
 		24D85D682FBEE5D8004FEDAD /* OCUI */ = {
 			isa = XCSwiftPackageProductDependency;
+			package = 0C8827C7B3BB1C4D6E97D67E /* XCLocalSwiftPackageReference "Packages/OCUI" */;
 			productName = OCUI;
 		};
 		0C804FCD037BC24295BE6EFB /* OCAudioCore */ = {
 			isa = XCSwiftPackageProductDependency;
+			package = 0CA1EE613693614ED0BB16F7 /* XCLocalSwiftPackageReference "Packages/OCAudioCore" */;
 			productName = OCAudioCore;
 		};
 		AA00BB022F6500020039DA55 /* Sparkle */ = {
