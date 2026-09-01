@@ -5,13 +5,14 @@
 // Auth: Authorization: Bearer <tsk_...>
 
 import Foundation
+import OC3DCore
 
-actor TripoThreeDProvider: ThreeDGenerationProvider {
+public actor TripoThreeDProvider: ThreeDGenerationProvider {
 
     // MARK: - Config
 
-    nonisolated let identifier = "tripo"
-    nonisolated let displayName = "Tripo AI"
+    nonisolated public let identifier = "tripo"
+    nonisolated public let displayName = "Tripo AI"
 
     private let apiKeyProvider: @Sendable () -> String?
     private let modelVersion: String?
@@ -20,7 +21,7 @@ actor TripoThreeDProvider: ThreeDGenerationProvider {
     private let pollInterval: TimeInterval
     private let timeoutSeconds: Int
 
-    init(
+    public init(
         apiKeyProvider: @escaping @Sendable () -> String?,
         modelVersion: String? = nil,
         baseURL: URL = URL(string: "https://api.tripo3d.ai/v2/openapi")!,
@@ -38,7 +39,7 @@ actor TripoThreeDProvider: ThreeDGenerationProvider {
 
     // MARK: - Provider entry point
 
-    func generate(
+    public func generate(
         request: ThreeDGenerationRequest,
         destinationDirectory: URL,
         onProgress: @Sendable @escaping (ThreeDGenerationProgress) -> Void
@@ -211,11 +212,11 @@ actor TripoThreeDProvider: ThreeDGenerationProvider {
                     ?? d.output?.base_model
                 guard let modelStr = candidate,
                       let modelURL = URL(string: modelStr),
-                      Self.isAllowedDownloadURL(modelURL) else {
+                      ThreeDDownloadPolicy.isAllowedDownloadURL(modelURL) else {
                     throw ThreeDGenerationError.noModelURL(provider: identifier)
                 }
                 let thumb = d.output?.rendered_image.flatMap { raw -> URL? in
-                    guard let url = URL(string: raw), Self.isAllowedDownloadURL(url) else { return nil }
+                    guard let url = URL(string: raw), ThreeDDownloadPolicy.isAllowedDownloadURL(url) else { return nil }
                     return url
                 }
                 return PollOutcome(modelURL: modelURL, thumbnailURL: thumb)
@@ -237,7 +238,7 @@ actor TripoThreeDProvider: ThreeDGenerationProvider {
     // MARK: - Download
 
     private func download(from remote: URL, to destination: URL, maxBytes: Int64) async throws {
-        guard Self.isAllowedDownloadURL(remote) else {
+        guard ThreeDDownloadPolicy.isAllowedDownloadURL(remote) else {
             throw ThreeDGenerationError.downloadFailed(remote, underlying: "URL is not an allowed HTTPS download target")
         }
         do {
@@ -263,42 +264,6 @@ actor TripoThreeDProvider: ThreeDGenerationProvider {
             throw e
         } catch {
             throw ThreeDGenerationError.downloadFailed(remote, underlying: error.localizedDescription)
-        }
-    }
-
-    private static func isAllowedDownloadURL(_ url: URL) -> Bool {
-        guard url.scheme?.lowercased() == "https",
-              url.user == nil,
-              url.password == nil,
-              let host = url.host?.lowercased(),
-              !isBlockedDownloadHost(host) else {
-            return false
-        }
-        return true
-    }
-
-    private static func isBlockedDownloadHost(_ host: String) -> Bool {
-        let stripped = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
-        if stripped == "localhost" || stripped == "::1" || stripped.hasSuffix(".local") {
-            return true
-        }
-        if stripped.contains(":") {
-            return true
-        }
-
-        let octets = stripped.split(separator: ".").compactMap { Int($0) }
-        guard octets.count == 4 else { return false }
-        switch octets[0] {
-        case 0, 10, 127:
-            return true
-        case 169 where octets[1] == 254:
-            return true
-        case 172 where (16...31).contains(octets[1]):
-            return true
-        case 192 where octets[1] == 168:
-            return true
-        default:
-            return false
         }
     }
 }

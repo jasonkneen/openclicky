@@ -10,7 +10,7 @@ import Foundation
 
 /// User-facing style hint. Translated per-provider into either a `style`
 /// API field or prompt-engineering prefix.
-nonisolated enum ThreeDStyle: String, Codable, CaseIterable, Sendable {
+nonisolated public enum ThreeDStyle: String, Codable, CaseIterable, Sendable {
     case lowPolyStylized   // Default for OpenClicky chat
     case clay
     case voxel
@@ -18,7 +18,7 @@ nonisolated enum ThreeDStyle: String, Codable, CaseIterable, Sendable {
     case realistic
     case none
 
-    var promptPrefix: String {
+    public var promptPrefix: String {
         switch self {
         case .lowPolyStylized:
             return "faithful low-poly stylized game asset, preserve the user's described design exactly, preserve original silhouette, proportions, color palette, roof/wall/window/door/fence details, flat shaded, clean faceted geometry, simple readable shapes, "
@@ -36,17 +36,17 @@ nonisolated enum ThreeDStyle: String, Codable, CaseIterable, Sendable {
     }
 }
 
-struct ThreeDGenerationRequest: Sendable {
-    let prompt: String
-    let style: ThreeDStyle
+public struct ThreeDGenerationRequest: Sendable {
+    public let prompt: String
+    public let style: ThreeDStyle
     /// Negative prompt — provider may ignore.
-    let negativePrompt: String?
+    public let negativePrompt: String?
     /// Request quad mesh (lower poly count, retopologised).
-    let quad: Bool
+    public let quad: Bool
     /// Request PBR textures. If false, providers return base-color only.
-    let pbr: Bool
+    public let pbr: Bool
 
-    init(
+    public init(
         prompt: String,
         style: ThreeDStyle = .lowPolyStylized,
         negativePrompt: String? = "redesign, different architecture, changed color palette, changed roof shape, missing original details, high poly, photorealistic, noisy detail, blurry",
@@ -63,7 +63,7 @@ struct ThreeDGenerationRequest: Sendable {
 
 // MARK: - Outputs
 
-nonisolated enum ThreeDTaskStatus: String, Codable, Sendable {
+nonisolated public enum ThreeDTaskStatus: String, Codable, Sendable {
     case queued
     case running
     case success
@@ -71,33 +71,33 @@ nonisolated enum ThreeDTaskStatus: String, Codable, Sendable {
     case cancelled
 }
 
-nonisolated struct ThreeDGenerationProgress: Sendable {
-    let status: ThreeDTaskStatus
+nonisolated public struct ThreeDGenerationProgress: Sendable {
+    public let status: ThreeDTaskStatus
     /// 0.0 – 1.0 when the provider supplies it; nil otherwise.
-    let progress: Double?
-    let message: String?
+    public let progress: Double?
+    public let message: String?
 
-    init(status: ThreeDTaskStatus, progress: Double? = nil, message: String? = nil) {
+    public init(status: ThreeDTaskStatus, progress: Double? = nil, message: String? = nil) {
         self.status = status
         self.progress = progress
         self.message = message
     }
 }
 
-nonisolated struct ThreeDGenerationResult: Sendable {
-    let taskId: String
+nonisolated public struct ThreeDGenerationResult: Sendable {
+    public let taskId: String
     /// Local file URL of the downloaded GLB.
-    let glbURL: URL
+    public let glbURL: URL
     /// Optional thumbnail PNG file URL.
-    let thumbnailURL: URL?
+    public let thumbnailURL: URL?
     /// Remote URL the GLB was downloaded from (useful for share/export).
-    let remoteGLBURL: URL?
-    let provider: String
-    let prompt: String
-    let style: ThreeDStyle
-    let createdAt: Date
+    public let remoteGLBURL: URL?
+    public let provider: String
+    public let prompt: String
+    public let style: ThreeDStyle
+    public let createdAt: Date
 
-    init(
+    public init(
         taskId: String,
         glbURL: URL,
         thumbnailURL: URL?,
@@ -120,7 +120,7 @@ nonisolated struct ThreeDGenerationResult: Sendable {
 
 // MARK: - Errors
 
-nonisolated enum ThreeDGenerationError: LocalizedError, Sendable {
+nonisolated public enum ThreeDGenerationError: LocalizedError, Sendable {
     case missingAPIKey(provider: String)
     case submissionFailed(provider: String, status: Int, body: String)
     case pollingFailed(provider: String, status: Int, body: String)
@@ -130,7 +130,7 @@ nonisolated enum ThreeDGenerationError: LocalizedError, Sendable {
     case timedOut(taskId: String, afterSeconds: Int)
     case cancelled
 
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case .missingAPIKey(let p):
             return "Missing API key for \(p). Set it in OpenClicky → Settings → 3D Generation."
@@ -154,7 +154,7 @@ nonisolated enum ThreeDGenerationError: LocalizedError, Sendable {
 
 // MARK: - Provider protocol
 
-nonisolated protocol ThreeDGenerationProvider: Sendable {
+nonisolated public protocol ThreeDGenerationProvider: Sendable {
     /// Stable identifier for telemetry / settings UI ("tripo", "meshy", …).
     var identifier: String { get }
     /// Human label for menus.

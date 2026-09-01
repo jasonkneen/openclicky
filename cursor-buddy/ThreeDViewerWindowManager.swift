@@ -4,6 +4,7 @@
 // shown/hidden via OpenClicky's menu or a keyboard shortcut.
 
 import AppKit
+import OC3DCore
 import Combine
 import SwiftUI
 

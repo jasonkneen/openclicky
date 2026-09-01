@@ -13,6 +13,7 @@
 // line from displayed text and substitute a user-facing message).
 
 import Foundation
+import OC3DCore
 
 @MainActor
 enum ThreeDGenerationDispatcher {

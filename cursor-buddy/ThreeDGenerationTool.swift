@@ -8,6 +8,7 @@
 //     ThreeDGenerationService.shared, and returns a tool-call result string.
 
 import Foundation
+import OC3DCore
 
 enum ThreeDGenerationTool {
 

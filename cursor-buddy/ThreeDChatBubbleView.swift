@@ -3,6 +3,7 @@
 // and action buttons (Show in Finder / Copy path / Re-generate).
 
 import SwiftUI
+import OC3DCore
 import AppKit
 
 struct ThreeDChatBubbleView: View {

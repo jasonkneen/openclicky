@@ -5,6 +5,8 @@
 // - Publishes an ObservableObject the UI binds to for in-flight + finished jobs.
 
 @preconcurrency import Combine
+import OC3DCore
+import OCTripo
 import Foundation
 import SwiftUI
 
