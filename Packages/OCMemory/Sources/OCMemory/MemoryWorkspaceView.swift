@@ -1,7 +1,7 @@
 import SwiftUI
 import AppKit
-import OpenClickyCore
-import OpenClickyUI
+import OCCore
+import OCUI
 
 @MainActor
 public final class WikiViewerPanelManager {

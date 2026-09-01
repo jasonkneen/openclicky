@@ -12,11 +12,11 @@ import os
 import ScreenCaptureKit
 import SwiftUI
 import UniformTypeIdentifiers
-import OpenClickyCore
-import OpenClickyUI
-@preconcurrency import OpenClickyBrowser
-import OpenClickyMarkdown
-import OpenClickyMemory
+import OCCore
+import OCUI
+@preconcurrency import OCBrowser
+import OCMarkdown
+import OCMemory
 
 extension CompanionManager {
 

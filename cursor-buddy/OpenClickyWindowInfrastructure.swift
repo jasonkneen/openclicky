@@ -9,7 +9,7 @@
 
 import AppKit
 import SwiftUI
-import OpenClickyCore
+import OCCore
 
 enum OpenClickyWindowLevels {
     /// OpenClicky panels need to stay above normal apps, menu-bar popups, and

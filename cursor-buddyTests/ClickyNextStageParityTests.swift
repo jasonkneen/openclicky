@@ -2,7 +2,7 @@ import CoreGraphics
 import OCComputerUseCore
 import Foundation
 import Testing
-import OpenClickyCore
+import OCCore
 @testable import OpenClicky
 
 @MainActor
@@ -19,7 +19,7 @@ struct ClickyNextStageParityTests {
     @Test func wikiManagerIndexesBundledWikiSeedAndSkills() throws {
         let resourcesRoot = URL(fileURLWithPath: "/Users/jkneen/Documents/GitHub/openclicky/AppResources/OpenClicky", isDirectory: true)
 
-        let index = try OpenClickyCore.WikiManager.Index.load(fromBundledResourcesRoot: resourcesRoot)
+        let index = try OCCore.WikiManager.Index.load(fromBundledResourcesRoot: resourcesRoot)
 
         #expect(index.articles.contains { $0.relativePath == "wiki/_index.md" && $0.title == "Index" })
         #expect(index.articles.contains { $0.relativePath == "wiki/projects/openclicky.md" && $0.title.localizedCaseInsensitiveContains("OpenClicky") })

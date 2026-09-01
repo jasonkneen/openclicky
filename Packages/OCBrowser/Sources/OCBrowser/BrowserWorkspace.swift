@@ -15,8 +15,8 @@ import SQLite3
 import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
-import OpenClickyCore
-import OpenClickyUI
+import OCCore
+import OCUI
 
 @MainActor
 public final class OpenClickyBrowserWorkspaceWindowManager {

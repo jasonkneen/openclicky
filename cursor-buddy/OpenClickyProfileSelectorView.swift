@@ -8,7 +8,7 @@
 //
 
 import SwiftUI
-import OpenClickyUI
+import OCUI
 
 struct OpenClickyProfileSelectorView: View {
     @ObservedObject var companionManager: CompanionManager

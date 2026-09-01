@@ -10,8 +10,8 @@ import AppKit
 import SwiftUI
 import Combine
 import OCFoundation
-import OpenClickyCore
-import OpenClickyUI
+import OCCore
+import OCUI
 
 /// Store for archived session IDs (UserDefaults) and session transcript
 /// snapshots (JSON files under Application Support). Snapshots carry full

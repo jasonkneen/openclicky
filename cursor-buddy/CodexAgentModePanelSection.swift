@@ -1,11 +1,11 @@
 import AppKit
 import SwiftUI
-import OpenClickyCore
+import OCCore
 
 struct CodexAgentModePanelSection: View {
     @ObservedObject var session: CodexAgentSession
     var activeDockItem: ClickyAgentDockItem?
-    var knowledgeIndex: OpenClickyCore.WikiManager.Index
+    var knowledgeIndex: OCCore.WikiManager.Index
     var responseCard: ClickyResponseCard?
     var transcriptionProviderDisplayName: String
     var transcriptionProviderID: String
@@ -525,7 +525,7 @@ struct CodexAgentModeSettingsSheet: View {
     @AppStorage(AppBundleConfiguration.userCodexAgentAPIKeyDefaultsKey) private var userCodexAgentAPIKey = ""
     @AppStorage(AppBundleConfiguration.userAssemblyAIAPIKeyDefaultsKey) private var userAssemblyAIAPIKey = ""
     @AppStorage(AppBundleConfiguration.userDeepgramAPIKeyDefaultsKey) private var userDeepgramAPIKey = ""
-    var knowledgeIndex: OpenClickyCore.WikiManager.Index
+    var knowledgeIndex: OCCore.WikiManager.Index
     var responseCard: ClickyResponseCard?
     var transcriptionProviderDisplayName: String
     var transcriptionProviderID: String

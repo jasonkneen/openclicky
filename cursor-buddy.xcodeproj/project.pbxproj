@@ -9,11 +9,11 @@
 /* Begin PBXBuildFile section */
 		0C1316D624299542AA88F53B /* OCFoundation in Frameworks */ = {isa = PBXBuildFile; productRef = 0C06CB6EA4542C44288FF530 /* OCFoundation */; };
 		0C2F2A9E0130F946F18D4E73 /* OCAutomation in Frameworks */ = {isa = PBXBuildFile; productRef = 0C2AFE5F8114A34812946E6A /* OCAutomation */; };
-		24D85D612FBEE5D8004FEDAD /* OpenClickyBrowser in Frameworks */ = {isa = PBXBuildFile; productRef = 24D85D602FBEE5D8004FEDAD /* OpenClickyBrowser */; };
-		24D85D632FBEE5D8004FEDAD /* OpenClickyCore in Frameworks */ = {isa = PBXBuildFile; productRef = 24D85D622FBEE5D8004FEDAD /* OpenClickyCore */; };
-		24D85D652FBEE5D8004FEDAD /* OpenClickyMarkdown in Frameworks */ = {isa = PBXBuildFile; productRef = 24D85D642FBEE5D8004FEDAD /* OpenClickyMarkdown */; };
-		24D85D672FBEE5D8004FEDAD /* OpenClickyMemory in Frameworks */ = {isa = PBXBuildFile; productRef = 24D85D662FBEE5D8004FEDAD /* OpenClickyMemory */; };
-		24D85D692FBEE5D8004FEDAD /* OpenClickyUI in Frameworks */ = {isa = PBXBuildFile; productRef = 24D85D682FBEE5D8004FEDAD /* OpenClickyUI */; };
+		24D85D612FBEE5D8004FEDAD /* OCBrowser in Frameworks */ = {isa = PBXBuildFile; productRef = 24D85D602FBEE5D8004FEDAD /* OCBrowser */; };
+		24D85D632FBEE5D8004FEDAD /* OCCore in Frameworks */ = {isa = PBXBuildFile; productRef = 24D85D622FBEE5D8004FEDAD /* OCCore */; };
+		24D85D652FBEE5D8004FEDAD /* OCMarkdown in Frameworks */ = {isa = PBXBuildFile; productRef = 24D85D642FBEE5D8004FEDAD /* OCMarkdown */; };
+		24D85D672FBEE5D8004FEDAD /* OCMemory in Frameworks */ = {isa = PBXBuildFile; productRef = 24D85D662FBEE5D8004FEDAD /* OCMemory */; };
+		24D85D692FBEE5D8004FEDAD /* OCUI in Frameworks */ = {isa = PBXBuildFile; productRef = 24D85D682FBEE5D8004FEDAD /* OCUI */; };
 		0C769658898D1049DAABEC0B /* OCTripo in Frameworks */ = {isa = PBXBuildFile; productRef = 0C6CC327D920C644BC84F130 /* OCTripo */; };
 		0C6C78A78B879E4420A6DE46 /* OC3DCore in Frameworks */ = {isa = PBXBuildFile; productRef = 0C59CA0C825D0C4795B3A11F /* OC3DCore */; };
 		0C50FB962A511A459F93442A /* OCComputerUseCore in Frameworks */ = {isa = PBXBuildFile; productRef = 0C4B7CBCAF678542B4813C36 /* OCComputerUseCore */; };
@@ -68,11 +68,11 @@
 /* Begin PBXFileReference section */
 		0C00E5337FDB5D4202A87769 /* OCFoundation */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = OCFoundation; sourceTree = "<group>"; };
 		0C14D1A08DC8E942718EB3A8 /* OCAutomation */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = OCAutomation; sourceTree = "<group>"; };
-		24D85D592FBEE591004FEDAD /* OpenClickyBrowser */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = OpenClickyBrowser; sourceTree = "<group>"; };
-		24D85D5A2FBEE591004FEDAD /* OpenClickyCore */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = OpenClickyCore; sourceTree = "<group>"; };
-		24D85D5B2FBEE591004FEDAD /* OpenClickyMarkdown */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = OpenClickyMarkdown; sourceTree = "<group>"; };
-		24D85D5C2FBEE591004FEDAD /* OpenClickyMemory */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = OpenClickyMemory; sourceTree = "<group>"; };
-		24D85D5D2FBEE591004FEDAD /* OpenClickyUI */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = OpenClickyUI; sourceTree = "<group>"; };
+		24D85D592FBEE591004FEDAD /* OCBrowser */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = OCBrowser; sourceTree = "<group>"; };
+		24D85D5A2FBEE591004FEDAD /* OCCore */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = OCCore; sourceTree = "<group>"; };
+		24D85D5B2FBEE591004FEDAD /* OCMarkdown */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = OCMarkdown; sourceTree = "<group>"; };
+		24D85D5C2FBEE591004FEDAD /* OCMemory */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = OCMemory; sourceTree = "<group>"; };
+		24D85D5D2FBEE591004FEDAD /* OCUI */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = OCUI; sourceTree = "<group>"; };
 		0C51A2A503B4F44732BD27F0 /* OC3D */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = OC3D; sourceTree = "<group>"; };
 		0C4527C35649DA4BF7BF5EE6 /* OCComputerUseCore */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = OCComputerUseCore; sourceTree = "<group>"; };
 		28F22CBF2F56440300A0FC59 /* OpenClicky.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OpenClicky.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -122,15 +122,15 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				24D85D632FBEE5D8004FEDAD /* OpenClickyCore in Frameworks */,
-				24D85D652FBEE5D8004FEDAD /* OpenClickyMarkdown in Frameworks */,
-				24D85D672FBEE5D8004FEDAD /* OpenClickyMemory in Frameworks */,
+				24D85D632FBEE5D8004FEDAD /* OCCore in Frameworks */,
+				24D85D652FBEE5D8004FEDAD /* OCMarkdown in Frameworks */,
+				24D85D672FBEE5D8004FEDAD /* OCMemory in Frameworks */,
 				24E363952FB3400600B27AB1 /* GLTFSceneKit in Frameworks */,
 				AA00BB072F6500070039DA55 /* FluidAudio in Frameworks */,
 				AA77D0032FBF00010039DA55 /* DynamicNotchKit in Frameworks */,
 				AA00BB032F6500030039DA55 /* Sparkle in Frameworks */,
-				24D85D692FBEE5D8004FEDAD /* OpenClickyUI in Frameworks */,
-				24D85D612FBEE5D8004FEDAD /* OpenClickyBrowser in Frameworks */,
+				24D85D692FBEE5D8004FEDAD /* OCUI in Frameworks */,
+				24D85D612FBEE5D8004FEDAD /* OCBrowser in Frameworks */,
 				0C769658898D1049DAABEC0B /* OCTripo in Frameworks */,
 				0C6C78A78B879E4420A6DE46 /* OC3DCore in Frameworks */,
 				0C50FB962A511A459F93442A /* OCComputerUseCore in Frameworks */,
@@ -166,11 +166,11 @@
 		24D85D5E2FBEE591004FEDAD /* Packages */ = {
 			isa = PBXGroup;
 			children = (
-				24D85D592FBEE591004FEDAD /* OpenClickyBrowser */,
-				24D85D5A2FBEE591004FEDAD /* OpenClickyCore */,
-				24D85D5B2FBEE591004FEDAD /* OpenClickyMarkdown */,
-				24D85D5C2FBEE591004FEDAD /* OpenClickyMemory */,
-				24D85D5D2FBEE591004FEDAD /* OpenClickyUI */,
+				24D85D592FBEE591004FEDAD /* OCBrowser */,
+				24D85D5A2FBEE591004FEDAD /* OCCore */,
+				24D85D5B2FBEE591004FEDAD /* OCMarkdown */,
+				24D85D5C2FBEE591004FEDAD /* OCMemory */,
+				24D85D5D2FBEE591004FEDAD /* OCUI */,
 				0C51A2A503B4F44732BD27F0 /* OC3D */,
 				0C4527C35649DA4BF7BF5EE6 /* OCComputerUseCore */,
 				0C14D1A08DC8E942718EB3A8 /* OCAutomation */,
@@ -248,11 +248,11 @@
 				AA00BB022F6500020039DA55 /* Sparkle */,
 				AA00BB042F6500040039DA55 /* GLTFSceneKit */,
 				AA00BB062F6500060039DA55 /* FluidAudio */,
-				24D85D602FBEE5D8004FEDAD /* OpenClickyBrowser */,
-				24D85D622FBEE5D8004FEDAD /* OpenClickyCore */,
-				24D85D642FBEE5D8004FEDAD /* OpenClickyMarkdown */,
-				24D85D662FBEE5D8004FEDAD /* OpenClickyMemory */,
-				24D85D682FBEE5D8004FEDAD /* OpenClickyUI */,
+				24D85D602FBEE5D8004FEDAD /* OCBrowser */,
+				24D85D622FBEE5D8004FEDAD /* OCCore */,
+				24D85D642FBEE5D8004FEDAD /* OCMarkdown */,
+				24D85D662FBEE5D8004FEDAD /* OCMemory */,
+				24D85D682FBEE5D8004FEDAD /* OCUI */,
 				0C6CC327D920C644BC84F130 /* OCTripo */,
 				0C59CA0C825D0C4795B3A11F /* OC3DCore */,
 				0C4B7CBCAF678542B4813C36 /* OCComputerUseCore */,
@@ -961,25 +961,25 @@
 			isa = XCSwiftPackageProductDependency;
 			productName = OCAutomation;
 		};
-		24D85D602FBEE5D8004FEDAD /* OpenClickyBrowser */ = {
+		24D85D602FBEE5D8004FEDAD /* OCBrowser */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = OpenClickyBrowser;
+			productName = OCBrowser;
 		};
-		24D85D622FBEE5D8004FEDAD /* OpenClickyCore */ = {
+		24D85D622FBEE5D8004FEDAD /* OCCore */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = OpenClickyCore;
+			productName = OCCore;
 		};
-		24D85D642FBEE5D8004FEDAD /* OpenClickyMarkdown */ = {
+		24D85D642FBEE5D8004FEDAD /* OCMarkdown */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = OpenClickyMarkdown;
+			productName = OCMarkdown;
 		};
-		24D85D662FBEE5D8004FEDAD /* OpenClickyMemory */ = {
+		24D85D662FBEE5D8004FEDAD /* OCMemory */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = OpenClickyMemory;
+			productName = OCMemory;
 		};
-		24D85D682FBEE5D8004FEDAD /* OpenClickyUI */ = {
+		24D85D682FBEE5D8004FEDAD /* OCUI */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = OpenClickyUI;
+			productName = OCUI;
 		};
 		0C6CC327D920C644BC84F130 /* OCTripo */ = {
 			isa = XCSwiftPackageProductDependency;

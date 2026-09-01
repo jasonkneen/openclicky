@@ -2,26 +2,26 @@
 import PackageDescription
 
 let package = Package(
-    name: "OpenClickyUI",
+    name: "OCMarkdown",
     platforms: [
         .macOS("26.0")
     ],
     products: [
         .library(
-            name: "OpenClickyUI",
-            targets: ["OpenClickyUI"]
+            name: "OCMarkdown",
+            targets: ["OCMarkdown"]
         )
     ],
     dependencies: [
-        .package(path: "../OpenClickyCore")
+        .package(path: "../OCUI")
     ],
     targets: [
         .target(
-            name: "OpenClickyUI",
+            name: "OCMarkdown",
             dependencies: [
-                .product(name: "OpenClickyCore", package: "OpenClickyCore")
+                .product(name: "OCUI", package: "OCUI")
             ],
-            path: "Sources/OpenClickyUI"
+            path: "Sources/OCMarkdown"
         )
     ]
 )

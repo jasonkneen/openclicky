@@ -1,6 +1,6 @@
 import AppKit
 import SwiftUI
-import OpenClickyMarkdown
+import OCMarkdown
 
 @MainActor
 final class OpenClickyLogViewerWindowManager {

@@ -12,11 +12,11 @@ import os
 import ScreenCaptureKit
 import SwiftUI
 import UniformTypeIdentifiers
-import OpenClickyCore
-import OpenClickyUI
-@preconcurrency import OpenClickyBrowser
-import OpenClickyMarkdown
-import OpenClickyMemory
+import OCCore
+import OCUI
+@preconcurrency import OCBrowser
+import OCMarkdown
+import OCMemory
 
 extension CompanionManager {
     // MARK: - Onboarding Video
@@ -214,7 +214,7 @@ extension CompanionManager {
         )
     }
 
-    func createMemory(title: String, body: String) throws -> OpenClickyCore.WikiManager.Article {
+    func createMemory(title: String, body: String) throws -> OCCore.WikiManager.Article {
         let article = try codexHomeManager.saveMemory(title: title, body: body)
         loadBundledKnowledgeIndex()
         return article

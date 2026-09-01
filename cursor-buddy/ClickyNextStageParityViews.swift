@@ -1,9 +1,9 @@
 import AppKit
 import SwiftUI
-import OpenClickyCore
+import OCCore
 
 struct ClickyKnowledgeIndexSummaryView: View {
-    var index: OpenClickyCore.WikiManager.Index
+    var index: OCCore.WikiManager.Index
     var openMemory: () -> Void
 
     var body: some View {

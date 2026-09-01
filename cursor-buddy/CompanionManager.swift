@@ -17,11 +17,11 @@ import os
 import ScreenCaptureKit
 import SwiftUI
 import UniformTypeIdentifiers
-import OpenClickyCore
-import OpenClickyUI
-@preconcurrency import OpenClickyBrowser
-import OpenClickyMarkdown
-import OpenClickyMemory
+import OCCore
+import OCUI
+@preconcurrency import OCBrowser
+import OCMarkdown
+import OCMemory
 
 enum CompanionVoiceState: String {
     case idle
@@ -609,7 +609,7 @@ final class CompanionManager: ObservableObject {
     @Published private(set) var archivedSessionIDs: Set<UUID> = ChatWorkspaceArchiveStore.load()
     let codexHUDWindowManager = CodexHUDWindowManager()
     let wikiViewerPanelManager = WikiViewerPanelManager()
-    @Published private(set) var bundledKnowledgeIndex = OpenClickyCore.WikiManager.Index.empty
+    @Published private(set) var bundledKnowledgeIndex = OCCore.WikiManager.Index.empty
     @Published var latestVoiceResponseCard: ClickyResponseCard?
     @Published private(set) var homeChatEntries: [CodexTranscriptEntry] = []
     @Published private(set) var isHomeChatModeActive = false
@@ -3470,13 +3470,13 @@ final class CompanionManager: ObservableObject {
         let learnedSkillsDirectory = codexHomeManager.learnedSkillsDirectory
 
         Task.detached(priority: .utility) {
-            let bundledIndex = OpenClickyCore.WikiManager.Index.loadForAppBundle()
-            let resolvedIndex: OpenClickyCore.WikiManager.Index
+            let bundledIndex = OCCore.WikiManager.Index.loadForAppBundle()
+            let resolvedIndex: OCCore.WikiManager.Index
 
             do {
                 try FileManager.default.createDirectory(at: memoriesDirectory, withIntermediateDirectories: true)
                 try FileManager.default.createDirectory(at: learnedSkillsDirectory, withIntermediateDirectories: true)
-                let memoryIndex = try OpenClickyCore.WikiManager.Index.load(articleRoots: [memoriesDirectory], skillRoots: [learnedSkillsDirectory])
+                let memoryIndex = try OCCore.WikiManager.Index.load(articleRoots: [memoriesDirectory], skillRoots: [learnedSkillsDirectory])
                 resolvedIndex = bundledIndex.combined(with: memoryIndex)
             } catch {
                 print("⚠️ OpenClicky memory index load failed: \(error)")

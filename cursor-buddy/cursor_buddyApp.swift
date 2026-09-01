@@ -12,7 +12,7 @@ import Carbon
 import ServiceManagement
 import SwiftUI
 import Sparkle
-import OpenClickyBrowser
+import OCBrowser
 
 @main
 struct cursor_buddyApp: App {

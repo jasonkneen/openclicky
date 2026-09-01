@@ -1,6 +1,6 @@
 import AppKit
 import SwiftUI
-import OpenClickyCore
+import OCCore
 
 public enum OpenClickyWindowLevels {
     /// The main OpenClicky panel sits at `.statusBar`; first-party dialogs and

@@ -2,21 +2,21 @@
 import PackageDescription
 
 let package = Package(
-    name: "OpenClickyCore",
+    name: "OCCore",
     platforms: [
         .macOS("26.0")
     ],
     products: [
         .library(
-            name: "OpenClickyCore",
-            targets: ["OpenClickyCore"]
+            name: "OCCore",
+            targets: ["OCCore"]
         )
     ],
     targets: [
         .target(
-            name: "OpenClickyCore",
+            name: "OCCore",
             dependencies: [],
-            path: "Sources/OpenClickyCore"
+            path: "Sources/OCCore"
         )
     ]
 )

@@ -1,6 +1,6 @@
 import AppKit
 import SwiftUI
-import OpenClickyCore
+import OCCore
 import UniformTypeIdentifiers
 
 struct OpenClickyAgentLiveActivity: Equatable {

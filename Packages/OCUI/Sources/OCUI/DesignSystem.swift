@@ -1,6 +1,6 @@
 //
 //  DesignSystem.swift
-//  OpenClickyUI
+//  OCUI
 //
 //  Centralized design system using a blue accent palette on dark surfaces,
 //  with a unified button style system. All colors, button styles, and
@@ -9,7 +9,7 @@
 
 import SwiftUI
 import AppKit
-import OpenClickyCore
+import OCCore
 
 public struct Triangle: Shape {
     public init() {}

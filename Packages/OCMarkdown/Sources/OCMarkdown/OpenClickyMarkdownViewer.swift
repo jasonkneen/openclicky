@@ -1,6 +1,6 @@
 //
 //  OpenClickyMarkdownViewer.swift
-//  OpenClickyMarkdown
+//  OCMarkdown
 //
 //  A first-party Markdown document window for OpenClicky-owned notes,
 //  memories, agent outputs, and files found by Agent Mode.
@@ -8,7 +8,7 @@
 
 import AppKit
 import SwiftUI
-import OpenClickyUI
+import OCUI
 
 @MainActor
 public final class OpenClickyMarkdownViewerWindowManager {

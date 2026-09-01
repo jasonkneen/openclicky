@@ -1,7 +1,7 @@
 import Combine
 import CoreGraphics
 import Foundation
-import OpenClickyCore
+import OCCore
 
 enum PermissionStatus: Equatable {
     case missing
@@ -288,7 +288,7 @@ struct WikiViewerEntry: Identifiable, Equatable {
     var body: String
     var relativePath: String
 
-    init(article: OpenClickyCore.WikiManager.Article) {
+    init(article: OCCore.WikiManager.Article) {
         self.id = "article:\(article.id)"
         self.kind = .article
         self.title = article.title
@@ -297,7 +297,7 @@ struct WikiViewerEntry: Identifiable, Equatable {
         self.relativePath = article.relativePath
     }
 
-    init(skill: OpenClickyCore.WikiManager.Skill) {
+    init(skill: OCCore.WikiManager.Skill) {
         self.id = "skill:\(skill.id)"
         self.kind = .skill
         self.title = skill.title
@@ -311,7 +311,7 @@ struct WikiViewerEntry: Identifiable, Equatable {
     }
 }
 
-extension OpenClickyCore.WikiManager.Index {
+extension OCCore.WikiManager.Index {
     @MainActor
     var viewerEntries: [WikiViewerEntry] {
         let articleEntries = articles.map(WikiViewerEntry.init(article:))
