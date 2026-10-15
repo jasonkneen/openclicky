@@ -3367,11 +3367,13 @@ final class CompanionManager: ObservableObject {
         let cameraAuthStatus = AVCaptureDevice.authorizationStatus(for: .video)
         hasCameraPermission = cameraAuthStatus == .authorized
 
-        // Screen content permission is persisted after the ScreenCaptureKit
-        // picker approves it, but it is only useful when real Screen Recording
-        // permission is also present.
-        let persistedScreenContentPermission = UserDefaults.standard.bool(forKey: "hasScreenContentPermission")
-        hasScreenContentPermission = hasScreenRecordingPermission && persistedScreenContentPermission
+        // "Screen Content" is not a separate macOS permission: ScreenCaptureKit
+        // capture is allowed exactly when Screen Recording is granted. It used
+        // to also need a UserDefaults flag set by a successful test capture and
+        // cleared by any capture error, so a missing or reset flag kept
+        // allPermissionsGranted false and reopened onboarding on relaunch with
+        // nothing to enable in System Settings.
+        hasScreenContentPermission = hasScreenRecordingPermission
         hasFullDiskAccessPermission = OpenClickyMacPrivacyPermissionProbe.hasLikelyFullDiskAccess()
         hasSystemEventsAutomationPermission = OpenClickyMacPrivacyPermissionProbe.hasSystemEventsAutomationPermission(prompt: false)
 
@@ -3445,7 +3447,6 @@ final class CompanionManager: ObservableObject {
                     isRequestingScreenContent = false
                     guard didCapture else { return }
                     hasScreenContentPermission = true
-                    UserDefaults.standard.set(true, forKey: "hasScreenContentPermission")
                     ClickyAnalytics.trackPermissionGranted(permission: "screen_content")
 
                     // If onboarding was already completed, show the cursor overlay now
@@ -3454,11 +3455,12 @@ final class CompanionManager: ObservableObject {
                     }
                 }
             } catch {
+                // A failed test capture (display asleep, transient
+                // ScreenCaptureKit error) does not revoke Screen Recording, so
+                // leave the permission state to refreshAllPermissions().
                 print("Screen content permission request failed: \(error)")
                 await MainActor.run {
                     isRequestingScreenContent = false
-                    hasScreenContentPermission = false
-                    UserDefaults.standard.set(false, forKey: "hasScreenContentPermission")
                 }
             }
         }
