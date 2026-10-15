@@ -1266,9 +1266,17 @@ struct BlueCursorView: View {
         // @State-backed `buddyIsVisibleOnThisScreen` must be read via SwiftUI's
         // live indirection — capturing `self` in the background closure would
         // snapshot stale state, and `[weak self]` is illegal on a value type.
-        guard buddyIsVisibleOnThisScreen else { return }
+        //
+        // Update `isCursorOnThisScreen` before the guard: visibility depends on
+        // it, so returning first meant a screen that hid itself could never
+        // become visible again when the cursor came back. Write only on change
+        // to keep the hidden-screen path free of per-frame state writes.
         let mouseLocation = NSEvent.mouseLocation
-        isCursorOnThisScreen = screenFrame.contains(mouseLocation)
+        let cursorIsOnThisScreen = screenFrame.contains(mouseLocation)
+        if isCursorOnThisScreen != cursorIsOnThisScreen {
+            isCursorOnThisScreen = cursorIsOnThisScreen
+        }
+        guard buddyIsVisibleOnThisScreen else { return }
 
         // During forward flight or pointing, the buddy is NOT interrupted by
         // mouse movement — it completes its full animation and return flight.

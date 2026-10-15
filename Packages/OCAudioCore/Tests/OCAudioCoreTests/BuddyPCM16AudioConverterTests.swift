@@ -58,6 +58,25 @@ final class BuddyPCM16AudioConverterTests: XCTestCase {
         XCTAssertFalse(third.isEmpty)
     }
 
+    func testStreamingSameFormatKeepsOneConverterAndLosesOnlyTheTail() throws {
+        // A real input tap delivers many buffers sharing one format. Rebuilding
+        // the converter between them resets the resampler and drops ~15 ms per
+        // rebuild; with one converter only the final chunk's tail is missing.
+        let converter = BuddyPCM16AudioConverter(targetSampleRate: 16_000)
+        let format = try XCTUnwrap(AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48_000, channels: 1, interleaved: false))
+        var totalFrames = 0
+        for _ in 0..<100 {
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4_800))
+            buffer.frameLength = 4_800
+            let channel = try XCTUnwrap(buffer.floatChannelData)[0]
+            for i in 0..<4_800 { channel[i] = Float(sin(Double(i) * 2.0 * .pi * 440.0 / 48_000)) * 0.5 }
+            totalFrames += (converter.convertToPCM16Data(from: buffer)?.count ?? 0) / 2
+        }
+        // 10 s at 16 kHz is 160_000 frames; allow one resampler tail (~240).
+        XCTAssertGreaterThan(totalFrames, 159_600, "lost \(160_000 - totalFrames) frames across 100 same-format buffers")
+        XCTAssertLessThanOrEqual(totalFrames, 160_000)
+    }
+
     func testEmptyBufferYieldsNoData() throws {
         let converter = BuddyPCM16AudioConverter(targetSampleRate: 16_000)
         let format = try XCTUnwrap(AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false))

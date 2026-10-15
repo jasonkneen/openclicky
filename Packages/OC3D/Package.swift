@@ -10,7 +10,7 @@ import PackageDescription
 let package = Package(
     name: "OC3D",
     platforms: [
-        .macOS(.v10_15)
+        .macOS(.v12)
     ],
     products: [
         .library(name: "OC3DCore", targets: ["OC3DCore"]),

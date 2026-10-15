@@ -630,6 +630,10 @@ final class BuddyDictationManager: NSObject, ObservableObject {
                     "startupDurationMs": Self.elapsedMilliseconds(since: activeDictationRequestedAt)
                 ]
             )
+            // Providers that start capture before they are ready leave the
+            // engine and input tap running when the session fails to open,
+            // which kept the microphone (and its privacy indicator) on.
+            tearDownAudioCapture(cancelTranscriptionSession: true)
             resetSessionState()
         }
     }
