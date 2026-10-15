@@ -201,7 +201,7 @@ struct OpenClickyComputerUseTests {
         #expect(apple.provider.voiceBackendFamily == .apple)
         #expect(apple.maxOutputTokens >= 64_000)
         #expect(OpenClickyVoiceBackendFamily.apple.defaultModelID == OpenClickyModelCatalog.appleFoundationModelID)
-        #expect(OpenClickyVoiceBackendFamily.claude.defaultModelID == "fable-5")
+        #expect(OpenClickyVoiceBackendFamily.claude.defaultModelID == "claude-fable-5")
         #expect(OpenClickyVoiceBackendFamily.codex.defaultModelID == OpenClickyModelCatalog.defaultCodexActionsModelID)
         #expect(OpenClickyVoiceBackendFamily.allCases.count == 3)
 
@@ -266,7 +266,19 @@ struct OpenClickyComputerUseTests {
         let resolved = OpenClickyModelCatalog.voiceResponseModel(withID: "definitely-not-a-real-model-id")
         #expect(resolved.id == OpenClickyModelCatalog.defaultVoiceResponseModelID)
         #expect(OpenClickyModelCatalog.isSpeechModelID(resolved.id))
-        #expect(resolved.id != "fable-5")
+        #expect(resolved.id != "claude-fable-5")
+    }
+
+    @Test func legacyBareClaudeIDsNormalizeToFullAPIModelIDs() throws {
+        #expect(OpenClickyModelCatalog.normalizedModelID("fable-5") == "claude-fable-5")
+        #expect(OpenClickyModelCatalog.normalizedModelID("sonnet-5") == "claude-sonnet-5")
+        #expect(OpenClickyModelCatalog.normalizedModelID("opus-5") == "claude-opus-5")
+        #expect(OpenClickyModelCatalog.voiceResponseModel(withID: "sonnet-5").id == "claude-sonnet-5")
+        #expect(OpenClickyModelCatalog.computerUseModel(withID: "opus-5").id == "claude-opus-5")
+        let anthropicIDs = (OpenClickyModelCatalog.voiceResponseModels + OpenClickyModelCatalog.computerUseModels)
+            .filter { $0.provider == .anthropic }
+            .map(\.id)
+        #expect(anthropicIDs.allSatisfy { $0.hasPrefix("claude-") })
     }
 
     @Test func realtimeTwoUsesLowReasoningEffortForVoiceLatency() throws {
@@ -325,14 +337,14 @@ struct OpenClickyComputerUseTests {
         )
         #expect(
             CompanionManager.testComputerUsePointingResolver(
-                selectedVoiceModelID: "fable-5",
+                selectedVoiceModelID: "claude-fable-5",
                 selectedComputerUseModelID: "gpt-5.6-sol"
             ) == "codex_cli"
         )
         #expect(
             CompanionManager.testComputerUsePointingResolver(
-                selectedVoiceModelID: "fable-5",
-                selectedComputerUseModelID: "sonnet-5"
+                selectedVoiceModelID: "claude-fable-5",
+                selectedComputerUseModelID: "claude-sonnet-5"
             ) == "anthropic_api"
         )
     }

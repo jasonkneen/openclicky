@@ -29,7 +29,7 @@ class ClaudeAPI {
     var maxOutputTokens: Int
     private let session: URLSession
 
-    init(apiKey: String?, model: String = "sonnet-5", maxOutputTokens: Int = 64_000) {
+    init(apiKey: String?, model: String = "claude-sonnet-5", maxOutputTokens: Int = 64_000) {
         self.apiKey = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.apiURL = URL(string: "\(AppBundleConfiguration.anthropicBaseURL())/v1/messages")!
         self.model = model
@@ -182,10 +182,16 @@ class ClaudeAPI {
         // Strip trailing whitespace before sending. The model emits a
         // leading space on its continuation tokens naturally, so the
         // reassembled text still reads cleanly.
+        //
+        // Claude 4.6+ models (every model in the catalog) reject a trailing
+        // assistant prefill with a 400, so the prefill goes into the system
+        // prompt as "already said" text instead. Callers still treat the
+        // streamed text as the continuation after the prefill.
+        var effectiveSystemPrompt = systemPrompt
         if let rawPrefill = assistantPrefill {
             let trimmed = Self.sanitizedAssistantContent(rawPrefill)
             if !trimmed.isEmpty {
-                messages.append(["role": "assistant", "content": trimmed])
+                effectiveSystemPrompt += "\n\nYour spoken reply has already started with exactly: \"\(trimmed)\". Continue directly from where that leaves off. Do not repeat it."
             }
         }
 
@@ -193,7 +199,7 @@ class ClaudeAPI {
             "model": model,
             "max_tokens": maxOutputTokens,
             "stream": true,
-            "system": systemPrompt,
+            "system": effectiveSystemPrompt,
             "messages": messages
         ]
 

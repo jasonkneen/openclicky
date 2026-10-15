@@ -993,6 +993,13 @@ final class OpenClickyAgentManager: ObservableObject {
                 defaults["model"] = "anthropic/\(OpenClickyModelCatalog.defaultDelegationModelID)"
                 changed = true
             }
+        } else if let currentModel,
+                  ["anthropic/fable-5", "anthropic/sonnet-5", "anthropic/opus-5"].contains(currentModel) {
+            // Older builds wrote bare IDs the Anthropic API rejects. Rewrite
+            // only those exact values; any other user choice is left alone.
+            let bareID = String(currentModel.dropFirst("anthropic/".count))
+            defaults["model"] = "anthropic/\(OpenClickyModelCatalog.normalizedModelID(bareID))"
+            changed = true
         }
 
         if changed {
