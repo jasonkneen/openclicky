@@ -1,0 +1,53 @@
+name: Check OpenClicky upstream
+
+on:
+  schedule:
+    - cron: "17 12 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compare with upstream and open a sync pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git remote add upstream https://github.com/jasonkneen/openclicky.git
+          git fetch upstream main
+          git fetch origin main
+
+          ahead="$(git rev-list --count origin/main..upstream/main)"
+          if [[ "$ahead" == "0" ]]; then
+            echo "The fork is current with upstream/main."
+            exit 0
+          fi
+
+          branch="automation/upstream-sync"
+          git switch --force-create "$branch" upstream/main
+          git push --force origin "$branch:$branch"
+
+          body_file="$(mktemp)"
+          trap 'rm -f "$body_file"' EXIT
+          cat > "$body_file" <<'EOF'
+          This pull request brings the fork up to date with `jasonkneen/openclicky:main`.
+
+          Review the upstream changes alongside the fork's custom visual-scene and updater configuration before merging.
+          EOF
+
+          gh pr create \
+            --base main \
+            --head "$branch" \
+            --title "Sync OpenClicky upstream updates" \
+            --body-file "$body_file" \
+            || gh pr view "$branch" --json url --jq .url

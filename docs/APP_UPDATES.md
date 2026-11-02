@@ -11,15 +11,17 @@ The app is configured for OTA-style updates:
 
 ## Update Feed
 
-- Feed URL in the app: `https://raw.githubusercontent.com/jasonkneen/openclicky/main/appcast.xml`
+- Feed URL in the app: `https://raw.githubusercontent.com/Nirbhik-Acharya-official/openclicky-custom/main/appcast.xml`
 - Feed file in this repo: `appcast.xml`
-- Release asset host: GitHub Releases under `https://github.com/jasonkneen/openclicky/releases`
+- Release asset host: GitHub Releases under `https://github.com/Nirbhik-Acharya-official/openclicky-custom/releases`
 - Public EdDSA key in `Info.plist`: `SUPublicEDKey`
-- Sparkle Keychain account: `openclicky`
+- Sparkle Keychain account: `openclicky-custom`
+
+The GitHub Action `.github/workflows/check-upstream.yml` checks `jasonkneen/openclicky:main` once a day. If upstream has new commits, it refreshes `automation/upstream-sync` and opens or updates a pull request against this fork's `main`. The action uses the repository's `GITHUB_TOKEN`; if GitHub blocks pull-request creation, enable Actions to create pull requests in the fork's Actions settings.
 
 The checked-in `appcast.xml` is intentionally an empty OpenClicky feed until the first signed release artifact exists.
 
-Before the first real OpenClicky release, confirm that the Sparkle private key for account `openclicky` is present in your Keychain and matches `SUPublicEDKey`. Keep the private key outside the repository. Existing installed builds can only move to a new Sparkle key if they first receive a bridge update signed by the old key.
+The Sparkle key for account `openclicky-custom` is generated in the setup Mac's login Keychain, and its public key is configured in `SUPublicEDKey`. Keep the private key in the macOS Keychain or a protected CI secret; never commit it. Existing OpenClicky builds that trust the upstream key cannot install fork updates unless they first receive an update signed by the upstream key, so install this fork directly before relying on its feed.
 
 ## Release Flow
 
@@ -45,7 +47,7 @@ Use this template after replacing the version, build, date, URL, byte length, an
     <sparkle:shortVersionString>1.0.1</sparkle:shortVersionString>
     <sparkle:minimumSystemVersion>14.2</sparkle:minimumSystemVersion>
     <enclosure
-        url="https://github.com/jasonkneen/openclicky/releases/download/v1.0.1/OpenClicky-1.0.1.dmg"
+        url="https://github.com/Nirbhik-Acharya-official/openclicky-custom/releases/download/v1.0.1/OpenClicky-1.0.1.dmg"
         length="12345678"
         type="application/octet-stream"
         sparkle:edSignature="SIGNATURE_FROM_SPARKLE_SIGN_UPDATE"/>
@@ -58,11 +60,11 @@ The exact Sparkle binary path depends on where Xcode stores Swift package artifa
 
 ```sh
 # Notarize the DMG. The keychain profile is created once with notarytool store-credentials.
-xcrun notarytool submit OpenClicky-1.0.1.dmg --keychain-profile "openclicky-notary" --wait
+xcrun notarytool submit OpenClicky-1.0.1.dmg --keychain-profile "openclicky-custom-notary" --wait
 xcrun stapler staple OpenClicky-1.0.1.dmg
 
 # Generate Sparkle's EdDSA signature.
-sign_update --account openclicky OpenClicky-1.0.1.dmg
+sign_update --account openclicky-custom OpenClicky-1.0.1.dmg
 
 # Get the byte length for the appcast enclosure.
 stat -f%z OpenClicky-1.0.1.dmg
@@ -104,7 +106,7 @@ The override only accepts `https`, `file`, or local `http` feeds. Non-local `htt
 2. Bump `CURRENT_PROJECT_VERSION`, for example to `101`.
 3. Archive/export the updated app.
 4. Package it as `OpenClicky-1.0.1.dmg`.
-5. Sign the final DMG with Sparkle's `sign_update --account openclicky` and keep the signature output.
+5. Sign the final DMG with Sparkle's `sign_update --account openclicky-custom` and keep the signature output.
 
 ### 3. Serve A Local Feed
 

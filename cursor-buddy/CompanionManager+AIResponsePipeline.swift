@@ -34,7 +34,8 @@ extension CompanionManager {
         let plannedVoiceAnalysisModelID: String? = {
             let selectedVoiceResponseModel = OpenClickyModelCatalog.voiceResponseModel(withID: selectedModel)
             guard OpenClickyModelCatalog.isSpeechModelID(selectedVoiceResponseModel.id),
-                  Self.shouldAttachScreenContext(to: transcript) else {
+                  (Self.shouldAttachScreenContext(to: transcript)
+                   || Self.isExplicit3DGenerationRequest(transcript)) else {
                 return nil
             }
             return OpenClickyModelCatalog.voiceAnalysisModel(withID: selectedVoiceResponseModel.id).id
@@ -171,7 +172,10 @@ extension CompanionManager {
 
                 let userPromptForClaude: String
                 if labeledImages.isEmpty {
-                    userPromptForClaude = "\(transcript)\n\nNo screenshot is available. Answer from the transcript only and use [POINT:none]."
+                    let noScreenshotInstruction = Self.isExplicit3DGenerationRequest(transcript)
+                        ? "No screenshot is available. Answer from the transcript only. This is an explicit 3D-generation request; if appropriate, append one [SCENE3D:short model description] tag and do not emit a POINT tag."
+                        : "No screenshot is available. Answer from the transcript only and use [POINT:none]."
+                    userPromptForClaude = "\(transcript)\n\n\(noScreenshotInstruction)"
                 } else if let circleHandoff {
                     let note = circleHandoff.selection.ambientSummary.isEmpty
                         ? "The user circled a screen region while speaking. The first image is the cropped circled area; following images show broader screen context."
@@ -183,7 +187,8 @@ extension CompanionManager {
 
                 let hasVisualContext = !labeledImages.isEmpty
                 let isRealtimeResponseModel = OpenClickyModelCatalog.isSpeechModelID(self.selectedModel)
-                let visualAnalysisModelID = isRealtimeResponseModel && hasVisualContext
+                let isExplicit3DRequest = Self.isExplicit3DGenerationRequest(transcript)
+                let visualAnalysisModelID = isRealtimeResponseModel && (hasVisualContext || isExplicit3DRequest)
                     ? OpenClickyModelCatalog.voiceAnalysisModel(withID: self.selectedModel).id
                     : self.selectedModel
 
@@ -191,7 +196,7 @@ extension CompanionManager {
                 // carry OpenClicky's screenshot payload into the response model,
                 // so visual requests must continue through the screenshot-aware
                 // voice path below. The playback engine can still be Realtime.
-                if isRealtimeResponseModel && !hasVisualContext {
+                if isRealtimeResponseModel && !hasVisualContext && !isExplicit3DRequest {
                     let realtimeStartedAt = Date()
                     var didMarkRealtimeAudioStarted = false
                     let realtimeText = try await self.openAIRealtimeSpeechClient.speakResponse(
@@ -360,6 +365,8 @@ extension CompanionManager {
                 // text (e.g. when a `[POINT:...]` tag completes mid-
                 // stream and the parser strips it).
                 var emittedSpokenSoFar = ""
+                var streamedVisualActionCount = 0
+                var streamedVisualOverlayCount = 0
                 // Throttle the response-card publish so we don't re-render
                 // SwiftUI on every LLM token (which can be 10+ per second).
                 // Each publish hits the main actor, contending with the
@@ -393,7 +400,25 @@ extension CompanionManager {
                     userPrompt: userPromptForClaude,
                     assistantPrefill: assistantPrefillText,
                     onTextChunk: { accumulatedText in
-                        let parsedSpoken = Self.parsePointingCoordinates(from: accumulatedText).spokenText
+                        let streamedParseResult = Self.parsePointingCoordinates(from: accumulatedText)
+                        if streamedParseResult.visualGuidanceActions.count > streamedVisualActionCount {
+                            let newActions = streamedParseResult.visualGuidanceActions.dropFirst(streamedVisualActionCount)
+                            streamedVisualActionCount = streamedParseResult.visualGuidanceActions.count
+                            for action in newActions {
+                                guard let overlay = action.overlay,
+                                      streamedVisualOverlayCount < 4 else { continue }
+                                streamedVisualOverlayCount += 1
+                                guard let targetCapture = self.tutorTargetScreenCapture(
+                                        from: screenCaptures,
+                                        screenNumber: action.screenNumber
+                                      ) else { continue }
+                                self.showVisualGuidanceOverlay(
+                                    self.globalVisualGuidanceOverlay(fromScreenshotOverlay: overlay, in: targetCapture),
+                                    sourceCapture: targetCapture
+                                )
+                            }
+                        }
+                        let parsedSpoken = streamedParseResult.spokenText
                         let trimmed = parsedSpoken.trimmingCharacters(in: .whitespacesAndNewlines)
                         if !trimmed.isEmpty {
                             let now = Date()
@@ -491,6 +516,17 @@ extension CompanionManager {
                     return
                 }
 
+                // The voice response can explicitly request one generated,
+                // interactive 3D visual. Reuse OpenClicky's existing Tripo
+                // generation service and viewer; never infer a 3D job unless
+                // the model emitted the private control tag.
+                if let threeDPrompt = parseResult.visualGuidanceActions
+                    .compactMap(\.threeDPrompt)
+                    .first {
+                    ThreeDGenerationService.shared.generate(prompt: threeDPrompt)
+                    ThreeDViewerWindowManager.shared.showWindow()
+                }
+
                 // Handle element pointing if Claude returned coordinates.
                 // Switch to idle BEFORE setting the location so the triangle
                 // becomes visible and can fly to the target. Without this, the
@@ -525,7 +561,9 @@ extension CompanionManager {
                     capture.displayFrame.contains(liveMouseLocation)
                 }
                 let targetScreenCapture: CompanionScreenCapture? = {
-                    if let screenNumber = parseResult.screenNumber,
+                    if let screenNumber = parseResult.coordinate != nil
+                        ? parseResult.screenNumber
+                        : parseResult.visualOverlayScreenNumber,
                        screenNumber >= 1 && screenNumber <= screenCaptures.count {
                         return screenCaptures[screenNumber - 1]
                     }
@@ -578,6 +616,7 @@ extension CompanionManager {
                     ClickyAnalytics.trackElementPointed(elementLabel: parseResult.elementLabel)
                     print("🎯 Element pointing: (\(Int(pointCoordinate.x)), \(Int(pointCoordinate.y))) → \"\(parseResult.elementLabel ?? "element")\"")
                 } else if let visualOverlay = parseResult.visualOverlay,
+                          streamedVisualActionCount == 0,
                           let targetScreenCapture {
                     self.showVisualGuidanceOverlay(
                         self.globalVisualGuidanceOverlay(
@@ -1008,6 +1047,14 @@ extension CompanionManager {
                 caption: overlay.style.caption,
                 duration: overlay.duration
             )
+        case .arrow:
+            return OpenClickyVisualGuidanceOverlay.arrow(
+                points: overlay.points.map { globalPoint(fromScreenshotPoint: $0.cgPoint, in: capture) },
+                accentHex: overlay.style.accentHex,
+                lineWidth: overlay.style.lineWidth,
+                caption: overlay.style.caption,
+                duration: overlay.duration
+            )
         case .rectangle:
             guard let rect = overlay.rect else {
                 return overlay
@@ -1352,6 +1399,20 @@ extension CompanionManager {
     }
 
     private static let visualFollowUpHistoryDepth = 3
+
+    static func isExplicit3DGenerationRequest(_ transcript: String) -> Bool {
+        let normalized = transcript
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased()
+        let patterns = [
+            #"\b(?:make|create|generate|build|render|sculpt|show|draw|visuali[sz]e)\s+(?:(?:me|a|an|the)\s+)*(?:interactive\s+)?(?:3-?d|three[- ]dimensional)\b"#,
+            #"\b(?:want|need)\s+(?:me\s+)?(?:(?:a|an|the)\s+)?(?:interactive\s+)?(?:3-?d|three[- ]dimensional)\b"#
+        ]
+        return patterns.contains { pattern in
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return false }
+            return regex.firstMatch(in: normalized, range: NSRange(normalized.startIndex..., in: normalized)) != nil
+        }
+    }
 
     static func shouldAttachScreenContext(
         to transcript: String,

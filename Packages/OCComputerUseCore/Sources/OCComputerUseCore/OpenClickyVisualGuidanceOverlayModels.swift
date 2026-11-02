@@ -78,6 +78,7 @@ public struct OpenClickyVisualGuidanceRect: Codable, Equatable, Hashable, Sendab
 public enum OpenClickyVisualGuidanceOverlayKind: String, Codable, Equatable, Sendable {
     case scribble
     case rectangle
+    case arrow
 }
 
 public struct OpenClickyVisualGuidanceStyle: Codable, Equatable, Hashable, Sendable {
@@ -125,11 +126,12 @@ public struct OpenClickyVisualGuidanceOverlay: Identifiable, Codable, Equatable,
         switch kind {
         case .rectangle:
             return rect?.normalized.cgRect ?? .null
-        case .scribble:
+        case .scribble, .arrow:
             guard let first = points.first else { return .null }
-            return points.dropFirst().reduce(CGRect(origin: first.cgPoint, size: .zero)) { partial, point in
+            let bounds = points.dropFirst().reduce(CGRect(origin: first.cgPoint, size: .zero)) { partial, point in
                 partial.union(CGRect(origin: point.cgPoint, size: .zero))
             }
+            return bounds.insetBy(dx: -2, dy: -2)
         }
     }
 
@@ -142,7 +144,7 @@ public struct OpenClickyVisualGuidanceOverlay: Identifiable, Codable, Equatable,
 
     public var isRenderable: Bool {
         switch kind {
-        case .scribble:
+        case .scribble, .arrow:
             return points.count >= 2
         case .rectangle:
             guard let rect else { return false }
@@ -182,6 +184,21 @@ extension OpenClickyVisualGuidanceOverlay {
             kind: .rectangle,
             rect: OpenClickyVisualGuidanceRect(rect).normalized,
             style: OpenClickyVisualGuidanceStyle(accentHex: accentHex, lineWidth: lineWidth, fillOpacity: fillOpacity, caption: caption),
+            duration: duration
+        )
+    }
+
+    public static func arrow(
+        points: [CGPoint],
+        accentHex: String? = nil,
+        lineWidth: Double = 4,
+        caption: String? = nil,
+        duration: TimeInterval = 6
+    ) -> OpenClickyVisualGuidanceOverlay {
+        OpenClickyVisualGuidanceOverlay(
+            kind: .arrow,
+            points: points.map { OpenClickyVisualGuidancePoint($0) },
+            style: OpenClickyVisualGuidanceStyle(accentHex: accentHex, lineWidth: lineWidth, fillOpacity: 0, caption: caption),
             duration: duration
         )
     }
