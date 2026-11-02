@@ -1059,6 +1059,8 @@ struct BlueCursorView: View {
                 visualGuidanceScribble(overlay, color: color)
             case .rectangle:
                 visualGuidanceRectangle(overlay, color: color)
+            case .arrow:
+                visualGuidanceArrow(overlay, color: color)
             }
 
             if let caption = overlay.style.caption?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -1080,6 +1082,14 @@ struct BlueCursorView: View {
             lineWidth: CGFloat(overlay.style.lineWidth),
             drawingDuration: min(1.2, max(0.35, overlay.duration * 0.20)),
             reduceMotion: accessibilityReduceMotion
+        )
+    }
+
+    private func visualGuidanceArrow(_ overlay: OpenClickyVisualGuidanceOverlay, color: Color) -> some View {
+        OpenClickyVisualGuidanceArrowView(
+            points: overlay.points.map { convertScreenPointToSwiftUICoordinates($0.cgPoint) },
+            color: color,
+            lineWidth: CGFloat(overlay.style.lineWidth)
         )
     }
 
@@ -1744,6 +1754,40 @@ private struct OpenClickyVisualGuidanceScribbleView: View {
                 drawProgress = 1
             }
         }
+    }
+}
+
+private struct OpenClickyVisualGuidanceArrowView: View {
+    let points: [CGPoint]
+    let color: Color
+    let lineWidth: CGFloat
+
+    var body: some View {
+        Canvas { context, _ in
+            guard let start = points.first, let end = points.last else { return }
+            var path = Path()
+            path.move(to: start)
+            points.dropFirst().forEach { path.addLine(to: $0) }
+            let angle = atan2(end.y - (points.dropLast().last?.y ?? start.y), end.x - (points.dropLast().last?.x ?? start.x))
+            let headLength = max(12, lineWidth * 3)
+            let headAngle: CGFloat = .pi / 6
+            let left = CGPoint(
+                x: end.x - headLength * cos(angle - headAngle),
+                y: end.y - headLength * sin(angle - headAngle)
+            )
+            let right = CGPoint(
+                x: end.x - headLength * cos(angle + headAngle),
+                y: end.y - headLength * sin(angle + headAngle)
+            )
+            path.move(to: left)
+            path.addLine(to: end)
+            path.addLine(to: right)
+            context.stroke(path, with: .color(color.opacity(0.35)), style: StrokeStyle(lineWidth: lineWidth + 6, lineCap: .round, lineJoin: .round))
+            context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 

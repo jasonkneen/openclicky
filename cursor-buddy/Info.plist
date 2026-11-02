@@ -49,9 +49,9 @@
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
 	<key>SUFeedURL</key>
-	<string>https://raw.githubusercontent.com/jasonkneen/openclicky/main/appcast.xml</string>
+	<string>https://raw.githubusercontent.com/Nirbhik-Acharya-official/openclicky-custom/main/appcast.xml</string>
 	<key>SUPublicEDKey</key>
-	<string>fXYcC2zX+zTEH0DVS8io8agfHtphoB9/o6J33T9FLdk=</string>
+	<string>0/VehikO3wNadFADl/lU34HMjRKx8j+oS7r1UXOmWGE=</string>
 	<key>SUScheduledCheckInterval</key>
 	<integer>86400</integer>
 	<key>VoiceTranscriptionProvider</key>

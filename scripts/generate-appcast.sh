@@ -8,7 +8,7 @@
 # Usage:
 #   scripts/generate-appcast.sh dist/OpenClicky-1.1.0-7.dmg
 #   scripts/generate-appcast.sh dist/OpenClicky-1.1.0-7.dmg \
-#       https://github.com/jasonkneen/openclicky/releases/download/v1.1.0/OpenClicky-1.1.0-7.dmg
+#       https://github.com/Nirbhik-Acharya-official/openclicky-custom/releases/download/v1.1.0/OpenClicky-1.1.0-7.dmg
 #
 # If you omit the URL, the script uses a GitHub Releases convention based
 # on the version tag.
@@ -26,12 +26,13 @@ if [[ -z "$DMG_PATH" || ! -f "$DMG_PATH" ]]; then
 fi
 
 PROJECT="cursor-buddy.xcodeproj/project.pbxproj"
+REPOSITORY="${OPENCICKY_GITHUB_REPOSITORY:-Nirbhik-Acharya-official/openclicky-custom}"
 VERSION=$(grep -m1 "MARKETING_VERSION" "$PROJECT" | sed -E 's/.*MARKETING_VERSION = ([^;]+);.*/\1/' | tr -d ' ')
 BUILD=$(xcrun agvtool what-version -terse 2>/dev/null | tail -1 | tr -d ' ')
 MINIMUM_MACOS=$(grep -m1 "MACOSX_DEPLOYMENT_TARGET" "$PROJECT" | sed -E 's/.*MACOSX_DEPLOYMENT_TARGET = ([^;]+);.*/\1/' | tr -d ' ')
 
 if [[ -z "$DOWNLOAD_URL" ]]; then
-    DOWNLOAD_URL="https://github.com/jasonkneen/openclicky/releases/download/v${VERSION}/$(basename "$DMG_PATH")"
+    DOWNLOAD_URL="https://github.com/${REPOSITORY}/releases/download/v${VERSION}/$(basename "$DMG_PATH")"
 fi
 
 # Locate Sparkle's sign_update binary. First try our project's DerivedData
@@ -55,7 +56,7 @@ if [[ -z "$SIGN_UPDATE" ]]; then
 fi
 
 echo "==> Using sign_update: $SIGN_UPDATE"
-SIG_OUTPUT=$("$SIGN_UPDATE" "$DMG_PATH")
+SIG_OUTPUT=$("$SIGN_UPDATE" --account openclicky-custom "$DMG_PATH")
 ED_SIG=$(echo "$SIG_OUTPUT" | grep -oE 'sparkle:edSignature="[^"]+"' | sed -E 's/.*"([^"]+)".*/\1/')
 LENGTH=$(echo "$SIG_OUTPUT" | grep -oE 'length="[0-9]+"' | sed -E 's/.*"([0-9]+)".*/\1/')
 
@@ -77,7 +78,7 @@ cat > appcast.xml <<XML
 <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
     <channel>
         <title>OpenClicky Updates</title>
-        <link>https://github.com/jasonkneen/openclicky</link>
+        <link>https://github.com/${REPOSITORY}</link>
         <description>OpenClicky direct-distribution updates.</description>
         <language>en</language>
         <item>

@@ -5379,7 +5379,8 @@ final class CompanionManager: ObservableObject {
             return true
         }
 
-        if Self.shouldAttachScreenContext(to: trimmedTranscript) {
+        if Self.shouldAttachScreenContext(to: trimmedTranscript)
+            || Self.isExplicit3DGenerationRequest(trimmedTranscript) {
             OpenClickyMessageLogStore.shared.append(
                 lane: "voice",
                 direction: "internal",
@@ -15802,7 +15803,7 @@ final class CompanionManager: ObservableObject {
 
     use [POINT:none] when the answer is conceptual, the user is brainstorming, no visible target helps, the requested item is not visible, or you are not confident the target is the right one. if you're unsure, do not guess; answer briefly in words or ask for the missing context.
 
-    if visual guidance is needed, append exactly one private control tag at the very end of your response, AFTER the natural spoken sentence. this tag is not speech; OpenClicky strips it and emits the actual cursor or overlay as a separate visual-guidance action. never describe the tag, never say the coordinates aloud, and never include a visual tag in the middle of normal conversation. the screenshot images are labeled with their pixel dimensions. use those dimensions as the coordinate space. the origin (0,0) is the top-left corner of the image. x increases rightward, y increases downward. when more than one screen image is attached, every POINT, RECT, and SCRIBBLE tag must include the exact :screenN suffix for the image you measured from, even if it is screen one or the primary focus screen. if you cannot tell which screen image contains the exact target, use [POINT:none] instead of guessing.
+    when screen guidance would make the explanation clearer, you may emit up to four private visual-control tags. put each tag immediately after the spoken clause it illustrates so OpenClicky can draw the cues in sync with your explanation. these tags are not speech: OpenClicky strips them from captions, conversation history, and text-to-speech. never describe a tag or say coordinates aloud. use the attached screenshot's pixel dimensions, with (0,0) at its top-left and x/y increasing right/down. when more than one screen image is attached, every tag must include the exact :screenN suffix for the image you measured from, including screen one. use only targets visible in the relevant screenshot; don't invent screen locations.
 
     point format: [POINT:x,y:label] where x,y are integer pixel coordinates in the screenshot's coordinate space, and label is a short 1-3 word description of the element (like "search bar" or "save button"). with a single screen image, you may omit the screen number. with multiple screen images, always append :screenN where N is the screen number from the image label, for example [POINT:420,310:save button:screen2]. this is important — without the screen number, the cursor can point at the wrong display.
 
@@ -15810,7 +15811,11 @@ final class CompanionManager: ObservableObject {
 
     scribble format: [SCRIBBLE:x1,y1;x2,y2;x3,y3:label] to draw a short temporary freehand path over visible content. use this when the user asks you to draw, circle loosely, trace, or mark a non-rectangular path. use at least two points. with multiple screen images, always append :screenN.
 
-    append at most one private visual control tag at the very end of your response. choose POINT, RECT, or SCRIBBLE — never combine them in the same response. treat this as a separate tool/control output, not as wording for the user.
+    arrow format: [ARROW:x1,y1;x2,y2:label] to draw a directional arrow between visible points. use this to connect a source to a result or show a relationship in a small on-screen diagram. with multiple screen images, always append :screenN.
+
+    interactive 3D format: [SCENE3D:short model description] to request one interactive 3D model from OpenClicky's existing generator and viewer. Use it only when the user explicitly asks you to create or show a 3D model; generation may use the user's configured provider. Put the tag after the spoken sentence, keep the description under 300 characters, and do not include screenshot coordinates.
+
+    use a small sequence of RECT, ARROW, and SCRIBBLE tags to build a compact diagram or step-by-step visual explanation when that is more helpful than a single highlight. Keep every cue anchored to the visible screen and place it after the sentence it belongs with. Do not emit more than four screen cues in one response. Use a POINT tag only for a single exact target. If no visual cue helps, end with [POINT:none]. Do not add [POINT:none] when you have already emitted a visual cue or a SCENE3D tag. Emit at most one SCENE3D tag per response.
 
     if visual guidance wouldn't help, append [POINT:none].
 
@@ -15818,6 +15823,8 @@ final class CompanionManager: ObservableObject {
     - user asks how to color grade in final cut: "you'll want to open the color inspector — it's right up in the top right area of the toolbar. click that and you'll get all the color wheels and curves. [POINT:1100,42:color inspector]"
     - user asks to highlight an error visible on screen: "that's the error block you're looking for — it starts in the terminal output on the right. [RECT:760,115,420,190:error block]"
     - user asks to draw over a visible path: "that flight path arcs across the top of the scene here. [SCRIBBLE:430,160;500,135;570,145;640,190:flight path]"
+    - user asks how data moves through a visible diagram: "the request starts at this input, then flows into the processor. [RECT:180,220,180,90:input] [ARROW:360,265;490,265:request flow] then it reaches the result panel here. [RECT:490,220,180,90:result]"
+    - user explicitly asks for a 3D visual: "i'll make an interactive 3D model so you can inspect it from every side. [SCENE3D:low-poly cutaway model of a lithium-ion battery showing the anode, separator, cathode, and ion flow]"
     - user discusses how OpenClicky should highlight things: "right — highlights should be emitted as a separate visual action, not spoken as rectangle instructions. [POINT:none]"
     - user asks what html is: "html stands for hypertext markup language, it's basically the skeleton of every web page. curious how it connects to the css you're looking at? [POINT:none]"
     - user asks how to commit in xcode: "see that source control menu up top? click that and hit commit, or you can use command option c as a shortcut. [POINT:285,11:source control]"
@@ -16104,10 +16111,8 @@ final class CompanionManager: ObservableObject {
     - short spoken response, lowercase, casual, no markdown, no emojis.
     - do not claim you clicked or controlled anything in tutor observations. you can guide and point; simple direct action requests use OpenClicky's selected direct computer-use backend, and broader tool work can use Agent Mode when explicitly routed there.
 
-    element pointing:
-    append exactly one [POINT:x,y:label] tag at the end only when a visible target is directly relevant to the current coaching step. use [POINT:none] when pointing would not help, the target is not visible, or relevance is uncertain.
-    the screenshot labels include pixel dimensions. use those dimensions as the coordinate space. origin (0,0) is top-left. x increases rightward, y increases downward.
-    if a screen number is present in the image label and the target is not the primary screen, append :screenN.
+    visual coaching:
+    use up to four private visual tags, each immediately after the spoken sentence it illustrates, when a visible target or compact diagram would help the current coaching step. supported tags are [POINT:x,y:label], [RECT:x,y,width,height:label], [SCRIBBLE:x1,y1;x2,y2:label], and [ARROW:x1,y1;x2,y2:label]. OpenClicky strips the tags before speech and draws each cue as it arrives. For diagrams, combine labeled rectangles and arrows to show a short flow. Never invent a location. use screenshot pixel dimensions with origin (0,0) at top-left and x/y increasing right/down. if a screen number is present in the image label, append :screenN to every cue from that screen. use [POINT:none] only when no visual cue is useful; do not add it after other visual tags.
     """
 
 

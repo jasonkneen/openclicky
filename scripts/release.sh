@@ -7,23 +7,14 @@
 # NOT an App Store submission. scripts/ExportOptions.plist uses
 # method=developer-id; never change that to app-store unless you mean to.
 #
-# One-time setup (do this once per machine before first release build):
-#   1) Have a "Developer ID Application: Jason Kneen (SW75ZJJ5R6)" cert in
-#      the login keychain. Verify with:
+# One-time setup (do this once per release machine):
+#   1) Install your Developer ID Application certificate and set
+#      OPENCLICKY_TEAM_ID and OPENCLICKY_SIGNING_IDENTITY in your shell.
+#   2) Store your Apple notarization credentials in a Keychain profile, then
+#      set OPENCLICKY_NOTARY_PROFILE to that profile name. Keep credentials
+#      out of this repository.
+#   3) Verify the identity with:
 #        security find-identity -v -p codesigning | grep 'Developer ID'
-#   2) Create an app-specific password at https://appleid.apple.com -- sign in
-#      with the Apple ID associated with your developer account (for this
-#      project: jason.kneen@bouncingfish.com), then under
-#      Sign-In and Security -> App-Specific Passwords, generate one labeled
-#      e.g. "OpenClicky Notary".
-#   3) Store the notary credentials in a keychain profile (one time):
-#        xcrun notarytool store-credentials \
-#          --apple-id "jason.kneen@bouncingfish.com" \
-#          --team-id "SW75ZJJ5R6" \
-#          --password "abcd-efgh-ijkl-mnop" \
-#          OpenClicky
-#      The profile name "OpenClicky" is what NOTARY_PROFILE below
-#      points at; change both if you prefer a different name.
 #   4) If you keep modifying .mcp.json locally and don't want it staged each
 #      time, run once: git update-index --skip-worktree .mcp.json
 #
@@ -44,13 +35,14 @@ SCHEME="cursor-buddy"
 PROJECT="cursor-buddy.xcodeproj"
 APP_NAME="OpenClicky"
 BUNDLE_ID="com.jkneen.openclicky"
-TEAM_ID="SW75ZJJ5R6"
-SIGNING_IDENTITY="Developer ID Application: Jason Kneen (${TEAM_ID})"
-NOTARY_PROFILE="OpenClicky"
-EXPORT_OPTIONS="scripts/ExportOptions.plist"
+TEAM_ID="${OPENCLICKY_TEAM_ID:-}"
+SIGNING_IDENTITY="${OPENCLICKY_SIGNING_IDENTITY:-}"
+NOTARY_PROFILE="${OPENCLICKY_NOTARY_PROFILE:-openclicky-custom-notary}"
+EXPORT_OPTIONS_TEMPLATE="scripts/ExportOptions.plist"
 
 BUILD_DIR="build"
 DIST_DIR="dist"
+EXPORT_OPTIONS="${BUILD_DIR}/ExportOptions.plist"
 ARCHIVE_PATH="${BUILD_DIR}/${APP_NAME}.xcarchive"
 EXPORT_PATH="${BUILD_DIR}/Export"
 
@@ -93,24 +85,31 @@ fi
 echo "==> Building ${APP_NAME} ${VERSION} (${BUILD_NUMBER})"
 
 # --- Sanity checks ---------------------------------------------------------
-# --- Sanity checks ---------------------------------------------------------
 if [[ "${LOCAL_BUILD}" -ne 1 ]]; then
-    if ! security find-identity -v -p codesigning | grep -q "${SIGNING_IDENTITY}"; then
+    if [[ -z "${TEAM_ID}" ]]; then
+        echo "ERROR: Set OPENCLICKY_TEAM_ID to the release team's Apple Team ID." >&2
+        exit 1
+    fi
+    if [[ -z "${SIGNING_IDENTITY}" ]]; then
+        echo "ERROR: Set OPENCLICKY_SIGNING_IDENTITY to the Developer ID Application identity." >&2
+        exit 1
+    fi
+    if ! security find-identity -v -p codesigning | grep -Fq "${SIGNING_IDENTITY}"; then
         echo "ERROR: Signing identity not found in keychain: ${SIGNING_IDENTITY}" >&2
         echo "       Install your Developer ID Application cert and try again." >&2
         exit 1
     fi
 
-    if [[ ! -f "${EXPORT_OPTIONS}" ]]; then
-        echo "ERROR: ${EXPORT_OPTIONS} missing." >&2
+    if [[ ! -f "${EXPORT_OPTIONS_TEMPLATE}" ]]; then
+        echo "ERROR: ${EXPORT_OPTIONS_TEMPLATE} missing." >&2
         exit 1
     fi
 
     # OpenClicky is distributed direct (not through the App Store). Refuse to
     # build if the export options have been switched away from developer-id.
-    export_method=$(/usr/libexec/PlistBuddy -c "Print :method" "${EXPORT_OPTIONS}" 2>/dev/null || echo "")
+    export_method=$(/usr/libexec/PlistBuddy -c "Print :method" "${EXPORT_OPTIONS_TEMPLATE}" 2>/dev/null || echo "")
     if [[ "${export_method}" != "developer-id" ]]; then
-        echo "ERROR: ${EXPORT_OPTIONS} has method=\"${export_method}\"; expected \"developer-id\"." >&2
+        echo "ERROR: ${EXPORT_OPTIONS_TEMPLATE} has method=\"${export_method}\"; expected \"developer-id\"." >&2
         echo "       OpenClicky ships outside the App Store. Edit the plist before retrying." >&2
         exit 1
     fi
@@ -119,6 +118,17 @@ fi
 # --- Clean previous artifacts ----------------------------------------------
 rm -rf "${BUILD_DIR}" "${DIST_DIR}/${APP_NAME}-${VERSION}-${BUILD_NUMBER}.dmg"
 mkdir -p "${BUILD_DIR}" "${DIST_DIR}"
+
+if [[ "${LOCAL_BUILD}" -ne 1 ]]; then
+    cp "${EXPORT_OPTIONS_TEMPLATE}" "${EXPORT_OPTIONS}"
+    /usr/libexec/PlistBuddy -c "Set :teamID ${TEAM_ID}" "${EXPORT_OPTIONS}"
+fi
+
+BUILD_SIGNING_SETTINGS=()
+if [[ "${LOCAL_BUILD}" -ne 1 ]]; then
+    BUILD_SIGNING_SETTINGS+=("DEVELOPMENT_TEAM=${TEAM_ID}")
+    BUILD_SIGNING_SETTINGS+=("CODE_SIGN_IDENTITY=${SIGNING_IDENTITY}")
+fi
 
 # --- Archive ---------------------------------------------------------------
 echo "==> Archiving..."
@@ -130,6 +140,7 @@ xcodebuild \
     -archivePath "${ARCHIVE_PATH}" \
     MARKETING_VERSION="${VERSION}" \
     CURRENT_PROJECT_VERSION="${BUILD_NUMBER}" \
+    "${BUILD_SIGNING_SETTINGS[@]}" \
     archive | xcbeautify 2>/dev/null || \
 xcodebuild \
     -project "${PROJECT}" \
@@ -139,6 +150,7 @@ xcodebuild \
     -archivePath "${ARCHIVE_PATH}" \
     MARKETING_VERSION="${VERSION}" \
     CURRENT_PROJECT_VERSION="${BUILD_NUMBER}" \
+    "${BUILD_SIGNING_SETTINGS[@]}" \
     archive
 
 # --- Export ----------------------------------------------------------------
